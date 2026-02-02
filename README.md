@@ -29,7 +29,6 @@ Ting Reader 是一个轻量级的自托管有声书平台，支持自动刮削�
 创建 `docker-compose.yml` 文件：
 
 ```yaml
-version: '3'
 services:
   ting-reader:
     image: dqsq2e2/ting-reader:latest
@@ -37,9 +36,9 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./data:/app/data
-      - ./storage:/app/storage
-      - ./cache:/app/cache
+      - /path/to/data:/app/data
+      - /path/to/storage:/app/storage
+      - /path/to/cache:/app/cache
     restart: always
 ```
 
