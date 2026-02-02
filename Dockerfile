@@ -4,10 +4,6 @@ WORKDIR /app/frontend
 COPY ting-reader-frontend/package*.json ./
 RUN npm install
 COPY ting-reader-frontend/ ./
-# Explicitly delete any existing .env file to ensure ENV VITE_API_BASE_URL is used
-RUN rm -f .env
-# Set API base URL to empty for relative paths when served by same backend
-ENV VITE_API_BASE_URL=""
 RUN npm run build
 
 # Stage 2: Runtime
