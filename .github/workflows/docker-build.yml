@@ -30,6 +30,7 @@ jobs:
               - 'package.json'
             code:
               - '**'
+              - '!.github/**'
 
       - name: Get version from package.json
         id: get_version
@@ -121,7 +122,7 @@ jobs:
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.filter.outputs.fpk == 'true' || steps.check_release.outputs.exists != 'true')
         with:
           tag_name: v${{ env.VERSION }}
           name: Release v${{ env.VERSION }}
