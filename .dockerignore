@@ -10,4 +10,6 @@ ting-reader-backend/*.log
 .git
 .gitignore
 README.md
+CHANGELOG.md
 ting-reader-fpk
+
