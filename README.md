@@ -29,6 +29,7 @@ Ting Reader 是一个轻量级的自托管有声书平台，支持自动刮削�
 创建 `docker-compose.yml` 文件：
 
 ```yaml
+version: '3'
 services:
   ting-reader:
     image: dqsq2e2/ting-reader:latest
@@ -36,14 +37,10 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /path/to/data:/app/data
-      - /path/to/storage:/app/storage
-      - /path/to/cache:/app/cache
+      - ./data:/app/data
+      - ./storage:/app/storage
+      - ./cache:/app/cache
     restart: always
-    environment:
-      - JWT_SECRET=change-this-to-a-secure-secret
-      - PORT=3000
-      - DB_PATH=/app/data/ting-reader.db
 ```
 
 启动容器：
@@ -52,7 +49,18 @@ services:
 docker-compose up -d
 ```
 
-访问 `http://localhost:3000` 即可开始使用。
+### 飞牛 fnOS 部署 (FPK)
+
+如果您使用的是飞牛 fnOS 系统，可以通过官方应用中心的“手动导入”功能快速一键部署：
+
+1.  **下载安装包**：前往 [GitHub Releases](https://github.com/dqsq2e2/ting-reader/releases) 下载最新版本的 `ting-reader-[版本号].fpk` 文件。
+2.  **手动安装**：
+    - 进入飞牛 fnOS 的 **应用中心**。
+    - 点击右上角的 **手动安装** 按钮。
+    - 选择并上传下载好的 `.fpk` 文件。
+3.  **完成向导**：按照图形化引导界面配置访问端口、JWT 密钥以及有声书存储路径，点击“完成”后应用将自动创建容器并添加桌面启动图标。
+
+访问 `http://localhost:3000` (或您自定义的端口) 即可开始使用。
 
 > ⚠️ **注意**：首次登录请使用管理员账号：`admin`，密码：`admin123`。登录后请务必及时在设置页面修改密码以保证安全。
 
