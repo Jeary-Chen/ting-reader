@@ -35,16 +35,11 @@
                 "field": "wizard_storage_path",
                 "label": "有声书存储路径 (宿主机)",
                 "initValue": "",
-                "rules": [
-                    {
-                        "required": true,
-                        "message": "请输入宿主机上的有声书存储路径"
-                    }
-                ]
+                "rules": []
             },
             {
                 "type": "tips",
-                "helpText": "<strong>存储说明：</strong><br/>1. 您在此填写的路径将被系统<strong>自动授权</strong>给应用，无需手动配置权限。<br/>2. 请确保填写的宿主机路径真实存在，应用安装后即可直接读取该目录下的音频文件。"
+                "helpText": "<strong>存储说明：</strong><br/>1. 本项为<strong>可选</strong>。如果不填写，系统将默认使用安装磁盘的 <strong>@appshare/ting-reader/storage</strong> 目录。<br/>2. 如果您填写了自定义路径，系统将自动尝试为您授权该目录的读写权限。"
             }
         ]
     }
