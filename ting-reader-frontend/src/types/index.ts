@@ -30,6 +30,7 @@ export interface Book {
   created_at: string;
   updated_at: string;
   is_favorite?: boolean;
+  library_type?: 'webdav' | 'local';
   skip_intro?: number;
   skip_outro?: number;
   tags?: string;
