@@ -1,10 +1,10 @@
 # Stage 1: Build Frontend
 FROM node:20-slim AS frontend-builder
 WORKDIR /app/frontend
-COPY ting-reader-frontend/package*.json ./
+COPY frontend/package*.json ./
 # Use npm ci for faster and more reliable builds
 RUN npm ci
-COPY ting-reader-frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Runtime
@@ -18,14 +18,14 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ting-reader-backend/package*.json ./
+COPY backend/package*.json ./
 # Use npm ci and omit devDependencies
 RUN npm ci --omit=dev
 
 # Remove build dependencies to keep image small
 RUN apt-get purge -y python3 make g++ && apt-get autoremove -y
 
-COPY ting-reader-backend/ ./
+COPY backend/ ./
 # Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./public
 
