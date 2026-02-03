@@ -9,3 +9,5 @@ ting-reader-backend/*.log
 .git
 .gitignore
 README.md
+ting-reader-fpk
+fnpack
