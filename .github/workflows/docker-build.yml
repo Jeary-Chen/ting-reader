@@ -38,6 +38,15 @@ jobs:
               - '.github/workflows/fnpack'
             version:
               - 'package.json'
+            code:
+              - 'ting-reader-backend/**'
+              - 'ting-reader-frontend/**'
+              - 'Dockerfile'
+              - 'docker-compose.yml'
+              - 'ting-reader-fpk/**'
+              - '.github/workflows/fnpack'
+              - 'package.json'
+              - 'CHANGELOG.md'
 
       - name: Get version from package.json
         id: get_version
@@ -105,12 +114,27 @@ jobs:
           fnpack build --directory ting-reader-fpk
           mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
 
+      - name: Extract Release Notes
+        id: extract_notes
+        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.check_release.outputs.exists != 'true')
+        run: |
+          VERSION="${{ env.VERSION }}"
+          START_LINE=$(grep -n "## \[$VERSION\]" CHANGELOG.md | cut -d: -f1)
+          if [ -n "$START_LINE" ]; then
+            tail -n +$((START_LINE + 1)) CHANGELOG.md | sed -n '/## \[/q;p' > RELEASE_NOTES.md
+          else
+            echo "Version $VERSION not found in CHANGELOG.md"
+            echo "Full changelog available in CHANGELOG.md" > RELEASE_NOTES.md
+          fi
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.check_release.outputs.exists != 'true')
         with:
           tag_name: v${{ env.VERSION }}
           name: Release v${{ env.VERSION }}
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: false
           files: |
             ting-reader-${{ env.VERSION }}.fpk
         env:
