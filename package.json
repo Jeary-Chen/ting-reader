@@ -4,9 +4,9 @@
   "description": "A self-hosted audiobook platform",
   "private": true,
   "scripts": {
-    "install:all": "npm install && cd ting-reader-frontend && npm install && cd ../ting-reader-backend && npm install",
-    "build:frontend": "cd ting-reader-frontend && npm run build",
-    "start:backend": "cd ting-reader-backend && npm start"
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "build:frontend": "cd frontend && npm run build",
+    "start:backend": "cd backend && npm start"
   },
   "keywords": [
     "audiobook",
