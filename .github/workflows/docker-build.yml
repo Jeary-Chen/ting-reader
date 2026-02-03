@@ -111,6 +111,14 @@ jobs:
             echo "Full changelog available in CHANGELOG.md" > RELEASE_NOTES.md
           fi
 
+      - name: Update Git Tag
+        if: github.ref == 'refs/heads/main' && steps.filter.outputs.code == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git tag -f v${{ env.VERSION }}
+          git push origin v${{ env.VERSION }} --force
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.check_release.outputs.exists != 'true')
