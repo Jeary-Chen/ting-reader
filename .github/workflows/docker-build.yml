@@ -89,6 +89,7 @@ jobs:
         if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
         run: |
           fnpack build --directory ting-reader-fpk
+          mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -97,6 +98,6 @@ jobs:
           tag_name: v${{ env.VERSION }}
           name: Release v${{ env.VERSION }}
           files: |
-            ting-reader.fpk
+            ting-reader-${{ env.VERSION }}.fpk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
