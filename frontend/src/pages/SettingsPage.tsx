@@ -192,12 +192,12 @@ const SettingsPage: React.FC = () => {
         </section>
 
         {/* Appearance */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+        <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
           <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
             <Monitor size={20} className="text-blue-500" />
             外观展示
           </h2>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2 md:gap-4">
             {[
               { id: 'light', icon: <Sun size={20} />, label: '浅色模式' },
               { id: 'dark', icon: <Moon size={20} />, label: '深色模式' },
@@ -206,37 +206,37 @@ const SettingsPage: React.FC = () => {
               <button
                 key={theme.id}
                 onClick={() => handleSave({ ...settings, theme: theme.id })}
-                className={`flex flex-col items-center gap-3 p-4 rounded-2xl border-2 transition-all ${
+                className={`flex flex-col items-center gap-2 md:gap-3 p-3 md:p-4 rounded-2xl border-2 transition-all ${
                   settings.theme === theme.id 
                     ? 'border-primary-600 bg-primary-50 dark:bg-primary-900/20 text-primary-600' 
                     : 'border-slate-100 dark:border-slate-800 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800'
                 }`}
               >
                 {theme.icon}
-                <span className="text-sm font-bold">{theme.label}</span>
+                <span className="text-xs md:text-sm font-bold text-center leading-tight">{theme.label}</span>
               </button>
             ))}
           </div>
         </section>
 
         {/* Playback Settings */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+        <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
           <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
             <FastForward size={20} className="text-orange-500" />
             播放偏好
           </h2>
           <div className="space-y-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
                 <p className="font-bold dark:text-white">默认播放倍速</p>
-                <p className="text-sm text-slate-500">所有书籍开始播放时的初始倍速</p>
+                <p className="text-xs md:text-sm text-slate-500">所有书籍开始播放时的初始倍速</p>
               </div>
-              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start sm:self-auto w-full sm:w-auto">
                 {[1.0, 1.25, 1.5, 2.0].map(speed => (
                   <button
                     key={speed}
                     onClick={() => handleSave({ ...settings, playback_speed: speed })}
-                    className={`px-4 py-2 text-sm font-bold rounded-lg transition-all ${
+                    className={`flex-1 sm:flex-none px-2 md:px-4 py-2 text-sm font-bold rounded-lg transition-all ${
                       settings.playback_speed === speed ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600' : 'text-slate-500'
                     }`}
                   >
@@ -246,19 +246,19 @@ const SettingsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-bold dark:text-white">自动预加载下一章</p>
-                <p className="text-sm text-slate-500">播放当前章节时，后台自动解密并缓冲下一章节</p>
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="font-bold dark:text-white truncate">自动预加载下一章</p>
+                <p className="text-xs md:text-sm text-slate-500 line-clamp-2">播放当前章节时，后台自动解密并缓冲下一章节</p>
               </div>
               <button
                 onClick={() => handleSave({ ...settings, auto_preload: !settings.auto_preload })}
-                className={`w-14 h-8 rounded-full transition-all relative ${
+                className={`flex-shrink-0 w-12 md:w-14 h-7 md:h-8 rounded-full transition-all relative ${
                   settings.auto_preload ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
                 }`}
               >
-                <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${
-                  settings.auto_preload ? 'left-7' : 'left-1'
+                <div className={`absolute top-1 w-5 md:w-6 h-5 md:h-6 bg-white rounded-full transition-all ${
+                  settings.auto_preload ? 'left-6 md:left-7' : 'left-1'
                 }`} />
               </button>
             </div>
