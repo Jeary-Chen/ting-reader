@@ -1,5 +1,52 @@
 #!/bin/bash
 
-### This script is called after the user uninstalls the application.
+# 获取用户在卸载向导中选择的清理项
+# 环境变量名与向导中的 field 字段一致
+CLEAN_OPTIONS="$wizard_clean_options"
+# 获取安装时映射的 storage 路径
+STORAGE_PATH="$wizard_storage_path"
 
+# 定义内部默认路径
+DEFAULT_DATA_PATH="/var/apps/ting-reader/shares/ting-reader/data"
+DEFAULT_CACHE_PATH="/var/apps/ting-reader/shares/ting-reader/cache"
+DEFAULT_STORAGE_PATH="/var/apps/ting-reader/shares/ting-reader/storage"
+
+# 判断环境变量中是否包含指定的清理项
+contains_option() {
+    echo "$CLEAN_OPTIONS" | grep -q "$1"
+}
+
+echo "Starting uninstallation data cleanup callback..."
+echo "User selected options: $CLEAN_OPTIONS"
+
+# 1. 清理 data 文件夹
+if contains_option "data"; then
+    if [ -d "$DEFAULT_DATA_PATH" ]; then
+        echo "Cleaning data directory: $DEFAULT_DATA_PATH"
+        rm -rf "$DEFAULT_DATA_PATH"/*
+    fi
+fi
+
+# 2. 清理 cache 文件夹
+if contains_option "cache"; then
+    if [ -d "$DEFAULT_CACHE_PATH" ]; then
+        echo "Cleaning cache directory: $DEFAULT_CACHE_PATH"
+        rm -rf "$DEFAULT_CACHE_PATH"/*
+    fi
+fi
+
+# 3. 清理 storage 文件夹
+if contains_option "storage"; then
+    # 二重保险：即便向导里有这个选项，我们也再次检查路径是否为默认路径
+    if [ "$STORAGE_PATH" == "$DEFAULT_STORAGE_PATH" ]; then
+        if [ -d "$DEFAULT_STORAGE_PATH" ]; then
+            echo "Cleaning default storage directory: $DEFAULT_STORAGE_PATH"
+            rm -rf "$DEFAULT_STORAGE_PATH"/*
+        fi
+    else
+        echo "Skipping storage cleanup: Custom path detected ($STORAGE_PATH)."
+    fi
+fi
+
+echo "Cleanup finished."
 exit 0

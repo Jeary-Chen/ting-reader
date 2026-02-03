@@ -28,7 +28,7 @@
             },
             {
                 "type": "tips",
-                "helpText": "<strong>注意：</strong><br/>1. 默认不勾选则保留所有数据。<br/>2. <strong>如果您的 storage 路径映射到了 NAS 共享文件夹，出于安全考虑，该选项将不会生效。</strong>"
+                "helpText": "<strong>说明：</strong><br/>1. 默认不勾选则保留所有数据。<br/>2. 为了保护您的数据安全，如果您在安装时自定义了 storage 的映射路径，该清理选项将不会出现在列表中。"
             }
         ]
     }
