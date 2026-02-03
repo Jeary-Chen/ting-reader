@@ -109,7 +109,7 @@ jobs:
 
       - name: Extract Release Notes
         id: extract_notes
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.check_release.outputs.exists != 'true')
+        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.code == 'true' || steps.filter.outputs.fpk == 'true' || steps.check_release.outputs.exists != 'true')
         run: |
           VERSION="${{ env.VERSION }}"
           START_LINE=$(grep -n "## \[$VERSION\]" CHANGELOG.md | cut -d: -f1)
