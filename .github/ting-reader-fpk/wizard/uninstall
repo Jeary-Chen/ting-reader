@@ -1,0 +1,35 @@
+[
+    {
+        "stepTitle": "确认卸载",
+        "items": [
+            {
+                "type": "tips",
+                "helpText": "您即将卸载 Ting Reader。请选择是否需要清理应用数据："
+            },
+            {
+                "type": "checkbox",
+                "field": "wizard_clean_options",
+                "label": "数据清理选项",
+                "initValue": [],
+                "options": [
+                    {
+                        "label": "清理数据库与配置 (data)",
+                        "value": "data"
+                    },
+                    {
+                        "label": "清理缓存文件 (cache)",
+                        "value": "cache"
+                    },
+                    {
+                        "label": "清理有声书文件 (storage)",
+                        "value": "storage"
+                    }
+                ]
+            },
+            {
+                "type": "tips",
+                "helpText": "<strong>注意：</strong><br/>1. 默认不勾选则保留所有数据。<br/>2. <strong>如果您的 storage 路径映射到了 NAS 共享文件夹，出于安全考虑，该选项将不会生效。</strong>"
+            }
+        ]
+    }
+]

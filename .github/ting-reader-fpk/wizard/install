@@ -22,7 +22,7 @@
                 "type": "password",
                 "field": "wizard_jwt_secret",
                 "label": "JWT 密钥",
-                "initValue": "ting-reader-secret-key",
+                "initValue": "",
                 "rules": [
                     {
                         "required": true,
