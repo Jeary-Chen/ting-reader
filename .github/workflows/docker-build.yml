@@ -83,7 +83,7 @@ jobs:
         if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
         run: |
           sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}/" ting-reader-fpk/manifest
-          sed -i "s|image: dqsq2e2/ting-reader:latest|image: dqsq2e2/ting-reader:${{ env.VERSION }}|g" ting-reader-fpk/app/docker/docker-compose.yaml
+          sed -i "s|image: dqsq2e2/ting-reader:.*|image: dqsq2e2/ting-reader:${{ env.VERSION }}|g" ting-reader-fpk/app/docker/docker-compose.yaml
 
       - name: Build FPK
         if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
