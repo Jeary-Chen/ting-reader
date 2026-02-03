@@ -16,12 +16,6 @@
                 }
             },
             {
-                "name": "ting-reader/storage",
-                "permission": {
-                    "rw": ["docker-ting-reader"]
-                }
-            },
-            {
                 "name": "ting-reader/cache",
                 "permission": {
                     "rw": ["docker-ting-reader"]

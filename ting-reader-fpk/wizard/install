@@ -31,8 +31,20 @@
                 ]
             },
             {
+                "type": "text",
+                "field": "wizard_storage_path",
+                "label": "有声书存储路径 (宿主机)",
+                "initValue": "/vol1/Audiobooks",
+                "rules": [
+                    {
+                        "required": true,
+                        "message": "请输入宿主机上的有声书存储路径"
+                    }
+                ]
+            },
+            {
                 "type": "tips",
-                "helpText": "请确保您已在文件管理中准备好数据、存储和缓存目录。"
+                "helpText": "请确保您输入的宿主机路径存在，且容器有权限访问。"
             }
         ]
     }
