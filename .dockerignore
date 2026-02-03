@@ -6,6 +6,7 @@ ting-reader-backend/*.db
 ting-reader-backend/*.db-journal
 ting-reader-backend/*.log
 .env
+.envexample
 .git
 .gitignore
 README.md
