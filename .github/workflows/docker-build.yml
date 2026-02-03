@@ -35,32 +35,33 @@ jobs:
             fpk:
               - 'ting-reader-fpk/**'
               - '.github/workflows/fnpack'
-              - 'ting-reader-backend/package.json'
+            version:
+              - 'package.json'
 
       - name: Get version from package.json
         id: get_version
         run: |
-          VERSION=$(jq -r '.version' ting-reader-backend/package.json)
+          VERSION=$(jq -r '.version' package.json)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Set up QEMU for multi-arch
-        if: steps.filter.outputs.docker == 'true'
+        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true'
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.filter.outputs.docker == 'true'
+        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: github.event_name != 'pull_request' && steps.filter.outputs.docker == 'true'
+        if: github.event_name != 'pull_request' && (steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true')
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push Docker image
-        if: steps.filter.outputs.docker == 'true'
+        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -74,26 +75,25 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Prepare fnpack
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
+        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true'
         run: |
           chmod +x .github/workflows/fnpack
           sudo mv .github/workflows/fnpack /usr/local/bin/fnpack
 
       - name: Update FPK configuration
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
+        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true'
         run: |
           sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}/" ting-reader-fpk/manifest
-          sed -i "s|image: dqsq2e2/ting-reader:.*|image: dqsq2e2/ting-reader:${{ env.VERSION }}|g" ting-reader-fpk/app/docker/docker-compose.yaml
 
       - name: Build FPK
-        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true'
+        if: steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true'
         run: |
           fnpack build --directory ting-reader-fpk
           mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
-        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.docker == 'true' || steps.filter.outputs.fpk == 'true')
+        if: github.ref == 'refs/heads/main' && (steps.filter.outputs.fpk == 'true' || steps.filter.outputs.version == 'true')
         with:
           tag_name: v${{ env.VERSION }}
           name: Release v${{ env.VERSION }}
