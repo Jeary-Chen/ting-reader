@@ -3,16 +3,6 @@ name: Docker Build, Push and FPK Release
 on:
   push:
     branches: [main]
-    paths:
-      - 'ting-reader-backend/**'
-      - 'ting-reader-frontend/**'
-      - 'Dockerfile'
-      - 'docker-compose.yml'
-      - 'ting-reader-fpk/**'
-      - '.github/workflows/fnpack'
-      - 'package.json'
-      - 'ting-reader-backend/package.json'
-      - '.github/workflows/docker-build.yml'
 
 jobs:
   docker:
@@ -39,14 +29,7 @@ jobs:
             version:
               - 'package.json'
             code:
-              - 'ting-reader-backend/**'
-              - 'ting-reader-frontend/**'
-              - 'Dockerfile'
-              - 'docker-compose.yml'
-              - 'ting-reader-fpk/**'
-              - '.github/workflows/fnpack'
-              - 'package.json'
-              - 'CHANGELOG.md'
+              - '**'
 
       - name: Get version from package.json
         id: get_version
