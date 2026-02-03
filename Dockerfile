@@ -2,7 +2,8 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY ting-reader-frontend/package*.json ./
-RUN npm install
+# Use npm ci for faster and more reliable builds
+RUN npm ci
 COPY ting-reader-frontend/ ./
 RUN npm run build
 
@@ -14,17 +15,18 @@ WORKDIR /app
 RUN apk add --no-cache python3 make g++ 
 
 COPY ting-reader-backend/package*.json ./
-RUN npm install --production
+# Use npm ci and omit devDependencies
+RUN npm ci --omit=dev
 
 # Remove build dependencies to keep image small
 RUN apk del python3 make g++
 
 COPY ting-reader-backend/ ./
-# Copy built frontend to backend's public folder
+# Copy built frontend from stage 1
 COPY --from=frontend-builder /app/frontend/dist ./public
 
 # Create storage, cache and data directories
-RUN mkdir -p storage cache data
+RUN mkdir -p storage cache data && chmod 777 storage cache data
 
 # Environment variables
 ENV PORT=3000
