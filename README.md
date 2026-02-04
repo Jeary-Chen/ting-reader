@@ -13,23 +13,23 @@ Ting Reader 是一个轻量级的自托管有声书平台，支持自动刮削�
 
 | 首页 | 书架 |
 | :---: | :---: |
-| ![首页](https://image.sjcnas.xyz/i/2026/02/04/daznf0.png) | ![书架](https://image.sjcnas.xyz/i/2026/02/04/dbav84.png) |
+| ![首页](image/daznf0.png) | ![书架](image/dbav84.png) |
 
 | 搜索 | 收藏 |
 | :---: | :---: |
-| ![搜索](https://image.sjcnas.xyz/i/2026/02/04/dbhmg1.png) | ![收藏](https://image.sjcnas.xyz/i/2026/02/04/dbkpra.png) |
+| ![搜索](image/dbhmg1.png) | ![收藏](image/dbkpra.png) |
 
 | 库管理 | 任务日志 |
 | :---: | :---: |
-| ![库管理](https://image.sjcnas.xyz/i/2026/02/04/dbwxfj.png) | ![任务日志](https://image.sjcnas.xyz/i/2026/02/04/dbzir4.png) |
+| ![库管理](image/dbwxfj.png) | ![任务日志](image/dbzir4.png) |
 
 | 用户管理 | 个性化设置 |
 | :---: | :---: |
-| ![用户管理](https://image.sjcnas.xyz/i/2026/02/04/dc1rpr.png) | ![个性化设置](https://image.sjcnas.xyz/i/2026/02/04/dckldc.png) |
+| ![用户管理](image/dc1rpr.png) | ![个性化设置](image/dckldc.png) |
 
 | 书籍详情和播放小窗 | |
 | :---: | :---: |
-| ![书籍详情](https://image.sjcnas.xyz/i/2026/02/04/dduqb0.png) | |
+| ![书籍详情](image/dduqb0.png) | |
 
 </details>
 
@@ -38,15 +38,15 @@ Ting Reader 是一个轻量级的自托管有声书平台，支持自动刮削�
 
 | 首页 | 书架 |
 | :---: | :---: |
-| ![首页](https://image.sjcnas.xyz/i/2026/02/04/dlp66c.jpg) | ![书架](https://image.sjcnas.xyz/i/2026/02/04/dlq8nr.jpg) |
+| ![首页](image/dlp66c.jpg) | ![书架](image/dlq8nr.jpg) |
 
 | 搜索 | 沉浸式播放界面 |
 | :---: | :---: |
-| ![搜索](https://image.sjcnas.xyz/i/2026/02/04/dm167f.jpg) | ![播放界面](https://image.sjcnas.xyz/i/2026/02/04/dm6hbq.jpg) |
+| ![搜索](image/dm167f.jpg) | ![播放界面](image/dm6hbq.jpg) |
 
 | 书籍详情 | 收藏 |
 | :---: | :---: |
-| ![书籍详情](https://image.sjcnas.xyz/i/2026/02/04/dm8ofs.jpg) | ![收藏](https://image.sjcnas.xyz/i/2026/02/04/dmans9.jpg) |
+| ![书籍详情](image/dm8ofs.jpg) | ![收藏](image/dmans9.jpg) |
 
 </details>
 
