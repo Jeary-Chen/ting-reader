@@ -9,20 +9,42 @@ Ting Reader 是一个轻量级的自托管有声书平台，支持自动刮削�
 ## 📸 界面展示
 
 <details open>
-<summary><b>🖥️ 桌面端功能展示 (左右滑动查看)</b></summary>
+<summary><b>🖥️ 桌面端功能展示 (点击展开)</b></summary>
 
-| 首页 | 书架 | 搜索 | 收藏 | 库管理 | 任务日志 | 用户管理 | 个性化设置 | 详情与播放 |
-| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| <img src="image/daznf0.png" width="800"> | <img src="image/dbav84.png" width="800"> | <img src="image/dbhmg1.png" width="800"> | <img src="image/dbkpra.png" width="800"> | <img src="image/dbwxfj.png" width="800"> | <img src="image/dbzir4.png" width="800"> | <img src="image/dc1rpr.png" width="800"> | <img src="image/dckldc.png" width="800"> | <img src="image/dduqb0.png" width="800"> |
+#### 🔹 基础与搜索
+- **首页**
+<img src="image/daznf0.png" width="900">
+- **书架**
+<img src="image/dbav84.png" width="900">
+- **搜索与收藏**
+<img src="image/dbhmg1.png" width="900">
+<img src="image/dbkpra.png" width="900">
+
+#### 🔹 播放与设置
+- **书籍详情与播放小窗**
+<img src="image/dduqb0.png" width="900">
+- **个性化设置**
+<img src="image/dckldc.png" width="900">
+
+#### 🔹 管理后台
+- **库管理与任务日志**
+<img src="image/dbwxfj.png" width="900">
+<img src="image/dbzir4.png" width="900">
+- **用户管理**
+<img src="image/dc1rpr.png" width="900">
 
 </details>
 
 <details open>
-<summary><b>📱 移动端体验展示 (左右滑动查看)</b></summary>
+<summary><b>📱 移动端体验展示 (点击展开)</b></summary>
 
-| 首页 | 书架 | 搜索 | 沉浸播放 | 书籍详情 | 收藏 |
-| :---: | :---: | :---: | :---: | :---: | :---: |
-| <img src="image/dlp66c.jpg" height="600"> | <img src="image/dlq8nr.jpg" height="600"> | <img src="image/dm167f.jpg" height="600"> | <img src="image/dm6hbq.jpg" height="600"> | <img src="image/dm8ofs.jpg" height="600"> | <img src="image/dmans9.jpg" height="600"> |
+| 首页 | 书架 |
+| :---: | :---: |
+| <img src="image/dlp66c.jpg" width="350"> | <img src="image/dlq8nr.jpg" width="350"> |
+| **搜索** | **收藏** |
+| <img src="image/dm167f.jpg" width="350"> | <img src="image/dmans9.jpg" width="350"> |
+| **播放界面** | **书籍详情** |
+| <img src="image/dm6hbq.jpg" width="350"> | <img src="image/dm8ofs.jpg" width="350"> |
 
 </details>
 
