@@ -410,6 +410,7 @@ const Player: React.FC = () => {
 
   const hiddenPaths = ['/admin', '/settings'];
   const isHiddenPage = hiddenPaths.some(path => location.pathname.startsWith(path));
+  const isWidgetMode = window.location.pathname.startsWith('/widget');
 
   // Auto collapse player when navigating to hidden pages
   useEffect(() => {
@@ -418,16 +419,75 @@ const Player: React.FC = () => {
     }
   }, [location.pathname, isExpanded, isHiddenPage]);
 
+  // Fullscreen Logic for Widget
+  const toggleFullscreen = async () => {
+    if (!isWidgetMode) {
+      setIsExpanded(true);
+      return;
+    }
+
+    // Check if fullscreen is allowed
+    if (!document.fullscreenEnabled) {
+      console.warn('Fullscreen is not enabled in this context');
+      return;
+    }
+
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsExpanded(true);
+      } else {
+        await document.exitFullscreen();
+        setIsExpanded(false);
+      }
+    } catch (err) {
+      console.error('Error toggling fullscreen:', err);
+      // Do NOT fallback to isExpanded=true if fullscreen fails
+      // This prevents the UI from breaking inside a small iframe
+    }
+  };
+
+  // Exit Expanded/Fullscreen View
+  const handleExitExpanded = async () => {
+    if (isWidgetMode && document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch (err) {
+        console.error('Error exiting fullscreen:', err);
+      }
+    }
+    setIsExpanded(false);
+  };
+
+  // Sync state when fullscreen changes (e.g. user presses Esc)
+  useEffect(() => {
+    if (!isWidgetMode) return;
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        setIsExpanded(false);
+      }
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, [isWidgetMode]);
+
   if (!currentChapter) return null;
 
   const miniPlayerStyle = !isExpanded ? { 
-    bottom: 'var(--mini-player-offset)',
-    height: 'var(--player-h)'
+    bottom: isWidgetMode ? '0' : 'var(--mini-player-offset)',
+    height: isWidgetMode ? '100%' : 'var(--player-h)',
+    left: isWidgetMode ? '0' : undefined,
+    right: isWidgetMode ? '0' : undefined,
   } : {};
 
   const ProgressBar = ({ isMini = false }) => {
     const playedPercent = (currentTime / (duration || 1)) * 100;
     const bufferedPercent = (bufferedTime / (duration || 1)) * 100;
+    
+    // Safety check for themeColor
+    const safeThemeColor = themeColor || 'rgba(0,0,0,0.15)';
     
     return (
       <div className={`relative group/progress ${isMini ? 'flex-1 h-2 sm:h-1.5' : 'w-full h-2.5'} bg-slate-300 dark:bg-slate-900 rounded-full overflow-hidden`}>
@@ -441,8 +501,8 @@ const Player: React.FC = () => {
           className="absolute inset-y-0 left-0 z-10" 
           style={{ 
             width: `${playedPercent}%`,
-            backgroundColor: themeColor.replace('0.15', '1.0').replace('0.1', '1.0'),
-            boxShadow: `0 0 10px ${themeColor.replace('0.15', '0.4').replace('0.1', '0.4')}`
+            backgroundColor: safeThemeColor.replace('0.15', '1.0').replace('0.1', '1.0'),
+            boxShadow: `0 0 10px ${safeThemeColor.replace('0.15', '0.4').replace('0.1', '0.4')}`
           }}
         />
         {/* Range Input for Seeking */}
@@ -515,25 +575,24 @@ const Player: React.FC = () => {
 
       {/* Mini Player - Floating Card Style on Mobile */}
       {!isExpanded && (
-        <div className="h-full px-2 sm:px-4 pointer-events-none">
+        <div className={`h-full ${isWidgetMode ? 'px-0' : 'px-2 sm:px-4'} pointer-events-none`}>
           <div 
             className={`
-              h-full max-w-7xl mx-auto rounded-2xl sm:rounded-3xl
-              bg-white/95 dark:bg-slate-900/95 backdrop-blur-md shadow-2xl shadow-black/10 
-              border border-slate-200/50 dark:border-slate-800/50
-              flex items-center justify-between px-3 sm:px-6 pointer-events-auto
+              h-full ${isWidgetMode ? 'max-w-none rounded-none border-none shadow-none' : 'max-w-7xl mx-auto rounded-2xl sm:rounded-3xl shadow-2xl shadow-black/10 border border-slate-200/50 dark:border-slate-800/50'}
+              bg-white/95 dark:bg-slate-900/95 backdrop-blur-md 
+              flex items-center justify-between ${isWidgetMode ? 'px-3 max-[380px]:flex-col max-[380px]:justify-center max-[380px]:gap-1.5 max-[380px]:py-2' : 'px-3 sm:px-6'} pointer-events-auto
               transition-all duration-300
             `}
             style={{ 
-              backgroundColor: themeColor ? `${themeColor.replace('0.15', '0.05').replace('0.1', '0.05')}` : undefined,
-              borderColor: themeColor ? `${themeColor.replace('0.15', '0.2').replace('0.1', '0.2')}` : undefined
+              backgroundColor: isWidgetMode ? undefined : (themeColor ? `${themeColor.replace('0.15', '0.05').replace('0.1', '0.05')}` : undefined),
+              borderColor: isWidgetMode ? undefined : (themeColor ? `${themeColor.replace('0.15', '0.2').replace('0.1', '0.2')}` : undefined)
             }}
           >
             {/* Info */}
-            <div className="flex items-center gap-3 min-w-0 max-w-[140px] sm:max-w-[200px] md:max-w-[240px] lg:max-w-[320px] md:flex-none flex-1">
+            <div className={`flex items-center gap-2 sm:gap-3 min-w-0 ${isWidgetMode ? 'max-[380px]:w-full max-[380px]:max-w-none' : ''} max-w-[100px] max-[380px]:max-w-[140px] sm:max-w-[200px] md:max-w-[240px] lg:max-w-[320px] md:flex-none flex-1`}>
               <div 
-                className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden shadow-md cursor-pointer shrink-0"
-                onClick={() => setIsExpanded(true)}
+                className="w-12 h-12 max-[380px]:w-10 max-[380px]:h-10 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden shadow-md cursor-pointer shrink-0"
+                onClick={toggleFullscreen}
               >
                 <img 
                   src={getCoverUrl(currentBook?.cover_url, currentBook?.library_id, currentBook?.id)} 
@@ -546,10 +605,17 @@ const Player: React.FC = () => {
                 />
               </div>
               <div className="min-w-0 flex-1">
-                <h4 className="font-bold dark:text-white truncate text-sm">{currentBook?.title}</h4>
-                <p className="text-[10px] sm:text-xs text-slate-500 truncate">{currentChapter.title}</p>
+                <h4 className="font-bold dark:text-white truncate text-sm max-[380px]:text-xs">{currentBook?.title}</h4>
+                <p className="text-slate-500 truncate text-xs max-[380px]:text-[10px]">{currentChapter.title}</p>
               </div>
             </div>
+
+            {/* Widget Vertical Layout: Progress Bar (Visible only on small widget) */}
+            {isWidgetMode && (
+              <div className="hidden max-[380px]:block w-full px-1 py-1">
+                 <ProgressBar isMini={true} />
+              </div>
+            )}
 
             {/* Controls (Desktop) */}
             <div className="hidden md:flex flex-col items-center gap-1.5 flex-1 max-xl:max-w-xl px-4 lg:px-8">
@@ -566,7 +632,7 @@ const Player: React.FC = () => {
                   className="text-slate-400 hover:scale-110 transition-all"
                   style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
                 >
-                  <SkipBack size={18} />
+                  <RotateCcw size={18} />
                 </button>
                 <button 
                   onClick={togglePlay}
@@ -583,7 +649,7 @@ const Player: React.FC = () => {
                   className="text-slate-400 hover:scale-110 transition-all"
                   style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
                 >
-                  <SkipForward size={18} />
+                  <RotateCw size={18} />
                 </button>
                 <button 
                   onClick={nextChapter} 
@@ -602,25 +668,64 @@ const Player: React.FC = () => {
             </div>
 
             {/* Mobile Controls - Only visible on small screens */}
-            <div className="flex md:hidden items-center gap-3 flex-1 min-w-0">
-              <div className="flex-1 min-w-0 h-1.5 py-4">
+            <div className={`flex md:hidden items-center gap-2 sm:gap-3 flex-1 min-w-0 justify-end ${isWidgetMode ? 'max-[380px]:w-full max-[380px]:justify-center max-[380px]:gap-6 max-[380px]:flex-none' : ''}`}>
+              <div className="flex-1 min-w-0 h-1.5 py-4 block max-[380px]:hidden">
                 <ProgressBar isMini={true} />
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                {isWidgetMode && (
+                  <div className="flex items-center gap-1">
+                    <button 
+                      onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
+                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                      style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
+                    >
+                      <RotateCcw size={16} />
+                    </button>
+                    <button 
+                      onClick={prevChapter}
+                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                      style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
+                    >
+                      <SkipBack size={16} fill="currentColor" />
+                    </button>
+                  </div>
+                )}
                 <button 
                   onClick={togglePlay}
-                  className="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-md"
+                  className="w-10 h-10 max-[380px]:w-8 max-[380px]:h-8 rounded-full text-white flex items-center justify-center shadow-md hover:scale-105 transition-transform"
                   style={{ backgroundColor: themeColor.replace('0.15', '1.0').replace('0.1', '1.0') }}
                 >
-                  {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
+                  {isPlaying ? <Pause size={20} className="max-[380px]:w-4 max-[380px]:h-4" fill="currentColor" /> : <Play size={20} className="ml-1 max-[380px]:w-4 max-[380px]:h-4" fill="currentColor" />}
                 </button>
-                <button 
-                  onClick={() => setIsExpanded(true)}
-                  className="p-2 text-slate-400 transition-colors"
-                  style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
-                >
-                  <ChevronUp size={24} />
-                </button>
+                {isWidgetMode && (
+                  <div className="flex items-center gap-1">
+                    {/* Always show Next button */}
+                    <button 
+                      onClick={nextChapter}
+                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                      style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
+                    >
+                      <SkipForward size={16} fill="currentColor" />
+                    </button>
+                    <button 
+                      onClick={() => { if (audioRef.current) audioRef.current.currentTime += 30; }}
+                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                      style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
+                    >
+                      <RotateCw size={16} />
+                    </button>
+                  </div>
+                )}
+                {!isWidgetMode && (
+                  <button 
+                    onClick={() => setIsExpanded(true)}
+                    className="p-2 text-slate-400 transition-colors"
+                    style={{ color: themeColor ? themeColor.replace('0.15', '0.6').replace('0.1', '0.6') : undefined }}
+                  >
+                    <ChevronUp size={24} />
+                  </button>
+                )}
               </div>
             </div>
 
@@ -653,12 +758,12 @@ const Player: React.FC = () => {
       {isExpanded && (
         <div 
           className="absolute inset-0 flex flex-col p-4 sm:p-8 md:p-12 overflow-y-auto animate-in slide-in-from-bottom duration-500 pb-40 xl:pb-12"
-          style={{ backgroundColor: themeColor || '#F2EDE4' }}
+          style={{ backgroundColor: isWidgetMode ? (themeColor ? toSolidColor(themeColor) : '#1e293b') : (themeColor || '#F2EDE4') }}
         >
           {/* Header */}
           <div className="flex items-center justify-between w-full max-w-4xl mx-auto mb-4 sm:mb-8 bg-white/60 dark:bg-slate-900/60 backdrop-blur-md p-2 sm:p-3 rounded-2xl shadow-sm border border-slate-200/30 dark:border-slate-800/30">
             <button 
-              onClick={() => setIsExpanded(false)}
+              onClick={handleExitExpanded}
               className="p-1.5 sm:p-2 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 rounded-full transition-colors"
             >
               <ArrowLeft size={20} className="sm:w-6 sm:h-6 dark:text-white text-[#4A3728]" />

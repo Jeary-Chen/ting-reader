@@ -118,20 +118,20 @@ const TaskLogsPage: React.FC = () => {
       <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden border border-slate-100 dark:border-slate-800 shadow-sm">
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {tasks.map((task) => (
-            <div key={task.id} className="p-6 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+            <div key={task.id} className="p-4 sm:p-6 hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+              <div className="flex flex-col sm:flex-row items-start justify-between gap-4">
+                <div className="flex items-start gap-4 w-full sm:w-auto">
+                  <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 ${
                     task.type === 'scan' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20' : 'bg-purple-50 text-purple-600 dark:bg-purple-900/20'
                   }`}>
-                    {task.type === 'scan' ? <Database size={24} /> : <Search size={24} />}
+                    {task.type === 'scan' ? <Database size={20} className="sm:w-6 sm:h-6" /> : <Search size={20} className="sm:w-6 sm:h-6" />}
                   </div>
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold dark:text-white">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-1">
+                      <span className="font-bold text-sm sm:text-base dark:text-white truncate">
                         {task.type === 'scan' ? '库扫描任务' : '刮削任务'}
                       </span>
-                      <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md ${
+                      <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md shrink-0 ${
                         task.status === 'completed' ? 'bg-green-100 text-green-600 dark:bg-green-900/20 dark:text-green-400' :
                         task.status === 'failed' ? 'bg-red-100 text-red-600 dark:bg-red-900/20 dark:text-red-400' :
                         'bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400'
@@ -139,25 +139,27 @@ const TaskLogsPage: React.FC = () => {
                         {getStatusText(task.status)}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-500 mt-1">{parsePayload(task.payload)}</p>
+                    <p className="text-xs sm:text-sm text-slate-500 break-all">{parsePayload(task.payload)}</p>
                     {task.message && (
-                      <p className="text-sm font-medium text-primary-600 dark:text-primary-400 mt-2 flex items-center gap-2">
-                        <Loader2 size={14} className={task.status === 'processing' ? 'animate-spin' : ''} />
-                        {task.message}
+                      <p className="text-xs sm:text-sm font-medium text-primary-600 dark:text-primary-400 mt-2 flex items-center gap-2">
+                        <Loader2 size={12} className={`sm:w-3.5 sm:h-3.5 ${task.status === 'processing' ? 'animate-spin' : ''}`} />
+                        <span className="truncate">{task.message}</span>
                       </p>
                     )}
                     {task.error && (
-                      <p className="text-xs text-red-500 mt-2 bg-red-50 dark:bg-red-900/10 p-2 rounded-lg border border-red-100 dark:border-red-900/20">
+                      <p className="text-xs text-red-500 mt-2 bg-red-50 dark:bg-red-900/10 p-2 rounded-lg border border-red-100 dark:border-red-900/20 break-all">
                         错误: {task.error}
                       </p>
                     )}
                   </div>
                 </div>
-                <div className="text-right shrink-0">
-                  <div className="flex items-center justify-end gap-2 mb-1">
+                
+                <div className="flex sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto mt-2 sm:mt-0 pt-2 sm:pt-0 border-t border-slate-100 dark:border-slate-800 sm:border-none">
+                  <div className="flex items-center gap-2 sm:mb-1 order-2 sm:order-1">
+                    <span className="text-xs text-slate-500 sm:hidden">{getStatusText(task.status)}</span>
                     {getStatusIcon(task.status)}
                   </div>
-                  <div className="text-xs text-slate-400">
+                  <div className="text-xs text-slate-400 order-1 sm:order-2">
                     {new Date(task.created_at).toLocaleString()}
                   </div>
                 </div>

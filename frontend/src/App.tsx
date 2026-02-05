@@ -11,6 +11,7 @@ import AdminLibraries from './pages/AdminLibraries';
 import AdminUsers from './pages/AdminUsers';
 import TaskLogsPage from './pages/TaskLogsPage';
 import SettingsPage from './pages/SettingsPage';
+import WidgetPage from './pages/WidgetPage';
 import { useAuthStore } from './store/authStore';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -30,6 +31,8 @@ function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/widget" element={<WidgetPage />} />
+        <Route path="/widget/:id" element={<WidgetPage />} />
         
         <Route path="/" element={
           <ProtectedRoute>

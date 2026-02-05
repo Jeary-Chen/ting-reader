@@ -53,6 +53,7 @@ db.exec(`
     sleep_timer_default INTEGER DEFAULT 0,
     auto_preload INTEGER DEFAULT 0, -- 0: false, 1: true
     theme TEXT DEFAULT 'system', -- 'light', 'dark', 'system'
+    widget_css TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
   );
@@ -92,6 +93,23 @@ db.exec(`
     UNIQUE(user_id, chapter_id)
   );
 
+  CREATE TABLE IF NOT EXISTS user_library_access (
+    user_id TEXT NOT NULL,
+    library_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, library_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS user_book_access (
+    user_id TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, book_id),
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS favorites (
     user_id TEXT NOT NULL,
     book_id TEXT NOT NULL,
@@ -121,6 +139,10 @@ try {
 
 try {
   db.prepare("ALTER TABLE books ADD COLUMN tags TEXT").run();
+} catch (e) {}
+
+try {
+  db.prepare("ALTER TABLE user_settings ADD COLUMN widget_css TEXT").run();
 } catch (e) {}
 
 // Migration for per-chapter progress

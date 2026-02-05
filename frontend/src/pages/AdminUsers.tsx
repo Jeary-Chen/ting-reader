@@ -19,15 +19,34 @@ const AdminUsers: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   
+  const [libraries, setLibraries] = useState<any[]>([]);
   const [formData, setFormData] = useState({
     username: '',
     password: '',
-    role: 'user' as 'user' | 'admin'
+    role: 'user' as 'user' | 'admin',
+    librariesAccessible: [] as string[],
+    booksAccessible: [] as string[]
   });
+  
+  // Book Search
+  const [bookSearchQuery, setBookSearchQuery] = useState('');
+  const [bookSearchResults, setBookSearchResults] = useState<any[]>([]);
+  const [selectedBooks, setSelectedBooks] = useState<any[]>([]);
+  const [isSearchingBooks, setIsSearchingBooks] = useState(false);
 
   useEffect(() => {
     fetchUsers();
+    fetchLibraries();
   }, []);
+
+  const fetchLibraries = async () => {
+    try {
+      const response = await apiClient.get('/api/libraries');
+      setLibraries(response.data);
+    } catch (err) {
+      console.error('Failed to fetch libraries', err);
+    }
+  };
 
   const fetchUsers = async () => {
     try {
@@ -40,43 +59,103 @@ const AdminUsers: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (bookSearchQuery.trim().length > 0) {
+      const timer = setTimeout(async () => {
+        setIsSearchingBooks(true);
+        try {
+          const res = await apiClient.get('/api/books', { params: { search: bookSearchQuery } });
+          setBookSearchResults(res.data.slice(0, 10)); // Limit to 10
+        } catch (err) {
+          console.error('Search books failed', err);
+        } finally {
+          setIsSearchingBooks(false);
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    } else {
+      setBookSearchResults([]);
+    }
+  }, [bookSearchQuery]);
+
   const handleOpenAddModal = () => {
     setEditingId(null);
-    setFormData({ username: '', password: '', role: 'user' });
+    setFormData({ username: '', password: '', role: 'user', librariesAccessible: [], booksAccessible: [] });
+    setSelectedBooks([]);
+    setBookSearchQuery('');
     setIsModalOpen(true);
   };
 
-  const handleOpenEditModal = (user: UserType) => {
+  const handleOpenEditModal = async (user: UserType) => {
     setEditingId(user.id);
-    setFormData({ username: user.username, password: '', role: user.role });
+    const booksAccessible = Array.isArray(user.booksAccessible) ? user.booksAccessible : [];
+    
+    // Fetch details for selected books to display names
+    const books = [];
+    if (booksAccessible.length > 0) {
+      // This is suboptimal (N requests), but simple. 
+      // Better would be a bulk fetch endpoint or relying on client cache if available.
+      // For now, let's just fetch them one by one or maybe we don't need details if we only show IDs?
+      // No, we need names. Let's try to fetch all books and filter? No, too heavy.
+      // Let's just fire requests.
+      for (const bid of booksAccessible) {
+        try {
+          const res = await apiClient.get(`/api/books/${bid}`);
+          books.push(res.data);
+        } catch (e) {}
+      }
+    }
+    setSelectedBooks(books);
+
+    setFormData({ 
+      username: user.username, 
+      password: '', 
+      role: user.role,
+      librariesAccessible: Array.isArray(user.librariesAccessible) ? user.librariesAccessible : [],
+      booksAccessible
+    });
+    setBookSearchQuery('');
     setIsModalOpen(true);
   };
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const payload = { ...formData };
+      
+      // If admin, they have access to all, so we don't need to send specific libraries
+      if (payload.role === 'admin') {
+        delete (payload as any).librariesAccessible;
+        delete (payload as any).booksAccessible;
+      }
+
       if (editingId) {
         const currentUser = users.find(u => u.id === editingId);
         const updateData: any = {};
         
-        if (formData.username !== currentUser?.username) {
-          updateData.username = formData.username;
+        if (payload.username !== currentUser?.username) {
+          updateData.username = payload.username;
         }
-        if (formData.role !== currentUser?.role) {
-          updateData.role = formData.role;
+        if (payload.role !== currentUser?.role) {
+          updateData.role = payload.role;
         }
-        if (formData.password) {
-          updateData.password = formData.password;
+        if (payload.password) {
+          updateData.password = payload.password;
+        }
+        // Always send permissions if role is user, to ensure sync
+        if (payload.role === 'user') {
+          updateData.librariesAccessible = payload.librariesAccessible;
+          updateData.booksAccessible = payload.booksAccessible;
         }
 
         if (Object.keys(updateData).length > 0) {
           await apiClient.patch(`/api/users/${editingId}`, updateData);
         }
       } else {
-        await apiClient.post('/api/users', formData);
+        await apiClient.post('/api/users', payload);
       }
       setIsModalOpen(false);
-      setFormData({ username: '', password: '', role: 'user' });
+      setFormData({ username: '', password: '', role: 'user', librariesAccessible: [], booksAccessible: [] });
       setEditingId(null);
       fetchUsers();
     } catch (err: any) {
@@ -236,8 +315,8 @@ const AdminUsers: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsModalOpen(false)}></div>
-          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-8">
+          <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+            <div className="p-8 overflow-y-auto flex-1">
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold dark:text-white">{editingId ? '修改用户信息' : '创建新账号'}</h2>
                 <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
@@ -292,6 +371,104 @@ const AdminUsers: React.FC = () => {
                     </button>
                   </div>
                 </div>
+
+                {formData.role === 'user' && (
+                  <>
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-600 dark:text-slate-400">可访问的库</label>
+                      <div className="space-y-2 max-h-40 overflow-y-auto p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                        {libraries.length > 0 ? libraries.map(lib => (
+                          <label key={lib.id} className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={(formData.librariesAccessible || []).includes(lib.id)}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setFormData(prev => {
+                                  const current = prev.librariesAccessible || [];
+                                  if (checked) {
+                                    return { ...prev, librariesAccessible: [...current, lib.id] };
+                                  } else {
+                                    return { ...prev, librariesAccessible: current.filter(id => id !== lib.id) };
+                                  }
+                                });
+                              }}
+                              className="rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                            />
+                            <span className="text-sm text-slate-700 dark:text-slate-300">{lib.name}</span>
+                          </label>
+                        )) : (
+                          <p className="text-xs text-slate-400">暂无库可分配，请先添加库</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-bold text-slate-600 dark:text-slate-400">特定书籍权限 (搜索添加)</label>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={bookSearchQuery}
+                          onChange={(e) => setBookSearchQuery(e.target.value)}
+                          placeholder="输入书名搜索..."
+                          className="w-full pl-4 pr-10 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white text-sm"
+                        />
+                        {isSearchingBooks && (
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-slate-300 border-t-primary-500 rounded-full animate-spin"></div>
+                        )}
+                        {bookSearchResults.length > 0 && (
+                          <div className="absolute z-10 w-full mt-1 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-xl shadow-xl max-h-48 overflow-y-auto">
+                            {bookSearchResults.map(book => (
+                              <button
+                                key={book.id}
+                                type="button"
+                                onClick={() => {
+                                  if (!selectedBooks.find(b => b.id === book.id)) {
+                                    setSelectedBooks([...selectedBooks, book]);
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      booksAccessible: [...(prev.booksAccessible || []), book.id]
+                                    }));
+                                  }
+                                  setBookSearchQuery('');
+                                  setBookSearchResults([]);
+                                }}
+                                className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-800 text-sm dark:text-white flex items-center justify-between group"
+                              >
+                                <span className="truncate">{book.title}</span>
+                                <Plus size={14} className="opacity-0 group-hover:opacity-100 text-primary-600" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-2 mt-2">
+                        {selectedBooks.map(book => (
+                          <div key={book.id} className="flex items-center gap-1 pl-2 pr-1 py-1 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 rounded-lg text-xs font-medium border border-primary-100 dark:border-primary-900/30">
+                            <span className="max-w-[150px] truncate">{book.title}</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedBooks(selectedBooks.filter(b => b.id !== book.id));
+                                setFormData(prev => ({
+                                  ...prev,
+                                  booksAccessible: (prev.booksAccessible || []).filter(id => id !== book.id)
+                                }));
+                              }}
+                              className="p-0.5 hover:bg-primary-100 dark:hover:bg-primary-900/40 rounded text-primary-500"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[10px] text-slate-400">
+                        提示：用户将拥有所选库下的所有书籍权限，以及此处单独添加的特定书籍权限。
+                      </p>
+                    </div>
+                  </>
+                )}
 
                 <button 
                   type="submit"

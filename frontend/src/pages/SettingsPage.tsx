@@ -11,7 +11,10 @@ import {
   Timer,
   CheckCircle2,
   User,
-  Key
+  Key,
+  Code,
+  ExternalLink,
+  Copy
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { usePlayerStore } from '../store/playerStore';
@@ -24,7 +27,8 @@ const SettingsPage: React.FC = () => {
     playback_speed: 1.0,
     sleep_timer_default: 0,
     auto_preload: false,
-    theme: 'system' as 'light' | 'dark' | 'system'
+    theme: 'system' as 'light' | 'dark' | 'system',
+    widget_css: ''
   });
   const [accountData, setAccountData] = useState({
     username: user?.username || '',
@@ -33,6 +37,7 @@ const SettingsPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [accountSaved, setAccountSaved] = useState(false);
+  const [widgetEmbedType, setWidgetEmbedType] = useState<'private' | 'public'>('private');
 
   useEffect(() => {
     fetchSettings();
@@ -261,6 +266,149 @@ const SettingsPage: React.FC = () => {
                   settings.auto_preload ? 'left-6 md:left-7' : 'left-1'
                 }`} />
               </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Widget Settings */}
+        <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+          <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
+            <Code size={20} className="text-purple-500" />
+            外挂组件 (Widget)
+          </h2>
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-bold text-slate-600 dark:text-slate-400">自定义 CSS 注入</label>
+                <span className="text-[10px] text-slate-400 uppercase font-bold">针对 Widget 生效</span>
+              </div>
+              <textarea 
+                value={settings.widget_css}
+                onChange={e => setSettings({ ...settings, widget_css: e.target.value })}
+                onBlur={() => handleSave(settings)}
+                placeholder=".widget-mode { background: transparent !important; }"
+                className="w-full h-32 px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white font-mono text-sm"
+              />
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-xs font-bold text-slate-500 uppercase">嵌入代码 (Iframe)</p>
+                
+                <div className="flex bg-white dark:bg-slate-900 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700">
+                  <button
+                    onClick={() => setWidgetEmbedType('private')}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                      widgetEmbedType === 'private' 
+                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    免登录 (带 Token)
+                  </button>
+                  <button
+                    onClick={() => setWidgetEmbedType('public')}
+                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${
+                      widgetEmbedType === 'public' 
+                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    需登录 (公开)
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative group">
+                <code className="text-[10px] md:text-xs text-slate-600 dark:text-slate-400 break-all bg-white dark:bg-slate-950 p-3 rounded-xl block border border-slate-100 dark:border-slate-900 font-mono leading-relaxed">
+                  {`<iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>`}
+                </code>
+                <button 
+                  onClick={() => {
+                    const baseUrl = window.location.origin;
+                    const token = widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : '';
+                    const embedCode = `<iframe src="${baseUrl}/widget${token}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>`;
+                    navigator.clipboard.writeText(embedCode);
+                    alert('已复制到剪贴板');
+                  }}
+                  className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors"
+                  title="复制"
+                >
+                  <Copy size={14} />
+                </button>
+              </div>
+              
+              <div className="mt-3 flex gap-2">
+                <div className="shrink-0 mt-0.5">
+                  {widgetEmbedType === 'private' ? (
+                    <Key size={12} className="text-orange-500" />
+                  ) : (
+                    <User size={12} className="text-blue-500" />
+                  )}
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-tight">
+                  {widgetEmbedType === 'private' ? (
+                    <>
+                      <span className="font-bold text-orange-500">注意安全：</span>
+                      此代码包含您的访问凭证。请仅将其嵌入到您信任的私有页面（如个人 Dashboard）。任何访问该页面的人都将拥有您的播放权限。
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-bold text-blue-500">公开模式：</span>
+                      此代码不包含凭证，适合嵌入博客或公开网站。访客在首次使用时需要输入用户名和密码登录。
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                <p className="text-xs font-bold text-slate-500 uppercase mb-2">布局代码参考 (直接复制)</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="p-3 bg-white dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-900 group relative">
+                    <p className="text-[10px] font-bold text-slate-400 mb-1">1. 吸底模式 (Fixed Bottom)</p>
+                    <code className="text-[10px] text-slate-600 dark:text-slate-400 font-mono block whitespace-pre overflow-x-auto">
+{`<div style="position: fixed; bottom: 0; left: 0; width: 100%; z-index: 9999;">
+  <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>
+</div>`}
+                    </code>
+                    <button 
+                      onClick={() => {
+                        const code = `<div style="position: fixed; bottom: 0; left: 0; width: 100%; z-index: 9999;">
+  <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>
+</div>`;
+                        navigator.clipboard.writeText(code);
+                        alert('已复制到剪贴板');
+                      }}
+                      className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      title="复制"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                  
+                  <div className="p-3 bg-white dark:bg-slate-950 rounded-xl border border-slate-100 dark:border-slate-900 group relative">
+                    <p className="text-[10px] font-bold text-slate-400 mb-1">2. 右下角悬浮 (Floating Right)</p>
+                    <code className="text-[10px] text-slate-600 dark:text-slate-400 font-mono block whitespace-pre overflow-x-auto">
+{`<div style="position: fixed; bottom: 20px; right: 20px; width: 350px; height: 150px; z-index: 9999; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+  <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen"></iframe>
+</div>`}
+                    </code>
+                    <button 
+                      onClick={() => {
+                        const code = `<div style="position: fixed; bottom: 20px; right: 20px; width: 350px; height: 150px; z-index: 9999; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+  <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen"></iframe>
+</div>`;
+                        navigator.clipboard.writeText(code);
+                        alert('已复制到剪贴板');
+                      }}
+                      className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      title="复制"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </section>

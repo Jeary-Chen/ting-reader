@@ -96,9 +96,18 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // --- Library Routes ---
-app.get('/api/libraries', authenticate, isAdmin, (req, res) => {
-  const libraries = db.prepare('SELECT * FROM libraries').all();
-  res.json(libraries);
+app.get('/api/libraries', authenticate, (req, res) => {
+  if (req.userRole === 'admin') {
+    const libraries = db.prepare('SELECT * FROM libraries').all();
+    res.json(libraries);
+  } else {
+    const libraries = db.prepare(`
+      SELECT l.* FROM libraries l
+      JOIN user_library_access ula ON l.id = ula.library_id
+      WHERE ula.user_id = ?
+    `).all(req.userId);
+    res.json(libraries);
+  }
 });
 
 app.get('/api/storage/folders', authenticate, isAdmin, async (req, res) => {
@@ -218,6 +227,21 @@ app.get('/api/books', authenticate, (req, res) => {
     query += ' WHERE ' + conditions.join(' AND ');
   }
 
+  // Filter books based on library access for non-admin users
+  if (req.userRole !== 'admin') {
+    const accessCondition = `(
+      library_id IN (SELECT library_id FROM user_library_access WHERE user_id = ?)
+      OR
+      id IN (SELECT book_id FROM user_book_access WHERE user_id = ?)
+    )`;
+    if (conditions.length > 0) {
+      query += ' AND ' + accessCondition;
+    } else {
+      query += ' WHERE ' + accessCondition;
+    }
+    params.push(req.userId, req.userId);
+  }
+
   query += ' ORDER BY created_at DESC';
   
   const books = db.prepare(query).all(...params);
@@ -253,6 +277,16 @@ app.get('/api/books/:id', authenticate, (req, res) => {
   `).get(req.userId, req.params.id);
   
   if (!book) return res.status(404).json({ error: 'Book not found' });
+
+  // Check permission
+  if (req.userRole !== 'admin') {
+    const hasLibraryAccess = db.prepare('SELECT 1 FROM user_library_access WHERE user_id = ? AND library_id = ?').get(req.userId, book.library_id);
+    const hasBookAccess = db.prepare('SELECT 1 FROM user_book_access WHERE user_id = ? AND book_id = ?').get(req.userId, book.id);
+    
+    if (!hasLibraryAccess && !hasBookAccess) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+  }
   
   res.json(book);
 });
@@ -325,11 +359,26 @@ app.post('/api/favorites/:bookId', authenticate, (req, res) => {
 // --- User Management Routes ---
 app.get('/api/users', authenticate, isAdmin, (req, res) => {
   const users = db.prepare('SELECT id, username, role, created_at FROM users').all();
+  
+  // Get accessible libraries and books for each user
+  users.forEach(user => {
+    if (user.role === 'admin') {
+      user.librariesAccessible = 'all';
+      user.booksAccessible = 'all';
+    } else {
+      const libAccess = db.prepare('SELECT library_id FROM user_library_access WHERE user_id = ?').all(user.id);
+      user.librariesAccessible = libAccess.map(row => row.library_id);
+      
+      const bookAccess = db.prepare('SELECT book_id FROM user_book_access WHERE user_id = ?').all(user.id);
+      user.booksAccessible = bookAccess.map(row => row.book_id);
+    }
+  });
+  
   res.json(users);
 });
 
 app.post('/api/users', authenticate, isAdmin, async (req, res) => {
-  const { username, password, role } = req.body;
+  const { username, password, role, librariesAccessible, booksAccessible } = req.body;
   
   if (!username || !password) {
     return res.status(400).json({ error: '用户名和密码是必填项' });
@@ -338,7 +387,21 @@ app.post('/api/users', authenticate, isAdmin, async (req, res) => {
   try {
     const passwordHash = await bcrypt.hash(password, 10);
     const userId = uuidv4();
-    db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(userId, username, passwordHash, role || 'user');
+    
+    db.transaction(() => {
+      db.prepare('INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)').run(userId, username, passwordHash, role || 'user');
+      
+      if (librariesAccessible && Array.isArray(librariesAccessible)) {
+        const stmt = db.prepare('INSERT INTO user_library_access (user_id, library_id) VALUES (?, ?)');
+        librariesAccessible.forEach(libId => stmt.run(userId, libId));
+      }
+
+      if (booksAccessible && Array.isArray(booksAccessible)) {
+        const stmt = db.prepare('INSERT INTO user_book_access (user_id, book_id) VALUES (?, ?)');
+        booksAccessible.forEach(bookId => stmt.run(userId, bookId));
+      }
+    })();
+    
     res.json({ success: true, id: userId });
   } catch (err) {
     res.status(400).json({ error: '用户名已存在' });
@@ -354,7 +417,7 @@ app.delete('/api/users/:id', authenticate, isAdmin, (req, res) => {
 });
 
 app.patch('/api/users/:id', authenticate, isAdmin, async (req, res) => {
-  const { username, password, role } = req.body;
+  const { username, password, role, librariesAccessible, booksAccessible } = req.body;
   const updates = [];
   const params = [];
 
@@ -372,13 +435,36 @@ app.patch('/api/users/:id', authenticate, isAdmin, async (req, res) => {
     params.push(role);
   }
 
-  if (updates.length === 0) {
+  if (updates.length === 0 && !librariesAccessible && !booksAccessible) {
     return res.status(400).json({ error: '没有提供更新内容' });
   }
 
-  params.push(req.params.id);
   try {
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    db.transaction(() => {
+      if (updates.length > 0) {
+        params.push(req.params.id);
+        db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+      }
+      
+      if (librariesAccessible && Array.isArray(librariesAccessible)) {
+        // Clear existing access
+        db.prepare('DELETE FROM user_library_access WHERE user_id = ?').run(req.params.id);
+        
+        // Add new access
+        const stmt = db.prepare('INSERT INTO user_library_access (user_id, library_id) VALUES (?, ?)');
+        librariesAccessible.forEach(libId => stmt.run(req.params.id, libId));
+      }
+
+      if (booksAccessible && Array.isArray(booksAccessible)) {
+        // Clear existing access
+        db.prepare('DELETE FROM user_book_access WHERE user_id = ?').run(req.params.id);
+        
+        // Add new access
+        const stmt = db.prepare('INSERT INTO user_book_access (user_id, book_id) VALUES (?, ?)');
+        booksAccessible.forEach(bookId => stmt.run(req.params.id, bookId));
+      }
+    })();
+    
     res.json({ success: true });
   } catch (err) {
     console.error('Admin update user error:', err);
@@ -474,21 +560,22 @@ app.get('/api/stats', authenticate, (req, res) => {
 // --- User Settings Routes ---
 app.get('/api/settings', authenticate, (req, res) => {
   const settings = db.prepare('SELECT * FROM user_settings WHERE user_id = ?').get(req.userId);
-  res.json(settings || { playback_speed: 1.0, sleep_timer_default: 0, auto_preload: 0, theme: 'system' });
+  res.json(settings || { playback_speed: 1.0, sleep_timer_default: 0, auto_preload: 0, theme: 'system', widget_css: '' });
 });
 
 app.post('/api/settings', authenticate, (req, res) => {
-  const { playback_speed, sleep_timer_default, auto_preload, theme } = req.body;
+  const { playback_speed, sleep_timer_default, auto_preload, theme, widget_css } = req.body;
   const autoPreloadInt = auto_preload ? 1 : 0;
   db.prepare(`
-    INSERT INTO user_settings (user_id, playback_speed, sleep_timer_default, auto_preload, theme)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO user_settings (user_id, playback_speed, sleep_timer_default, auto_preload, theme, widget_css)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET
       playback_speed = COALESCE(excluded.playback_speed, playback_speed),
       sleep_timer_default = COALESCE(excluded.sleep_timer_default, sleep_timer_default),
       auto_preload = COALESCE(excluded.auto_preload, auto_preload),
-      theme = COALESCE(excluded.theme, theme)
-  `).run(req.userId, playback_speed, sleep_timer_default, autoPreloadInt, theme);
+      theme = COALESCE(excluded.theme, theme),
+      widget_css = COALESCE(excluded.widget_css, widget_css)
+  `).run(req.userId, playback_speed, sleep_timer_default, autoPreloadInt, theme, widget_css);
   res.json({ success: true });
 });
 
