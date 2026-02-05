@@ -34,7 +34,7 @@ const SearchPage: React.FC = () => {
     narrators: useRef<HTMLDivElement>(null),
   };
 
-  const scrollRow = (ref: React.RefObject<HTMLDivElement>, direction: 'left' | 'right') => {
+  const scrollRow = (ref: React.RefObject<HTMLDivElement | null>, direction: 'left' | 'right') => {
     if (ref.current) {
       const scrollAmount = 300;
       ref.current.scrollBy({
@@ -134,7 +134,7 @@ const SearchPage: React.FC = () => {
     items: string[] | {id: string, name: string}[], 
     selected: string, 
     onSelect: (val: string) => void,
-    scrollRef: React.RefObject<HTMLDivElement>
+    scrollRef: React.RefObject<HTMLDivElement | null>
   }) => {
     const [canScrollLeft, setCanScrollLeft] = useState(false);
     const [canScrollRight, setCanScrollRight] = useState(false);
