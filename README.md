@@ -106,6 +106,16 @@ docker-compose up -d
 
 > ⚠️ **注意**：首次登录请使用管理员账号：`admin`，密码：`admin123`。登录后请务必及时在设置页面修改密码以保证安全。
 
+### 💻 桌面客户端
+
+Ting Reader 现已推出桌面客户端，支持 Windows、macOS 和 Linux，提供更流畅的本地播放体验与系统级集成。
+
+- **下载地址**：前往 [GitHub Releases](https://github.com/dqsq2e2/ting-reader/releases) 下载对应系统的安装包（如 `Ting-Reader-Setup-x.x.x.exe`）。
+- **功能亮点**：
+  - **无缝连接**：完美解决自托管环境下的 HTTPS 证书与跨域问题，支持 302 重定向登录。
+  - **离线缓存**：自动缓存已播放章节，支持断网播放与秒级 Seek。
+  - **系统集成**：支持全局媒体快捷键、系统托盘控制及后台播放。
+
 ## 🛠️ 开发指南
 
 ### 环境要求
