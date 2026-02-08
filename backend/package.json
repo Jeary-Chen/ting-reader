@@ -16,6 +16,7 @@
     "better-sqlite3": "^12.6.2",
     "cheerio": "^1.2.0",
     "colorthief": "^2.6.0",
+    "compression": "^1.8.1",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
