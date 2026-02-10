@@ -106,6 +106,16 @@ docker-compose up -d
 
 > ⚠️ **注意**：首次登录请使用管理员账号：`admin`，密码：`admin123`。登录后请务必及时在设置页面修改密码以保证安全。
 
+### 📱 移动端 APP (Android)
+
+Ting Reader 官方 Android 客户端，提供原生的后台播放控制与本地缓存管理。
+
+- **下载地址**：前往 [GitHub Releases](https://github.com/dqsq2e2/ting-reader/releases) 下载最新版本的 `.apk` 安装包。
+- **功能特性**：
+  - **原生体验**：支持系统级媒体通知栏控制、锁屏显示与耳机线控。
+  - **智能缓存**：内置 LRU 缓存管理器，自动清理过期音频，节省手机空间。
+  - **无缝漫游**：自动同步服务器播放进度，支持多端断点续传。
+
 ### 💻 桌面客户端
 
 Ting Reader 现已推出桌面客户端，支持 Windows、macOS 和 Linux，提供更流畅的本地播放体验与系统级集成。

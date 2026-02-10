@@ -154,6 +154,8 @@ app.post('/api/libraries', authenticate, isAdmin, (req, res) => {
   `).run(id, name, type, url, username, password, root_path);
 
   // Auto-scan after adding library
+  // Commented out to prevent double-scanning (frontend likely triggers one too)
+  /*
   const taskId = uuidv4();
   db.prepare("INSERT INTO tasks (id, type, status, payload) VALUES (?, ?, ?, ?)").run(taskId, 'scan', 'pending', JSON.stringify({ libraryId: id }));
   
@@ -161,8 +163,9 @@ app.post('/api/libraries', authenticate, isAdmin, (req, res) => {
     console.error('Auto-scan error:', err);
     db.prepare("UPDATE tasks SET status = ?, error = ? WHERE id = ?").run('failed', err.message, taskId);
   });
+  */
 
-  res.json({ id, taskId });
+  res.json({ id });
 });
 
 app.delete('/api/libraries/:id', authenticate, isAdmin, (req, res) => {
@@ -180,6 +183,18 @@ app.patch('/api/chapters/:id', authenticate, (req, res) => {
 
 app.patch('/api/libraries/:id', authenticate, isAdmin, (req, res) => {
   const { name, type, url, username, password, root_path } = req.body;
+  const libraryId = req.params.id;
+  
+  const currentLib = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libraryId);
+  if (!currentLib) return res.status(404).json({ error: 'Library not found' });
+
+  // Check if critical fields changed
+  const updates = { type, url, username, password, root_path };
+  const criticalFields = ['type', 'url', 'username', 'password', 'root_path'];
+  const shouldScan = criticalFields.some(field => {
+    return updates[field] !== undefined && updates[field] !== currentLib[field];
+  });
+
   db.prepare(`
     UPDATE libraries SET 
       name = COALESCE(?, name),
@@ -189,8 +204,24 @@ app.patch('/api/libraries/:id', authenticate, isAdmin, (req, res) => {
       password = COALESCE(?, password),
       root_path = COALESCE(?, root_path)
     WHERE id = ?
-  `).run(name, type, url, username, password, root_path, req.params.id);
-  res.json({ success: true });
+  `).run(name, type, url, username, password, root_path, libraryId);
+
+  let taskId;
+  /*
+  // Commented out to prevent double-scanning (frontend triggers one too)
+  if (shouldScan) {
+    // Trigger re-scan after update
+    taskId = uuidv4();
+    db.prepare("INSERT INTO tasks (id, type, status, payload) VALUES (?, ?, ?, ?)").run(taskId, 'scan', 'pending', JSON.stringify({ libraryId }));
+    
+    scanLibrary(libraryId, taskId).catch(err => {
+      console.error('Scan error:', err);
+      db.prepare("UPDATE tasks SET status = ?, error = ? WHERE id = ?").run('failed', err.message, taskId);
+    });
+  }
+  */
+
+  res.json({ success: true, taskId });
 });
 
 app.post('/api/libraries/:id/scan', authenticate, isAdmin, async (req, res) => {

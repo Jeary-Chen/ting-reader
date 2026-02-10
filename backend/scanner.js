@@ -9,6 +9,9 @@ const { decryptXM } = require('./xm-decryptor');
 const { calculateThemeColor } = require('./color-utils');
 const cacheManager = require('./cache-manager');
 
+// Track running scans to support cancellation
+const abortControllers = new Map(); // libraryId -> AbortController
+
 // Custom Tokenizer for WebDAV to allow music-metadata to perform Range requests
 async function getAccurateMetadata(client, filePath, virtualSize, realSize, isXM = false) {
   const timeoutPromise = new Promise((_, reject) => 
@@ -251,68 +254,129 @@ function extractChapterIndex(filename, loopIndex) {
 }
 
 async function scanLibrary(libraryId, taskId) {
-  const library = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libraryId);
-  if (!library) throw new Error('Library not found');
+  // 1. Cancel any existing scan for this library
+  if (abortControllers.has(libraryId)) {
+    console.log(`Cancelling existing scan for library ${libraryId}`);
+    const controller = abortControllers.get(libraryId);
+    controller.abort();
+    abortControllers.delete(libraryId);
+    // Give it a moment to cleanup
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
 
-  const client = getStorageClient(library);
-  let rootPath = library.root_path || '/';
+  // 2. Setup new controller
+  const controller = new AbortController();
+  abortControllers.set(libraryId, controller);
+  const signal = controller.signal;
+
   try {
-    // Ensure the root path is decoded to avoid double-encoding issues
-    rootPath = decodeURIComponent(rootPath);
-  } catch (e) {
-    // Ignore if not decodable
-  }
+    const library = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libraryId);
+    if (!library) throw new Error('Library not found');
 
-  console.log(`Scanning library ${library.name} at ${rootPath}...`);
-  if (taskId) {
-    db.prepare("UPDATE tasks SET message = ? WHERE id = ?").run(`正在准备扫描: ${library.name}`, taskId);
-  }
+    const client = getStorageClient(library);
+    let rootPath = library.root_path || '/';
+    try {
+      // Ensure the root path is decoded to avoid double-encoding issues
+      rootPath = decodeURIComponent(rootPath);
+    } catch (e) {
+      // Ignore if not decodable
+    }
 
-  // Track found items to cleanup missing ones
-  const foundBooks = new Set();
-  const foundChapters = new Set();
+    console.log(`Scanning library ${library.name} at ${rootPath}...`);
+    if (taskId) {
+      db.prepare("UPDATE tasks SET message = ? WHERE id = ?").run(`正在准备扫描: ${library.name}`, taskId);
+    }
 
-  await recursiveScan(client, libraryId, rootPath, taskId, foundBooks, foundChapters);
-  
-  // Cleanup logic: Remove books and chapters that are no longer in the storage
-  if (taskId) {
-    db.prepare("UPDATE tasks SET message = ? WHERE id = ?").run(`正在清理不存在的记录...`, taskId);
-  }
+    // Track found items to cleanup missing ones
+    const foundBooks = new Set();
+    const foundChapters = new Set();
 
-  // 1. Find all books in this library that were not found during scan
-  const currentBooks = db.prepare('SELECT id FROM books WHERE library_id = ?').all(libraryId);
-  for (const book of currentBooks) {
-    if (!foundBooks.has(book.id)) {
-      console.log(`Book ${book.id} no longer exists, deleting...`);
-      // Clear cache for book before deleting
-      await cacheManager.clearCacheForBook(book.id, db);
-      // Delete chapters first (due to FK)
-      db.prepare('DELETE FROM chapters WHERE book_id = ?').run(book.id);
-      db.prepare('DELETE FROM books WHERE id = ?').run(book.id);
-    } else {
-      // 2. For books that still exist, check if any chapters were removed
-      const currentChapters = db.prepare('SELECT id FROM chapters WHERE book_id = ?').all(book.id);
-      for (const chapter of currentChapters) {
-        if (!foundChapters.has(chapter.id)) {
-          console.log(`Chapter ${chapter.id} no longer exists, deleting...`);
-          // Clear cache for chapter
-          await cacheManager.deleteChapterCache(chapter.id);
-          db.prepare('DELETE FROM chapters WHERE id = ?').run(chapter.id);
+    await recursiveScan(client, libraryId, rootPath, taskId, foundBooks, foundChapters, signal);
+    
+    // Check for cancellation before cleanup
+    if (signal.aborted) throw new Error('Scan cancelled');
+
+    // Cleanup logic: Remove books and chapters that are no longer in the storage
+    if (taskId) {
+      db.prepare("UPDATE tasks SET message = ? WHERE id = ?").run(`正在清理不存在的记录...`, taskId);
+    }
+
+    // 1. Find all books in this library that were not found during scan
+    const currentBooks = db.prepare('SELECT id, path, title FROM books WHERE library_id = ?').all(libraryId);
+    
+    for (const book of currentBooks) {
+      if (signal.aborted) throw new Error('Scan cancelled');
+      
+      if (!foundBooks.has(book.id)) {
+        console.log(`Book ${book.id} (${book.title}) no longer exists, deleting...`);
+        
+        try {
+          // Clear cache for book before deleting
+          await cacheManager.clearCacheForBook(book.id, db);
+          
+          // Explicitly delete dependent records to avoid FK constraints if CASCADE fails or isn't set
+          db.prepare('DELETE FROM progress WHERE book_id = ?').run(book.id);
+          db.prepare('DELETE FROM favorites WHERE book_id = ?').run(book.id);
+          db.prepare('DELETE FROM user_book_access WHERE book_id = ?').run(book.id);
+          db.prepare('DELETE FROM chapters WHERE book_id = ?').run(book.id);
+          
+          // Finally delete the book
+          db.prepare('DELETE FROM books WHERE id = ?').run(book.id);
+        } catch (err) {
+          console.error(`Failed to delete book ${book.id}: ${err.message}`);
+          // Continue to next book even if this one fails
+        }
+      } else {
+        // 2. For books that still exist, check if any chapters were removed
+        const currentChapters = db.prepare('SELECT id FROM chapters WHERE book_id = ?').all(book.id);
+        for (const chapter of currentChapters) {
+          if (!foundChapters.has(chapter.id)) {
+            console.log(`Chapter ${chapter.id} no longer exists, deleting...`);
+            try {
+              // Clear cache for chapter
+              await cacheManager.deleteChapterCache(chapter.id);
+              
+              // Explicitly delete progress for this chapter
+              // Note: progress table has no ID for chapter usually, but we check just in case
+              db.prepare('DELETE FROM progress WHERE chapter_id = ?').run(chapter.id);
+              
+              db.prepare('DELETE FROM chapters WHERE id = ?').run(chapter.id);
+            } catch (err) {
+              console.error(`Failed to delete chapter ${chapter.id}: ${err.message}`);
+            }
+          }
         }
       }
     }
-  }
 
-  // Update last scanned time
-  db.prepare('UPDATE libraries SET last_scanned_at = CURRENT_TIMESTAMP WHERE id = ?').run(libraryId);
-  
-  // Mark task as completed
-  if (taskId) {
-    db.prepare("UPDATE tasks SET status = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('completed', '扫描库成功完成', taskId);
+    // Update last scanned time
+    db.prepare('UPDATE libraries SET last_scanned_at = CURRENT_TIMESTAMP WHERE id = ?').run(libraryId);
+    
+    // Mark task as completed
+    if (taskId) {
+      db.prepare("UPDATE tasks SET status = ?, message = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('completed', '扫描库成功完成', taskId);
+    }
+  } catch (err) {
+    if (err.message === 'Scan cancelled') {
+      console.log(`Scan for library ${libraryId} was cancelled.`);
+      if (taskId) {
+        // We mark it as failed (cancelled) so UI knows it stopped
+        db.prepare("UPDATE tasks SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run('failed', '扫描已取消 (被新任务中断)', taskId);
+      }
+    } else {
+      throw err;
+    }
+  } finally {
+    // Clean up map if this is still the active controller
+    if (abortControllers.get(libraryId) === controller) {
+      abortControllers.delete(libraryId);
+    }
   }
 }
 
-async function recursiveScan(client, libraryId, currentPath, taskId, foundBooks, foundChapters) {
+async function recursiveScan(client, libraryId, currentPath, taskId, foundBooks, foundChapters, signal) {
+  if (signal && signal.aborted) throw new Error('Scan cancelled');
+
   let directoryItems;
   try {
     if (taskId) {
@@ -328,6 +392,8 @@ async function recursiveScan(client, libraryId, currentPath, taskId, foundBooks,
     return;
   }
   
+  if (signal && signal.aborted) throw new Error('Scan cancelled');
+
   const audioFiles = [];
   const imageFiles = [];
   const subDirs = new Set(); // Use Set for deduplication
@@ -360,28 +426,34 @@ async function recursiveScan(client, libraryId, currentPath, taskId, foundBooks,
     }
     
     // Group files by their album metadata to handle mixed folders
-    const groups = await groupFilesByAlbum(client, audioFiles);
+    const groups = await groupFilesByAlbum(client, audioFiles, signal);
     
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
+
     for (const [groupKey, albumInfo] of Object.entries(groups)) {
+      if (signal && signal.aborted) throw new Error('Scan cancelled');
+
       if (taskId) {
         db.prepare("UPDATE tasks SET message = ? WHERE id = ?").run(`处理书籍: ${albumInfo.name}`, taskId);
       }
-      await processBookFiles(libraryId, currentPath, albumInfo, albumInfo.files, imageFiles, taskId, foundBooks, foundChapters);
+      await processBookFiles(client, libraryId, currentPath, albumInfo, albumInfo.files, imageFiles, taskId, foundBooks, foundChapters, signal);
     }
   }
 
   // Continue scanning subdirectories
   for (const dir of subDirs) {
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
     try {
-      await recursiveScan(client, libraryId, dir, taskId, foundBooks, foundChapters);
+      await recursiveScan(client, libraryId, dir, taskId, foundBooks, foundChapters, signal);
     } catch (error) {
+      if (error.message === 'Scan cancelled') throw error;
       console.error(`Error scanning subdirectory ${dir}:`, error.message);
       // We don't throw here to allow other subdirectories to be scanned
     }
   }
 }
 
-async function groupFilesByAlbum(client, audioFiles) {
+async function groupFilesByAlbum(client, audioFiles, signal) {
   const groups = {};
   const dirName = audioFiles[0].filename.split('/').slice(-2, -1)[0] || 'Unknown Book';
   
@@ -390,6 +462,8 @@ async function groupFilesByAlbum(client, audioFiles) {
   const isGenericDir = dirName.includes('喜马拉雅') || dirName.match(/^\d+$/) || dirName.length < 2;
 
   for (const file of audioFiles) {
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
+
     let album = null;
     
     // Only read metadata for grouping if it's a generic directory or we suspect multiple albums
@@ -421,7 +495,9 @@ async function groupFilesByAlbum(client, audioFiles) {
   return groups;
 }
 
-async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, imageFiles, taskId, foundBooks, foundChapters) {
+async function processBookFiles(client, libraryId, dirPath, albumInfo, audioFiles, imageFiles, taskId, foundBooks, foundChapters, signal) {
+  if (signal && signal.aborted) throw new Error('Scan cancelled');
+
   const { name: albumName, isFromMetadata } = albumInfo;
   
   // If identity is from metadata, we use a global hash (Library + Album) to allow merging across folders.
@@ -432,8 +508,7 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
     
   const bookHash = crypto.createHash('md5').update(hashInput).digest('hex');
   
-  const library = db.prepare('SELECT * FROM libraries WHERE id = ?').get(libraryId);
-  const client = getStorageClient(library);
+  // Client is passed in, no need to re-fetch library
 
   // Use albumName as initial title
   let title = albumName;
@@ -454,6 +529,7 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
 
   // Try to extract metadata from the first audio file
   if (audioFiles.length > 0) {
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
     try {
       // Use a stream-based parser for better metadata support
       // We read up to 4MB to catch metadata that might be further in the file
@@ -532,6 +608,8 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
     }
   }
 
+  if (signal && signal.aborted) throw new Error('Scan cancelled');
+
   // Determine the best title for scraping and saving
   // 1. If folder name looks like a generic Ximalaya name, use album tag
   let bestTitle = albumName;
@@ -543,6 +621,33 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
 
   // Check if book exists
   let book = db.prepare('SELECT * FROM books WHERE hash = ?').get(bookHash);
+
+  // SMART RECOVERY: If book not found by hash (likely due to path change), try to find it by title/path
+  if (!book) {
+    // Try to find a book with the same title in this library that hasn't been "claimed" by this scan yet
+    // We prioritize strict title match
+    const candidateBooks = db.prepare('SELECT * FROM books WHERE library_id = ? AND title = ?').all(libraryId, title);
+    
+    for (const candidate of candidateBooks) {
+      if (!foundBooks.has(candidate.id)) {
+        // Found a match! It's likely the same book just moved or re-rooted.
+        console.log(`Recovered book identity: "${title}" (ID: ${candidate.id}). Updating path/hash.`);
+        
+        // Update the book's path and hash to match current reality
+        db.prepare('UPDATE books SET path = ?, hash = ? WHERE id = ?').run(dirPath, bookHash, candidate.id);
+        
+        // Use this candidate as our book
+        book = candidate;
+        book.path = dirPath;
+        book.hash = bookHash;
+        break; // Stop after finding the first valid match
+      }
+    }
+    
+    // Fallback: If title match failed, maybe try matching the folder name part of the old path?
+    // This handles cases where user renamed the folder AND moved it, which might be too aggressive,
+    // so let's stick to title match for now which covers the "Root Path Change" scenario perfectly.
+  }
   
   // If book exists but has poor metadata, we'll try to update it
   const needsUpdate = book && (
@@ -578,6 +683,8 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
       }
       scrapedMetadata = await scrapeXimalaya(searchTerm);
     }
+    
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
 
     // Determine final title: 
     let finalTitle = scrapedMetadata?.title;
@@ -601,20 +708,43 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
     // Calculate theme color from cover
     const themeColor = await calculateThemeColor(finalCover, client);
 
-    if (!book) {
-      db.prepare(`
-        INSERT INTO books (id, library_id, title, author, narrator, description, tags, cover_url, theme_color, path, hash)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(bookId, libraryId, finalTitle, finalAuthor, finalNarrator, finalDescription, finalTags, finalCover, themeColor, dirPath, bookHash);
-      book = { id: bookId, title: finalTitle, theme_color: themeColor };
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
+
+    // Determine if we need to update or insert
+    // If book is found (by hash or by smart recovery), we update it
+    if (book) {
+      try {
+        db.prepare(`
+          UPDATE books SET 
+            title = ?, author = ?, narrator = ?, description = ?, tags = ?, cover_url = ?, theme_color = ?, path = ?, hash = ?
+          WHERE id = ?
+        `).run(finalTitle, finalAuthor, finalNarrator, finalDescription, finalTags, finalCover, themeColor, dirPath, bookHash, book.id);
+        book.title = finalTitle;
+        book.theme_color = themeColor;
+        book.path = dirPath; // Update local object
+        book.hash = bookHash;
+      } catch (err) {
+        if (err.message.includes('FOREIGN KEY constraint failed') || err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+           console.warn(`Book ${book.id} missing during update. Stop scanning.`);
+           return;
+        }
+        throw err;
+      }
     } else {
-      db.prepare(`
-        UPDATE books SET 
-          title = ?, author = ?, narrator = ?, description = ?, tags = ?, cover_url = ?, theme_color = ?
-        WHERE id = ?
-      `).run(finalTitle, finalAuthor, finalNarrator, finalDescription, finalTags, finalCover, themeColor, bookId);
-      book.title = finalTitle;
-      book.theme_color = themeColor;
+      const bookId = uuidv4();
+      try {
+        db.prepare(`
+          INSERT INTO books (id, library_id, title, author, narrator, description, tags, cover_url, theme_color, path, hash)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(bookId, libraryId, finalTitle, finalAuthor, finalNarrator, finalDescription, finalTags, finalCover, themeColor, dirPath, bookHash);
+        book = { id: bookId, title: finalTitle, theme_color: themeColor, path: dirPath, hash: bookHash };
+      } catch (err) {
+        if (err.message.includes('FOREIGN KEY constraint failed') || err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+           console.warn(`Library ${libraryId} missing during book insertion. Stop scanning.`);
+           return;
+        }
+        throw err;
+      }
     }
   }
 
@@ -628,11 +758,32 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
   console.log(`Processing ${audioFiles.length} chapters for book: ${title}`);
   console.log(`Files to process: ${audioFiles.map(f => f.basename).join(', ')}`);
 
+  // Pre-fetch all existing chapters for this book to handle path changes
+  const dbChapters = db.prepare('SELECT id, path FROM chapters WHERE book_id = ?').all(book.id);
+
   for (let i = 0; i < audioFiles.length; i++) {
+    if (signal && signal.aborted) throw new Error('Scan cancelled');
+
     const file = audioFiles[i];
     
-    // Check if chapter exists
-    let existingChapter = db.prepare('SELECT id FROM chapters WHERE book_id = ? AND path = ?').get(book.id, file.filename);
+    // 1. Try exact path match first
+    let existingChapter = dbChapters.find(c => c.path === file.filename);
+    
+    // 2. If not found, try basename match (to handle root path changes)
+    if (!existingChapter) {
+      // Find candidate with same filename
+      const candidates = dbChapters.filter(c => path.basename(c.path) === file.basename);
+      
+      // If exactly one match found, assume it's the same file and update path
+      if (candidates.length === 1) {
+        existingChapter = candidates[0];
+        // Update the path in database to match current location
+        console.log(`Updating chapter path for ${file.basename}: ${existingChapter.path} -> ${file.filename}`);
+        db.prepare('UPDATE chapters SET path = ? WHERE id = ?').run(file.filename, existingChapter.id);
+        // Update local object
+        existingChapter.path = file.filename;
+      }
+    }
     
     if (!existingChapter) {
       if (taskId && i % 10 === 0) {
@@ -653,6 +804,7 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
         const isSmallFile = fileSize < 10 * 1024 * 1024; // 10MB
         
         if (isXM || isSmallFile) {
+          if (signal && signal.aborted) throw new Error('Scan cancelled');
           try {
             console.log(`Scanning ${isXM ? 'XM' : 'regular'} file: ${file.basename} (Full Read Mode)`);
             const buffer = await client.getFileContents(file.filename, { format: 'binary' });
@@ -692,6 +844,7 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
         
         // Final fallback for all files if duration is still 0
         if (duration <= 0) {
+           if (signal && signal.aborted) throw new Error('Scan cancelled');
            const stream = client.createReadStream(file.filename, { 
              range: { start: 0, end: Math.min(fileSize - 1, 2 * 1024 * 1024) }, // Try first 2MB
              format: 'binary'
@@ -752,13 +905,22 @@ async function processBookFiles(libraryId, dirPath, albumInfo, audioFiles, image
         finalChapterTitle = cleanedTagTitle;
       }
 
+      if (signal && signal.aborted) throw new Error('Scan cancelled');
+
       const chapterId = uuidv4();
-      db.prepare(`
-        INSERT INTO chapters (id, book_id, title, path, duration, chapter_index, is_extra)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(chapterId, book.id, finalChapterTitle, file.filename, duration, chapterIndex, isExtra ? 1 : 0);
-      
-      existingChapter = { id: chapterId };
+      try {
+        db.prepare(`
+          INSERT INTO chapters (id, book_id, title, path, duration, chapter_index, is_extra)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(chapterId, book.id, finalChapterTitle, file.filename, duration, chapterIndex, isExtra ? 1 : 0);
+        existingChapter = { id: chapterId };
+      } catch (err) {
+        if (err.message.includes('FOREIGN KEY constraint failed') || err.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+           console.warn(`Book ${book.id} missing during chapter insertion. Skipping.`);
+           continue;
+        }
+        throw err;
+      }
     }
     
     // Mark chapter as found
