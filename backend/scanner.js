@@ -936,6 +936,15 @@ async function processBookFiles(client, libraryId, dirPath, albumInfo, audioFile
     foundChapters.add(existingChapter.id);
   }
   console.log(`Finished processing book: ${title}`);
+  
+  // Explicitly release file list memory
+  audioFiles.length = 0;
+  imageFiles.length = 0;
+  
+  // Trigger a manual GC if available (for debugging purposes, node --expose-gc)
+  if (global.gc) {
+    global.gc();
+  }
 }
 
 module.exports = { scanLibrary };
