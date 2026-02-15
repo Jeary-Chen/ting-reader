@@ -54,11 +54,21 @@ const BookDetailPage: React.FC = () => {
   const descriptionRef = useRef<HTMLParagraphElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasInitialScrolled = useRef(false);
+  const [highlightedChapterId, setHighlightedChapterId] = useState<string | null>(null);
 
   // Reset scroll state when book ID changes
   useEffect(() => {
     hasInitialScrolled.current = false;
+    setHighlightedChapterId(null);
   }, [id]);
+
+  // Clear highlighted chapter when current chapter changes (user plays a new chapter)
+  const currentChapter = usePlayerStore((state) => state.currentChapter);
+  useEffect(() => {
+    if (currentChapter?.book_id === book?.id) {
+      setHighlightedChapterId(null);
+    }
+  }, [currentChapter?.id, book?.id]);
 
   const scrollGroups = (direction: 'left' | 'right') => {
     if (scrollRef.current) {
@@ -94,7 +104,7 @@ const BookDetailPage: React.FC = () => {
   }, [currentChapters]);
 
   const playBook = usePlayerStore((state) => state.playBook);
-  const currentChapter = usePlayerStore((state) => state.currentChapter);
+  // const currentChapter = usePlayerStore((state) => state.currentChapter); // Moved up
   const isPlaying = usePlayerStore((state) => state.isPlaying);
   const playChapter = usePlayerStore((state) => state.playChapter);
 
@@ -132,53 +142,84 @@ const BookDetailPage: React.FC = () => {
   // Auto-scroll to current chapter logic
   useEffect(() => {
     if (hasInitialScrolled.current) return;
+    if (book?.id !== id) return; // Ensure we are looking at the correct book
 
-    if (book && currentChapter && currentChapter.book_id === book.id) {
-      // Determine if current chapter is in main or extra
-      const inMain = mainChapters.find(c => c.id === currentChapter.id);
-      const inExtra = extraChapters.find(c => c.id === currentChapter.id);
-      
-      let targetList = currentChapters;
-      let targetTab = activeTab;
-      
-      if (inMain) {
-        if (activeTab !== 'main') {
-          setActiveTab('main');
-          targetTab = 'main';
+    if (book && chapters.length > 0) {
+      let targetChapter = null;
+
+      // 1. Priority: Currently playing chapter if it belongs to this book
+      if (currentChapter && currentChapter.book_id === book.id) {
+        targetChapter = currentChapter;
+      } 
+      // 2. Fallback: Most recently played chapter from history
+      else {
+        const playedChapters = [...chapters].filter(c => (c as any).progress_updated_at);
+        if (playedChapters.length > 0) {
+          playedChapters.sort((a, b) => {
+            return new Date((b as any).progress_updated_at).getTime() - new Date((a as any).progress_updated_at).getTime();
+          });
+          targetChapter = playedChapters[0];
         }
-        targetList = mainChapters;
-      } else if (inExtra) {
-        if (activeTab !== 'extra') {
-          setActiveTab('extra');
-          targetTab = 'extra';
-        }
-        targetList = extraChapters;
       }
-      
-      // Calculate group index
-      const index = targetList.findIndex(c => c.id === currentChapter.id);
-      if (index !== -1) {
-        const groupIndex = Math.floor(index / chaptersPerGroup);
-        if (currentGroupIndex !== groupIndex) {
-          setCurrentGroupIndex(groupIndex);
+
+      if (targetChapter) {
+        setHighlightedChapterId(targetChapter.id);
+        // Determine if target chapter is in main or extra
+        const inMain = mainChapters.find(c => c.id === targetChapter!.id);
+        const inExtra = extraChapters.find(c => c.id === targetChapter!.id);
+        
+        let targetList = currentChapters;
+        
+        if (inMain) {
+          if (activeTab !== 'main') {
+            setActiveTab('main');
+            return; // Wait for tab switch
+          }
+          targetList = mainChapters;
+        } else if (inExtra) {
+          if (activeTab !== 'extra') {
+            setActiveTab('extra');
+            return; // Wait for tab switch
+          }
+          targetList = extraChapters;
         }
         
-        // Scroll into view
-        setTimeout(() => {
-          const el = document.getElementById(`chapter-${currentChapter.id}`);
-          if (el) {
-            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            hasInitialScrolled.current = true;
+        // Calculate group index
+        const index = targetList.findIndex(c => c.id === targetChapter.id);
+        if (index !== -1) {
+          const groupIndex = Math.floor(index / chaptersPerGroup);
+          if (currentGroupIndex !== groupIndex) {
+            setCurrentGroupIndex(groupIndex);
+            return; // Wait for group switch
           }
           
-          const groupTab = document.getElementById(`group-tab-${groupIndex}`);
-          if (groupTab) {
-            groupTab.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-          }
-        }, 100);
+          // Scroll into view
+          const timer = setTimeout(() => {
+            const el = document.getElementById(`chapter-${targetChapter!.id}`);
+            if (el) {
+              el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              hasInitialScrolled.current = true;
+            }
+            
+            const groupTab = document.getElementById(`group-tab-${groupIndex}`);
+            const container = scrollRef.current;
+            if (groupTab && container) {
+              // Manual scroll to center for better compatibility
+              const containerWidth = container.offsetWidth;
+              const tabWidth = groupTab.offsetWidth;
+              const tabLeft = groupTab.offsetLeft;
+              
+              container.scrollTo({
+                left: tabLeft - containerWidth / 2 + tabWidth / 2,
+                behavior: 'smooth'
+              });
+            }
+          }, 300); // Increased timeout to ensure DOM is ready
+          return () => clearTimeout(timer);
+        }
       }
     }
-  }, [book?.id, currentChapter?.id, mainChapters, extraChapters, activeTab, currentGroupIndex, currentChapters, chaptersPerGroup]);
+  }, [book?.id, currentChapter?.id, chapters, mainChapters, extraChapters, activeTab, currentGroupIndex, currentChapters, chaptersPerGroup]);
 
   useEffect(() => {
     const checkOverflow = () => {
@@ -331,6 +372,7 @@ const BookDetailPage: React.FC = () => {
       <div className="flex-1 max-w-6xl mx-auto space-y-8 w-full">
         {/* Header */}
         <button 
+          type="button"
           onClick={() => navigate(-1)}
           className="flex items-center gap-2 text-slate-500 hover:text-primary-600 transition-colors"
         >
@@ -563,16 +605,18 @@ const BookDetailPage: React.FC = () => {
           {(groups[currentGroupIndex]?.chapters || currentChapters).map((chapter, index) => {
             const actualIndex = currentGroupIndex * chaptersPerGroup + index;
             const isCurrent = currentChapter?.id === chapter.id;
+            const isActive = isCurrent || highlightedChapterId === chapter.id;
+
             return (
               <div 
                 key={chapter.id}
-                onClick={() => playChapter(book!, chapters, chapter)}
+                onClick={() => isBatchMode ? toggleChapterSelection(chapter.id) : playChapter(book!, chapters, chapter)}
                 className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all border ${
-                  isCurrent 
+                  isActive 
                     ? 'bg-opacity-10 border-opacity-20' 
                     : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-primary-200 dark:hover:border-primary-800'
                 }`}
-                style={isCurrent && themeColor ? { 
+                style={isActive && themeColor ? { 
                   backgroundColor: setAlpha(themeColor, 0.1),
                   borderColor: setAlpha(themeColor, 0.3),
                 } : {}}
@@ -590,16 +634,16 @@ const BookDetailPage: React.FC = () => {
                 >
                   <div 
                     className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-bold text-base sm:text-lg shrink-0 ${
-                      isCurrent ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                      isActive ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
-                    style={isCurrent && themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}
+                    style={isActive && themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}
                   >
                     {chapter.chapter_index || (actualIndex + 1)}
                   </div>
                   <div className="min-w-0">
                     <p 
-                      className={`font-bold truncate ${isCurrent ? '' : 'text-slate-900 dark:text-white'}`}
-                      style={isCurrent && themeColor ? { color: toSolidColor(themeColor) } : {}}
+                      className={`font-bold truncate ${isActive ? '' : 'text-slate-900 dark:text-white'}`}
+                      style={isActive && themeColor ? { color: toSolidColor(themeColor) } : {}}
                     >
                       {chapter.title}
                     </p>
@@ -631,7 +675,13 @@ const BookDetailPage: React.FC = () => {
                       <div className="w-1 animate-music-bar-3 rounded-full" style={themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}></div>
                     </div>
                   ) : (
-                    <div className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all">
+                    <div 
+                      className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer hover:scale-105"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        playChapter(book!, chapters, chapter);
+                      }}
+                    >
                       <Play size={16} className="text-primary-600 ml-1" fill="currentColor" style={themeColor ? { color: toSolidColor(themeColor) } : {}} />
                     </div>
                   )}

@@ -233,6 +233,7 @@ const Player: React.FC = () => {
   const [bufferedTime, setBufferedTime] = useState(0);
   const [autoPreload, setAutoPreload] = useState(false);
   const [autoCache, setAutoCache] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   const isInitialLoadRef = useRef(true);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -269,20 +270,21 @@ const Player: React.FC = () => {
   useEffect(() => {
     isInitialLoadRef.current = true;
     setBufferedTime(0);
+    setRetryCount(0);
   }, [currentChapter?.id]);
+
+  // Reset initial load ref when retrying (to allow resume logic to run again)
+  useEffect(() => {
+    if (retryCount > 0) {
+      isInitialLoadRef.current = true;
+    }
+  }, [retryCount]);
 
   // Sync state with audio element
   useEffect(() => {
     if (!audioRef.current || !currentChapter) return;
     setError(null); // Clear error on source change
     
-    // Resume position from store
-    const resumePosition = usePlayerStore.getState().currentTime;
-    if (resumePosition > 0) {
-      console.log(`Resuming chapter ${currentChapter.title} at ${resumePosition}s`);
-      audioRef.current.currentTime = resumePosition;
-    }
-
     if (isPlaying) {
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
@@ -299,7 +301,7 @@ const Player: React.FC = () => {
     } else {
       audioRef.current.pause();
     }
-  }, [isPlaying, currentChapter?.id]);
+  }, [isPlaying, currentChapter?.id, retryCount]);
 
   // Preload and Server-side Cache next chapter logic
   useEffect(() => {
@@ -343,6 +345,19 @@ const Player: React.FC = () => {
     if (!audioRef.current) return;
     
     const time = audioRef.current.currentTime;
+    
+    // Prevent overwriting persisted progress with 0 on initial load
+    // If we are at the very beginning (time < 0.5) but store has significant progress (> 2s),
+    // ignore this update until we've resumed properly.
+    if (isInitialLoadRef.current && time < 0.5 && currentTime > 2) {
+      return;
+    }
+
+    // Mark initial load as done if we have successfully played past 1s
+    if (isInitialLoadRef.current && time > 1) {
+       isInitialLoadRef.current = false;
+    }
+
     setCurrentTime(time);
 
     // Update buffered time more accurately
@@ -477,6 +492,15 @@ const Player: React.FC = () => {
     if (audioRef.current) {
       const browserDuration = audioRef.current.duration;
       setDuration(browserDuration);
+
+      // Resume position from store if this is the initial load for this chapter
+      if (isInitialLoadRef.current) {
+        const resumePosition = usePlayerStore.getState().currentTime;
+        if (resumePosition > 0) {
+          console.log(`Resuming chapter ${currentChapter?.title} at ${resumePosition}s`);
+          audioRef.current.currentTime = resumePosition;
+        }
+      }
 
       // Sync duration back to server if it's significantly different
       if (currentChapter && browserDuration > 0) {
@@ -638,7 +662,7 @@ const Player: React.FC = () => {
     >
       <audio
         ref={audioRef}
-        src={getStreamUrl(currentChapter.id)}
+        src={getStreamUrl(currentChapter.id) + (retryCount > 0 ? `&retry=${retryCount}` : '')}
         crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onProgress={handleProgress}
@@ -653,6 +677,12 @@ const Player: React.FC = () => {
             if (audio.error.code === 4) {
               console.log('Playback aborted (normal)');
               return;
+            }
+            // Auto retry on decode error (code 3)
+            if (audio.error.code === 3 && retryCount < 3) {
+                 console.log(`Playback decode error, retrying (${retryCount + 1}/3)...`);
+                 setRetryCount(prev => prev + 1);
+                 return;
             }
             console.error('Audio element error', audio.error);
           } else {
