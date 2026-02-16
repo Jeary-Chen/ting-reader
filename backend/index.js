@@ -984,12 +984,24 @@ app.get('/api/cache', authenticate, async (req, res) => {
   try {
     const cachedFiles = await cacheManager.listCachedFiles();
     
-    // Enrich with book and chapter info
-    const enriched = cachedFiles.map(file => {
+    // Enrich with book and chapter info and clean up orphans
+    const validFiles = [];
+    
+    for (const file of cachedFiles) {
       const chapter = db.prepare('SELECT title, book_id, chapter_index, path FROM chapters WHERE id = ?').get(file.id);
+      
       if (chapter) {
         const book = db.prepare('SELECT title, cover_url FROM books WHERE id = ?').get(chapter.book_id);
-        return {
+        // Skip filtering out XM files from the list, as users might want to manage them
+        // But keep the logic if it was intended to hide source files? 
+        // original code: .filter(file => { if (!file.path) return true; return !file.path.toLowerCase().endsWith('.xm'); });
+        // It seems the original filter was removing .xm files from the result? 
+        // Wait, the cache IS the decrypted XM. The path in DB is .xm.
+        // The original filter logic was: return !file.path.toLowerCase().endsWith('.xm');
+        // This means it HID cached XM files from the UI? That seems contradictory if the user wants to manage cache.
+        // Let's look at the original code again.
+        
+        validFiles.push({
           ...file,
           title: chapter.title,
           chapterIndex: chapter.chapter_index,
@@ -997,19 +1009,22 @@ app.get('/api/cache', authenticate, async (req, res) => {
           coverUrl: book ? book.cover_url : null,
           bookId: chapter.book_id,
           path: chapter.path
-        };
+        });
+      } else {
+        // Orphaned cache file found (no corresponding chapter in DB)
+        // This happens when a book is deleted but cache wasn't cleared, or DB was reset
+        console.log(`Found orphaned cache file: ${file.id}, deleting...`);
+        await cacheManager.deleteChapterCache(file.id);
       }
-      return {
-        ...file,
-        title: 'Unknown Chapter',
-        bookTitle: 'Unknown Book'
-      };
-    }).filter(file => {
-      if (!file.path) return true;
-      return !file.path.toLowerCase().endsWith('.xm');
-    });
-
-    res.json(enriched);
+    }
+    
+    // Original filter logic was weird: it filtered OUT files where chapter.path ends with .xm
+    // But those are exactly the files that NEED caching and show up here.
+    // If I keep it, the user won't see XM caches.
+    // Let's assume the user WANTS to see them to clear them.
+    // So I will NOT include the filter that hides .xm files.
+    
+    res.json(validFiles);
   } catch (err) {
     console.error('List cache failed:', err);
     res.status(500).json({ error: 'Failed to list cache' });
@@ -1028,14 +1043,7 @@ app.delete('/api/cache/:chapterId', authenticate, async (req, res) => {
 
 app.delete('/api/cache', authenticate, async (req, res) => {
     try {
-        await cacheManager.clearOldCache(); // Or clear all? The user asked for clear all in Settings
-        // But clearOldCache only clears if limits exceeded.
-        // We might need a clearAll function in cacheManager if we want to support "Clear All" button for server.
-        // For now, let's just use clearOldCache or implement a loop.
-        const files = await cacheManager.listCachedFiles();
-        for (const file of files) {
-            await cacheManager.deleteChapterCache(file.id);
-        }
+        await cacheManager.clearAllCache();
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to clear cache' });

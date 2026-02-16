@@ -148,11 +148,24 @@ async function listCachedFiles() {
   return fileDetails;
 }
 
+async function clearAllCache() {
+  const files = await fsPromises.readdir(CACHE_DIR);
+  for (const file of files) {
+    try {
+      await fsPromises.unlink(path.join(CACHE_DIR, file));
+    } catch (e) {
+      // Ignore
+    }
+  }
+  console.log(`Cleared all ${files.length} cache files.`);
+}
+
 module.exports = {
   isCached,
   saveToCache,
   getCachePath,
   clearOldCache,
+  clearAllCache,
   getMimeType,
   clearCacheForBook,
   deleteChapterCache,
