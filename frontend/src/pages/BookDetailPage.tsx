@@ -610,7 +610,21 @@ const BookDetailPage: React.FC = () => {
             return (
               <div 
                 key={chapter.id}
-                onClick={() => isBatchMode ? toggleChapterSelection(chapter.id) : playChapter(book!, chapters, chapter)}
+                id={`chapter-${chapter.id}`}
+                onClick={() => {
+                  if (isBatchMode) {
+                      toggleChapterSelection(chapter.id);
+                  } else {
+                      // Logic sync with desktop/mobile:
+                      // If clicking current chapter, toggle play/pause
+                      // Otherwise play new chapter
+                      if (isCurrent) {
+                          togglePlay();
+                      } else {
+                          playChapter(book!, chapters, chapter);
+                      }
+                  }
+                }}
                 className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all border ${
                   isActive 
                     ? 'bg-opacity-10 border-opacity-20' 
