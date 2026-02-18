@@ -8,12 +8,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'pwa-64.png', 'pwa-128.png', 'pwa-256.png', 'pwa-512.png', 'pwa-*-maskable.png'],
+      includeAssets: ['favicon.ico', 'pwa-64.png', 'pwa-128.png', 'pwa-192.png', 'pwa-256.png', 'pwa-512.png', 'pwa-*-maskable.png'],
       devOptions: {
         enabled: true,
         type: 'module',
       },
       manifest: {
+        id: 'ting-reader',
         name: 'Ting Reader',
         short_name: 'Ting',
         description: 'Your self-hosted audiobook platform',
@@ -25,19 +26,33 @@ export default defineConfig({
         orientation: 'portrait-primary',
         icons: [
           {
+            src: 'favicon.ico',
+            sizes: '256x256 128x128 64x64 48x48 32x32 16x16',
+            type: 'image/x-icon'
+          },
+          {
             src: 'pwa-64.png',
             sizes: '64x64',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: 'pwa-128.png',
             sizes: '128x128',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: 'pwa-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: 'pwa-256.png',
             sizes: '256x256',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: 'pwa-512.png',
@@ -54,6 +69,12 @@ export default defineConfig({
           {
             src: 'pwa-128-maskable.png',
             sizes: '128x128',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
+          {
+            src: 'pwa-192-maskable.png',
+            sizes: '192x192',
             type: 'image/png',
             purpose: 'maskable'
           },
