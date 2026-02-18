@@ -9,6 +9,10 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['logo.png'],
+      devOptions: {
+        enabled: true,
+        type: 'module',
+      },
       manifest: {
         name: 'Ting Reader',
         short_name: 'Ting',
@@ -16,10 +20,13 @@ export default defineConfig({
         theme_color: '#0284c7',
         background_color: '#ffffff',
         display: 'standalone',
+        start_url: '/',
+        scope: '/',
+        orientation: 'portrait-primary',
         icons: [
           {
             src: 'logo.png',
-            sizes: '64x64 32x32 24x24 16x16',
+            sizes: '64x64',
             type: 'image/png'
           },
           {
@@ -29,7 +36,7 @@ export default defineConfig({
           },
           {
             src: 'logo.png',
-            sizes: '512x512',
+            sizes: '256x256',
             type: 'image/png',
             purpose: 'any maskable'
           }
