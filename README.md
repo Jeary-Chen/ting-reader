@@ -6,7 +6,7 @@ Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱�
 >
 > 访问官网查看最新文档、下载客户端及在线演示。
 
-![License](https://img.shields.io/github/license/dqsq2e2/ting-reader)
+![License](https://img.shields.io/github/license/dqsq2e2/ting-reader?cache=none)
 ![Docker Pulls](https://img.shields.io/docker/pulls/dqsq2e2/ting-reader)
 ![GitHub Release](https://img.shields.io/github/v/release/dqsq2e2/ting-reader)
 [![Official Website](https://img.shields.io/badge/Official-Website-blue?logo=internetexplorer)](https://www.tingreader.cn)
