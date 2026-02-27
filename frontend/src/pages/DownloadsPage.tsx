@@ -16,7 +16,8 @@ const DownloadsPage: React.FC = () => {
   const fetchCachedFiles = async () => {
     try {
       const res = await apiClient.get('/api/cache');
-      setCachedFiles(res.data);
+      // Backend returns { caches: [], total: 0, totalSize: 0 }
+      setCachedFiles(res.data.caches || []);
     } catch (err) {
       console.error('Failed to fetch cache:', err);
     } finally {
@@ -40,7 +41,7 @@ const DownloadsPage: React.FC = () => {
     
     try {
       await apiClient.delete(`/api/cache/${id}`);
-      setCachedFiles(prev => prev.filter(f => f.id !== id));
+      setCachedFiles(prev => prev.filter(f => f.chapterId !== id));
     } catch (err) {
       console.error('Failed to delete cache:', err);
     }
@@ -70,7 +71,7 @@ const DownloadsPage: React.FC = () => {
         };
       }
       groups[bookTitle].count++;
-      groups[bookTitle].size += file.size;
+      groups[bookTitle].size += (file.fileSize || 0);
       groups[bookTitle].files.push(file);
     });
     
@@ -93,9 +94,9 @@ const DownloadsPage: React.FC = () => {
 
     for (const file of filesToDelete) {
       try {
-        await apiClient.delete(`/api/cache/${file.id}`);
+        await apiClient.delete(`/api/cache/${file.chapterId}`);
       } catch (err) {
-        console.error(`Failed to delete cache ${file.id}`, err);
+        console.error(`Failed to delete cache ${file.chapterId}`, err);
       }
     }
     
@@ -185,7 +186,7 @@ const DownloadsPage: React.FC = () => {
                         {expandedBookTitle === group.title && (
                             <div className="bg-slate-50/50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800 pl-4 sm:pl-12">
                                 {group.files.map(file => (
-                                    <div key={file.id} className="p-3 pl-4 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors flex items-center gap-4 group/item">
+                                    <div key={file.chapterId} className="p-3 pl-4 hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors flex items-center gap-4 group/item">
                                         {/* Icon Status */}
                                         <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-blue-50 text-blue-500 dark:bg-blue-900/20">
                                             <HardDrive size={16} />
@@ -194,19 +195,19 @@ const DownloadsPage: React.FC = () => {
                                         {/* Content */}
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2">
-                                                <h4 className="font-medium text-slate-900 dark:text-white truncate text-sm">{file.title || `Chapter ${file.id}`}</h4>
+                                                <h4 className="font-medium text-slate-900 dark:text-white truncate text-sm">{file.chapterTitle || `Chapter ${file.chapterIndex || ''}`}</h4>
                                                 <span className="text-[10px] bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded-full text-slate-500">
-                                                    {formatSize(file.size)}
+                                                    {formatSize(file.fileSize || 0)}
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-3 text-[10px] text-slate-400 mt-0.5">
-                                                <span>缓存时间: {new Date(file.mtime).toLocaleString()}</span>
+                                                <span>缓存时间: {file.createdAt ? new Date(file.createdAt).toLocaleString() : '未知'}</span>
                                             </div>
                                         </div>
 
                                         {/* Actions */}
                                         <button 
-                                            onClick={(e) => { e.stopPropagation(); handleDelete(file.id); }}
+                                            onClick={(e) => { e.stopPropagation(); handleDelete(file.chapterId); }}
                                             className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all opacity-0 group-hover/item:opacity-100 focus:opacity-100"
                                             title="删除缓存"
                                         >

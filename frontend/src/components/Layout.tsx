@@ -14,7 +14,8 @@ import {
   Users,
   Terminal,
   Headphones,
-  Download
+  Download,
+  Puzzle
 } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import { useTheme } from '../hooks/useTheme';
@@ -66,8 +67,10 @@ const Layout: React.FC = () => {
     if (user && !isConnecting && !connectionError) {
       apiClient.get('/api/settings').then(res => {
         const settings = res.data;
-        if (settings.playback_speed) {
-          setPlaybackSpeed(settings.playback_speed);
+        // API returns camelCase
+        const speed = settings.playbackSpeed || settings.playback_speed;
+        if (speed) {
+          setPlaybackSpeed(speed);
         }
       }).catch(err => console.error('Failed to sync user settings', err));
     }
@@ -87,6 +90,7 @@ const Layout: React.FC = () => {
   const adminItems = [
     { icon: <Database size={20} />, label: '库管理', path: '/admin/libraries' },
     { icon: <Download size={20} />, label: '缓存管理', path: '/downloads' },
+    { icon: <Puzzle size={20} />, label: '插件管理', path: '/admin/plugins' },
     { icon: <Terminal size={20} />, label: '任务日志', path: '/admin/tasks' },
     { icon: <Users size={20} />, label: '用户管理', path: '/admin/users' },
   ];

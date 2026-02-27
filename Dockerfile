@@ -1,42 +1,72 @@
 # Stage 1: Build Frontend
-FROM node:20-slim AS frontend-builder
+FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
-COPY frontend/package*.json ./
-# Use npm ci for faster and more reliable builds
+
+# Copy dependency files
+COPY frontend/package.json frontend/package-lock.json ./
+# Install dependencies
 RUN npm ci
-COPY frontend/ ./
+
+# Copy source code
+COPY frontend ./
+# Build frontend
 RUN npm run build
 
-# Stage 2: Runtime
-FROM node:20-slim
+# Stage 2: Build Backend
+FROM rust:1.85-bookworm AS backend-builder
+WORKDIR /app/backend
+
+# Copy manifests
+COPY backend/Cargo.toml backend/Cargo.lock ./
+
+# Create dummy source to build dependencies
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Build dependencies
+RUN cargo build --release
+
+# Remove dummy source and build artifacts for the app itself
+RUN rm -rf src
+RUN rm -f target/release/deps/ting_reader*
+
+# Copy actual source
+COPY backend/src ./src
+
+# Build for release
+RUN cargo build --release
+
+# Stage 3: Runtime
+FROM debian:bookworm-slim
 WORKDIR /app
 
-# Install build dependencies for better-sqlite3 and ffmpeg for audio transcoding
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    python3 \
-    make \
-    g++ \
-    ffmpeg \
+    openssl \
+    ca-certificates \
+    libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/package*.json ./
-# Use npm ci and omit devDependencies
-RUN npm ci --omit=dev
+# Copy backend binary
+COPY --from=backend-builder /app/backend/target/release/ting_reader /app/ting-reader
 
-# Remove build dependencies to keep image small
-RUN apt-get purge -y python3 make g++ && apt-get autoremove -y
+# Copy frontend static files
+COPY --from=frontend-builder /app/frontend/dist /app/static
 
-COPY backend/ ./
-# Copy built frontend from stage 1
-COPY --from=frontend-builder /app/frontend/dist ./public
+# Create necessary directories
+RUN mkdir -p /app/data /app/plugins /app/temp /app/storage
 
-# Create storage, cache and data directories
-RUN mkdir -p storage cache data && chmod 777 storage cache data
+# Set environment variables
+ENV RUST_LOG=info
+ENV STATIC_DIR=/app/static
+ENV DATA_DIR=/app/data
+ENV TEMP_DIR=/app/temp
+ENV STORAGE_DIR=/app/storage
+ENV TING_CONFIG_PATH=/app/config.toml
+ENV TING_HOST=0.0.0.0
+ENV TING_PORT=3000
 
-# Environment variables
-ENV PORT=3000
-ENV NODE_ENV=production
-ENV DB_PATH=/app/data/ting-reader.db
-
+# Expose port
 EXPOSE 3000
-CMD ["node", "index.js"]
+
+# Start command
+CMD ["./ting-reader"]

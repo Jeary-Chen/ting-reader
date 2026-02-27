@@ -28,12 +28,12 @@ const SettingsPage: React.FC = () => {
   const { applyTheme } = useTheme();
   const setPlaybackSpeed = usePlayerStore(state => state.setPlaybackSpeed);
   const [settings, setSettings] = useState({
-    playback_speed: 1.0,
-    sleep_timer_default: 0,
-    auto_preload: false,
-    auto_cache: false,
+    playbackSpeed: 1.0,
+    sleepTimerDefault: 0,
+    autoPreload: false,
+    autoCache: false,
     theme: 'system' as 'light' | 'dark' | 'system',
-    widget_css: ''
+    widgetCss: ''
   });
   const [accountData, setAccountData] = useState({
     username: user?.username || '',
@@ -51,11 +51,18 @@ const SettingsPage: React.FC = () => {
   const fetchSettings = async () => {
     try {
       const response = await apiClient.get('/api/settings');
+      const data = response.data;
+      // Data is already camelCase from interceptor
       const fetchedSettings = {
-        ...response.data,
-        auto_preload: !!response.data.auto_preload,
-        auto_cache: !!response.data.auto_cache
+        playbackSpeed: data.playbackSpeed ?? 1.0,
+        sleepTimerDefault: data.sleepTimerDefault ?? 0,
+        autoPreload: data.autoPreload ?? false,
+        autoCache: data.autoCache ?? false,
+        theme: data.theme ?? 'system',
+        widgetCss: data.widgetCss ?? '',
+        ...data
       };
+      
       setSettings(fetchedSettings);
       // Ensure local theme matches server theme
       if (fetchedSettings.theme) {
@@ -70,12 +77,17 @@ const SettingsPage: React.FC = () => {
 
   const handleSave = async (newSettings: any) => {
     try {
-      await apiClient.post('/api/settings', newSettings);
+      // Create a clean copy without system fields to avoid recursion
+      // The settingsJson field causes recursion if sent back to the server
+      const { settingsJson, userId, updatedAt, ...cleanSettings } = newSettings;
+      
+      // client interceptor handles camelCase -> snake_case conversion for request body
+      await apiClient.post('/api/settings', cleanSettings);
       setSettings(newSettings);
       
       // Sync playback speed to player store immediately
-      if (newSettings.playback_speed) {
-        setPlaybackSpeed(newSettings.playback_speed);
+      if (newSettings.playbackSpeed) {
+        setPlaybackSpeed(newSettings.playbackSpeed);
       }
       
       // Apply theme immediately if it changed
@@ -270,9 +282,9 @@ const SettingsPage: React.FC = () => {
                 {[1.0, 1.25, 1.5, 2.0].map(speed => (
                   <button
                     key={speed}
-                    onClick={() => handleSave({ ...settings, playback_speed: speed })}
+                    onClick={() => handleSave({ ...settings, playbackSpeed: speed })}
                     className={`flex-1 sm:flex-none px-2 md:px-4 py-2 text-sm font-bold rounded-lg transition-all ${
-                      settings.playback_speed === speed ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600' : 'text-slate-500'
+                      settings.playbackSpeed === speed ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600' : 'text-slate-500'
                     }`}
                   >
                     {speed}x
@@ -287,13 +299,13 @@ const SettingsPage: React.FC = () => {
                 <p className="text-xs md:text-sm text-slate-500 line-clamp-2">播放当前章节时，后台自动解密并缓冲下一章节</p>
               </div>
               <button
-                onClick={() => handleSave({ ...settings, auto_preload: !settings.auto_preload })}
+                onClick={() => handleSave({ ...settings, autoPreload: !settings.autoPreload })}
                 className={`flex-shrink-0 w-12 md:w-14 h-7 md:h-8 rounded-full transition-all relative ${
-                  settings.auto_preload ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
+                  settings.autoPreload ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
                 }`}
               >
                 <div className={`absolute top-1 w-5 md:w-6 h-5 md:h-6 bg-white rounded-full transition-all ${
-                  settings.auto_preload ? 'left-6 md:left-7' : 'left-1'
+                  settings.autoPreload ? 'left-6 md:left-7' : 'left-1'
                 }`} />
               </button>
             </div>
@@ -306,13 +318,13 @@ const SettingsPage: React.FC = () => {
                 </p>
               </div>
               <button
-                onClick={() => handleSave({ ...settings, auto_cache: !settings.auto_cache })}
+                onClick={() => handleSave({ ...settings, autoCache: !settings.autoCache })}
                 className={`flex-shrink-0 w-12 md:w-14 h-7 md:h-8 rounded-full transition-all relative ${
-                  settings.auto_cache ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
+                  settings.autoCache ? 'bg-primary-600' : 'bg-slate-200 dark:bg-slate-700'
                 }`}
               >
                 <div className={`absolute top-1 w-5 md:w-6 h-5 md:h-6 bg-white rounded-full transition-all ${
-                  settings.auto_cache ? 'left-6 md:left-7' : 'left-1'
+                  settings.autoCache ? 'left-6 md:left-7' : 'left-1'
                 }`} />
               </button>
             </div>
@@ -332,8 +344,8 @@ const SettingsPage: React.FC = () => {
                 <span className="text-[10px] text-slate-400 uppercase font-bold">针对 Widget 生效</span>
               </div>
               <textarea 
-                value={settings.widget_css}
-                onChange={e => setSettings({ ...settings, widget_css: e.target.value })}
+                value={settings.widgetCss}
+                onChange={e => setSettings({ ...settings, widgetCss: e.target.value })}
                 onBlur={() => handleSave(settings)}
                 placeholder=".widget-mode { background: transparent !important; }"
                 className="w-full h-32 px-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white font-mono text-sm"

@@ -14,7 +14,7 @@ const BookshelfPage: React.FC = () => {
   const [selectedLibraryId, setSelectedLibraryId] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'created_at' | 'title' | 'author'>('created_at');
+  const [sortBy, setSortBy] = useState<'createdAt' | 'title' | 'author'>('createdAt');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
 
   useEffect(() => {
@@ -22,7 +22,7 @@ const BookshelfPage: React.FC = () => {
       setLoading(true);
       try {
         const [booksRes, libsRes] = await Promise.all([
-          apiClient.get('/api/books', { params: { library_id: selectedLibraryId || undefined } }),
+          apiClient.get('/api/books', { params: { libraryId: selectedLibraryId || undefined } }),
           apiClient.get('/api/libraries')
         ]);
         setBooks(booksRes.data);
@@ -39,7 +39,7 @@ const BookshelfPage: React.FC = () => {
   const sortedBooks = [...books].sort((a, b) => {
     if (sortBy === 'title') return a.title.localeCompare(b.title, 'zh-CN');
     if (sortBy === 'author') return (a.author || '').localeCompare(b.author || '', 'zh-CN');
-    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
 
   const filteredBooks = sortedBooks.filter(book => 
@@ -114,11 +114,11 @@ const BookshelfPage: React.FC = () => {
                     排序方式
                   </div>
                   <button 
-                    onClick={() => { setSortBy('created_at'); setShowFilterMenu(false); }}
-                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between ${sortBy === 'created_at' ? 'text-primary-600 font-bold bg-primary-50/50 dark:bg-primary-900/20' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+                    onClick={() => { setSortBy('createdAt'); setShowFilterMenu(false); }}
+                    className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between ${sortBy === 'createdAt' ? 'text-primary-600 font-bold bg-primary-50/50 dark:bg-primary-900/20' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
                   >
                     最近添加
-                    {sortBy === 'created_at' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
+                    {sortBy === 'createdAt' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
                   </button>
                   <button 
                     onClick={() => { setSortBy('title'); setShowFilterMenu(false); }}

@@ -1,4 +1,6 @@
 import axios from 'axios';
+import camelcaseKeys from 'camelcase-keys';
+import snakecaseKeys from 'snakecase-keys';
 import { useAuthStore } from '../store/authStore';
 
 // Initial base URL
@@ -22,16 +24,32 @@ apiClient.interceptors.request.use((config) => {
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+
+  // Transform request data to snake_case
+  if (config.data && config.headers['Content-Type'] === 'application/json') {
+    config.data = snakecaseKeys(config.data, { deep: true });
+  }
+
+  // Transform params to snake_case
+  if (config.params) {
+    config.params = snakecaseKeys(config.params, { deep: true });
+  }
+
   return config;
 });
 
 apiClient.interceptors.response.use(
   (response) => {
     // Check if we were redirected and update activeUrl if needed
-    // Note: This relies on the browser/XHR exposing the final URL
     if (response.request && response.request.responseURL) {
       // ... (existing logic if needed)
     }
+
+    // Transform response data to camelCase
+    if (response.data && response.headers['content-type']?.includes('application/json')) {
+      response.data = camelcaseKeys(response.data, { deep: true });
+    }
+
     return response;
   },
   async (error) => {
@@ -65,9 +83,6 @@ apiClient.interceptors.response.use(
              
              // Update request baseURL and retry
              originalRequest.baseURL = newActiveUrl;
-             // Ensure the url is relative to the new baseURL if it was absolute
-             // Actually axios merges baseURL + url. If url is absolute, baseURL is ignored.
-             // We need to be careful. Usually 'url' in config is relative (e.g. /api/auth/login).
              
              return apiClient(originalRequest);
            }

@@ -48,7 +48,9 @@ const WidgetPage: React.FC = () => {
   useEffect(() => {
     if (isAuthenticated) {
       apiClient.get('/api/settings').then(res => {
-        if (res.data.widget_css) {
+        // API returns camelCase
+        const css = res.data.widgetCss ?? res.data.widget_css;
+        if (css) {
           const styleId = 'widget-custom-css';
           let style = document.getElementById(styleId) as HTMLStyleElement;
           if (!style) {
@@ -56,7 +58,7 @@ const WidgetPage: React.FC = () => {
             style.id = styleId;
             document.head.appendChild(style);
           }
-          style.innerHTML = res.data.widget_css;
+          style.innerHTML = css;
         }
       }).catch(err => console.error('Failed to load widget settings', err));
     }

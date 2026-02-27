@@ -1,6 +1,6 @@
 export const getCoverUrl = (url?: string, libraryId?: string, bookId?: string) => {
-  const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:3000');
-  const token = localStorage.getItem('auth_token');
+  const API_BASE_URL = localStorage.getItem('active_url') || localStorage.getItem('server_url') || import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:3000');
+  const token = localStorage.getItem('auth_storage') ? JSON.parse(localStorage.getItem('auth_storage') || '{}').state?.token : localStorage.getItem('auth_token');
   
   if (!url) return '/placeholder-cover.png';
   if (url.startsWith('http')) return url;

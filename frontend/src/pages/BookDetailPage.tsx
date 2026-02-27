@@ -4,6 +4,8 @@ import apiClient from '../api/client';
 import type { Book, Chapter } from '../types';
 import { usePlayerStore } from '../store/playerStore';
 
+import ChapterManagerModal from '../components/ChapterManagerModal';
+import ScrapeDiffModal from '../components/ScrapeDiffModal';
 import { 
   Play, 
   Heart, 
@@ -19,15 +21,18 @@ import {
   Edit,
   Save,
   X,
-  Sparkles,
   Loader2,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Settings,
+  RefreshCw,
+  Wand2
 } from 'lucide-react';
 import { getCoverUrl } from '../utils/image';
 import { useAuthStore } from '../store/authStore';
 import ExpandableTitle from '../components/ExpandableTitle';
 import { setAlpha, toSolidColor } from '../utils/color';
+import { FastAverageColor } from 'fast-average-color';
 
 const BookDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -38,11 +43,12 @@ const BookDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isFavorite, setIsFavorite] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isChapterManagerOpen, setIsChapterManagerOpen] = useState(false);
+  const [isScrapeDiffOpen, setIsScrapeDiffOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteSourceFiles, setDeleteSourceFiles] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [editData, setEditData] = useState<Partial<Book>>({});
-  const [scraping, setScraping] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const [activeTab, setActiveTab] = useState<'main' | 'extra'>('main');
@@ -55,6 +61,35 @@ const BookDetailPage: React.FC = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const hasInitialScrolled = useRef(false);
   const [highlightedChapterId, setHighlightedChapterId] = useState<string | null>(null);
+  
+  // Regex Generator State
+  const [showRegexGenerator, setShowRegexGenerator] = useState(false);
+  const [genFilename, setGenFilename] = useState('');
+  const [genNum, setGenNum] = useState('');
+  const [genTitle, setGenTitle] = useState('');
+  const [genResult, setGenResult] = useState<any>(null);
+
+  const handleGenerateRegex = async () => {
+    if (!genFilename || !genNum || !genTitle) return;
+    try {
+      const res = await apiClient.post('/api/tools/regex/generate', {
+        filename: genFilename,
+        chapter_number: genNum,
+        chapter_title: genTitle
+      });
+      setGenResult(res.data);
+    } catch (e) {
+      alert('生成失败');
+    }
+  };
+
+  const applyGeneratedRegex = () => {
+    if (genResult?.regex) {
+      setEditData({ ...editData, chapterRegex: genResult.regex });
+      setShowRegexGenerator(false);
+      setGenResult(null);
+    }
+  };
 
   // Reset scroll state when book ID changes
   useEffect(() => {
@@ -65,7 +100,7 @@ const BookDetailPage: React.FC = () => {
   // Clear highlighted chapter when current chapter changes (user plays a new chapter)
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   useEffect(() => {
-    if (currentChapter?.book_id === book?.id) {
+    if (currentChapter?.bookId === book?.id) {
       setHighlightedChapterId(null);
     }
   }, [currentChapter?.id, book?.id]);
@@ -82,8 +117,8 @@ const BookDetailPage: React.FC = () => {
 
   const { mainChapters, extraChapters } = React.useMemo(() => {
     return {
-      mainChapters: chapters.filter(c => !c.is_extra),
-      extraChapters: chapters.filter(c => c.is_extra)
+      mainChapters: chapters.filter(c => !c.isExtra),
+      extraChapters: chapters.filter(c => c.isExtra)
     };
   }, [chapters]);
 
@@ -95,8 +130,8 @@ const BookDetailPage: React.FC = () => {
     for (let i = 0; i < currentChapters.length; i += chaptersPerGroup) {
       const slice = currentChapters.slice(i, i + chaptersPerGroup);
       g.push({
-        start: slice[0]?.chapter_index || (i + 1),
-        end: slice[slice.length - 1]?.chapter_index || (i + slice.length),
+        start: i + 1,
+        end: i + slice.length,
         chapters: slice
       });
     }
@@ -109,11 +144,28 @@ const BookDetailPage: React.FC = () => {
   const playChapter = usePlayerStore((state) => state.playChapter);
   const togglePlay = usePlayerStore((state) => state.togglePlay);
 
+
+
   useEffect(() => {
-    if (book?.theme_color) {
-      setThemeColor(book.theme_color);
+    if (book) {
+      // Prefer camelCase if available, otherwise snake_case
+      const color = book.themeColor;
+      if (color) {
+        setThemeColor(color);
+      } else if (book.coverUrl) {
+        // If no theme color but we have a cover, extract it client-side
+        const coverUrl = getCoverUrl(book.coverUrl, book.libraryId, book.id);
+        const fac = new FastAverageColor();
+        fac.getColorAsync(coverUrl, { algorithm: 'dominant' })
+          .then(color => {
+            setThemeColor(color.hex);
+            // Optionally update the book object locally so it persists in this session
+            setBook(prev => prev ? { ...prev, themeColor: color.hex } : null);
+          })
+          .catch(e => console.warn('Failed to extract color from cover', e));
+      }
     }
-  }, [book?.theme_color]);
+  }, [book]);
 
   useEffect(() => {
     const fetchBookDetails = async () => {
@@ -125,11 +177,8 @@ const BookDetailPage: React.FC = () => {
         ]);
         const fetchedBook = bookRes.data;
         setBook(fetchedBook);
-        if (fetchedBook.theme_color) {
-          setThemeColor(fetchedBook.theme_color);
-        }
         setChapters(chaptersRes.data);
-        setIsFavorite(bookRes.data.is_favorite);
+        setIsFavorite(fetchedBook.isFavorite);
         setCurrentGroupIndex(0); // Reset group index when book changes
       } catch (err) {
         console.error('Failed to fetch book details', err);
@@ -149,15 +198,15 @@ const BookDetailPage: React.FC = () => {
       let targetChapter = null;
 
       // 1. Priority: Currently playing chapter if it belongs to this book
-      if (currentChapter && currentChapter.book_id === book.id) {
+      if (currentChapter && currentChapter.bookId === book.id) {
         targetChapter = currentChapter;
       } 
       // 2. Fallback: Most recently played chapter from history
       else {
-        const playedChapters = [...chapters].filter(c => (c as any).progress_updated_at);
+        const playedChapters = [...chapters].filter(c => (c as any).progressUpdatedAt);
         if (playedChapters.length > 0) {
           playedChapters.sort((a, b) => {
-            return new Date((b as any).progress_updated_at).getTime() - new Date((a as any).progress_updated_at).getTime();
+            return new Date((b as any).progressUpdatedAt).getTime() - new Date((a as any).progressUpdatedAt).getTime();
           });
           targetChapter = playedChapters[0];
         }
@@ -275,34 +324,58 @@ const BookDetailPage: React.FC = () => {
     try {
       const dataToSave = { ...editData };
       // If cover changed, clear theme color so it's recalculated
-      if (editData.cover_url && editData.cover_url !== book?.cover_url) {
-        dataToSave.theme_color = undefined; // Will be handled by COALESCE or we can pass null
+    if (editData.coverUrl && editData.coverUrl !== displayCoverUrl) {
+        dataToSave.themeColor = undefined;
       }
       
-      await apiClient.patch(`/api/books/${id}`, dataToSave);
-      setBook({ ...book!, ...dataToSave });
+      // The API expects camelCase for updates (client will convert to snake_case)
+      const payload: any = { ...dataToSave };
+      
+      await apiClient.patch(`/api/books/${id}`, payload);
+      
+      // Update local state - merge the changes
+      const updatedBook = { ...book!, ...dataToSave };
+      if (payload.coverUrl) {
+        updatedBook.coverUrl = payload.coverUrl;
+      }
+      if (payload.themeColor) {
+        updatedBook.themeColor = payload.themeColor;
+      }
+      
+      setBook(updatedBook);
+      
+      // If the edited book is currently playing, update the player store
+      const currentPlayerState = usePlayerStore.getState();
+      if (currentPlayerState.currentBook?.id === updatedBook.id) {
+        usePlayerStore.setState({
+          currentBook: {
+            ...currentPlayerState.currentBook,
+            ...updatedBook
+          }
+        });
+      }
+      
+      // If chapterRegex changed, trigger a re-scan of this book
+      if (payload.chapterRegex) {
+          // Trigger scan for the library of this book
+          // Ideally we scan ONLY this book, but current API scans whole library.
+          // But `scan_library` is heavy.
+          // The backend `process_book_directory` logic handles re-scanning files if we force it?
+          // Or we can assume user will manually click "Scan" if they want immediate update.
+          // But user said "Modify... and afterwards syncs... re-clean".
+          // "修改之后，之后的同步..." implies future syncs.
+          // "用户可以在元数据修改界面设置... 会从该书籍所在子目录里面根据新的正则规则重新清洗章节名"
+          // This implies immediate action?
+          // Since I didn't implement a "re-clean only this book" API yet, 
+          // I'll rely on the user triggering a scan or I can trigger a library scan in background.
+          // For better UX, let's trigger a library scan (it's async).
+          apiClient.post(`/api/libraries/${book!.libraryId}/scan`);
+          alert('规则已保存。正在后台重新扫描该库以应用新规则...');
+      }
+
       setIsEditModalOpen(false);
     } catch (err) {
       alert('保存失败');
-    }
-  };
-
-  const handleScrape = async () => {
-    setScraping(true);
-    try {
-      const response = await apiClient.get(`/api/scrape/ximalaya?keyword=${encodeURIComponent(book?.title || '')}`);
-      setEditData({
-        ...editData,
-        title: response.data.title,
-        author: response.data.author,
-        cover_url: response.data.cover_url,
-        description: response.data.description,
-        tags: response.data.tags
-      });
-    } catch (err) {
-      alert('刮削失败');
-    } finally {
-      setScraping(false);
     }
   };
 
@@ -333,9 +406,9 @@ const BookDetailPage: React.FC = () => {
   };
 
   const getChapterProgressText = (chapter: Chapter) => {
-    if (!chapter.progress_position || !chapter.duration) return null;
+    if (!chapter.progressPosition || !chapter.duration) return null;
     
-    const percent = Math.floor((chapter.progress_position / chapter.duration) * 100);
+    const percent = Math.floor((chapter.progressPosition / chapter.duration) * 100);
     if (percent === 0) return null;
     if (percent >= 95) return '已播完';
     return `已播${percent}%`;
@@ -346,15 +419,20 @@ const BookDetailPage: React.FC = () => {
     return 'text-xl sm:text-2xl md:text-3xl';
   };
 
-  const displayThemeColor = themeColor || book?.theme_color;
+
+
+  const displayThemeColor = book ? (book.themeColor || themeColor) : themeColor;
+  const displayCoverUrl = book ? book.coverUrl : undefined;
+  const displayLibraryId = book ? book.libraryId : undefined;
+  const displayLibraryType = book ? book.libraryType : undefined;
 
   useEffect(() => {
     if (displayThemeColor) {
-      const bgColor = setAlpha(displayThemeColor, 0.08);
+      const bgColor = setAlpha(displayThemeColor, 0.05);
       document.documentElement.style.setProperty('--page-background', bgColor);
     }
     return () => {
-      document.documentElement.style.setProperty('--page-background', 'transparent');
+      document.documentElement.style.removeProperty('--page-background');
     };
   }, [displayThemeColor]);
 
@@ -369,7 +447,9 @@ const BookDetailPage: React.FC = () => {
   if (!book) return <div className="dark:text-white p-8">未找到书籍</div>;
 
   return (
-    <div className="flex-1 min-h-full flex flex-col p-4 sm:p-6 md:p-8 animate-in slide-in-from-bottom-4 duration-500">
+    <div 
+      className="flex-1 min-h-full flex flex-col p-4 sm:p-6 md:p-8 animate-in slide-in-from-bottom-4 duration-500"
+    >
       <div className="flex-1 max-w-6xl mx-auto space-y-8 w-full">
         {/* Header */}
         <button 
@@ -386,12 +466,14 @@ const BookDetailPage: React.FC = () => {
           <div className="w-48 md:w-72 mx-auto md:mx-0 shrink-0">
             <div className="aspect-[3/4] rounded-3xl overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800">
               <img 
-                src={getCoverUrl(book.cover_url, book.library_id, book.id)} 
+                src={getCoverUrl(displayCoverUrl, displayLibraryId, book.id)} 
                 alt={book.title}
-                crossOrigin="anonymous"
                 className="w-full h-full object-cover rounded-lg shadow-xl"
+                referrerPolicy="no-referrer"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = 'https://placehold.co/300x400?text=No+Cover';
+                  const target = e.target as HTMLImageElement;
+                  target.src = 'https://placehold.co/300x400?text=No+Cover';
+                  target.onerror = null;
                 }}
               />
             </div>
@@ -460,9 +542,9 @@ const BookDetailPage: React.FC = () => {
               <button 
                 onClick={() => playBook(book, chapters)}
                 className="flex-1 flex items-center justify-center gap-2 px-8 py-4 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-2xl shadow-xl shadow-primary-500/30 transition-all active:scale-95 group"
-                style={themeColor ? { 
-                  backgroundColor: toSolidColor(themeColor),
-                  boxShadow: `0 10px 20px -5px ${setAlpha(themeColor, 0.3)}`
+                style={displayThemeColor ? { 
+                  backgroundColor: toSolidColor(displayThemeColor),
+                  boxShadow: `0 10px 20px -5px ${setAlpha(displayThemeColor, 0.3)}`
                 } : {}}
               >
                 <Play size={20} fill="currentColor" />
@@ -479,37 +561,56 @@ const BookDetailPage: React.FC = () => {
                 <Heart size={24} fill={isFavorite ? "currentColor" : "none"} />
               </button>
               {user?.role === 'admin' && (
-                <button 
-                  onClick={() => {
-                    setEditData({ ...book });
-                    setIsEditModalOpen(true);
-                  }}
-                  className="p-3.5 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-primary-600 transition-all active:scale-95"
-                >
-                  <Edit size={24} />
-                </button>
+                <>
+                  <button 
+                    onClick={() => setIsScrapeDiffOpen(true)}
+                    className="p-3.5 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-primary-600 transition-all active:scale-95"
+                    title="同步元数据"
+                  >
+                    <RefreshCw size={24} />
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setEditData({ 
+                        ...book,
+                        // Ensure we populate the form with canonical values
+                        coverUrl: displayCoverUrl,
+                        themeColor: displayThemeColor,
+                        libraryType: displayLibraryType,
+                        skipIntro: book.skipIntro,
+                        skipOutro: book.skipOutro
+                      });
+                      setIsEditModalOpen(true);
+                    }}
+                    className="p-3.5 rounded-2xl border bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400 hover:text-primary-600 transition-all active:scale-95"
+                  >
+                    <Edit size={24} />
+                  </button>
+                </>
               )}
             </div>
 
             <div 
               className="mt-auto space-y-3 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/50 relative group/desc"
-              style={themeColor ? { backgroundColor: themeColor } : {}}
-            >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm uppercase tracking-wider opacity-60">
-                <Info size={16} />
-                简介内容
-              </div>
-            </div>
-            <div className="relative">
-              <p 
-                ref={descriptionRef}
-                className={`text-sm md:text-base text-slate-600 dark:text-slate-400 leading-relaxed transition-all duration-300 ${
-                  !isDescriptionExpanded ? 'line-clamp-2' : ''
-                }`}
+              style={displayThemeColor ? { 
+                  backgroundColor: setAlpha(displayThemeColor, 0.08)
+                } : {}}
               >
-                {book.description || '暂无简介'}
-              </p>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-900 dark:text-white font-bold text-sm uppercase tracking-wider opacity-60">
+                  <Info size={16} />
+                  简介内容
+                </div>
+              </div>
+              <div className="relative">
+                <p 
+                  ref={descriptionRef}
+                  className={`text-sm md:text-base text-slate-600 dark:text-slate-400 leading-relaxed transition-all duration-300 ${
+                    !isDescriptionExpanded ? 'line-clamp-2' : ''
+                  }`}
+                >
+                  {book.description || '暂无简介'}
+                </p>
               {(isOverflowing || isDescriptionExpanded) && (
                 <button 
                   onClick={() => setIsDescriptionExpanded(!isDescriptionExpanded)}
@@ -533,6 +634,15 @@ const BookDetailPage: React.FC = () => {
           <h2 className="text-xl md:text-2xl font-bold dark:text-white flex items-center gap-2">
             <ListMusic size={24} className="text-primary-600" />
             章节列表
+            {user?.role === 'admin' && (
+              <button 
+                onClick={() => setIsChapterManagerOpen(true)}
+                className="ml-2 p-1.5 text-slate-400 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                title="管理章节"
+              >
+                <Settings size={20} />
+              </button>
+            )}
           </h2>
           
           <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start">
@@ -579,18 +689,18 @@ const BookDetailPage: React.FC = () => {
                   key={index}
                   id={`group-tab-${index}`}
                   onClick={() => setCurrentGroupIndex(index)}
-                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border shrink-0 snap-start ${
-                    currentGroupIndex === index
-                      ? 'text-white shadow-lg shadow-black/10'
-                      : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
-                  }`}
-                  style={currentGroupIndex === index && themeColor ? { 
-                    backgroundColor: toSolidColor(themeColor),
-                    borderColor: toSolidColor(themeColor)
-                  } : {}}
-                >
-                  第 {group.start}-{group.end} 章
-                </button>
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border shrink-0 snap-start ${
+                  currentGroupIndex === index
+                    ? 'text-white shadow-lg shadow-black/10'
+                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                }`}
+                style={currentGroupIndex === index && displayThemeColor ? { 
+                  backgroundColor: toSolidColor(displayThemeColor),
+                  borderColor: toSolidColor(displayThemeColor)
+                } : {}}
+              >
+                第 {group.start}-{group.end} 章
+              </button>
               ))}
             </div>
             <button 
@@ -618,9 +728,9 @@ const BookDetailPage: React.FC = () => {
                     ? 'bg-opacity-10 border-opacity-20' 
                     : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-primary-200 dark:hover:border-primary-800'
                 }`}
-                style={isActive && themeColor ? { 
-                  backgroundColor: setAlpha(themeColor, 0.1),
-                  borderColor: setAlpha(themeColor, 0.3),
+                style={isActive && displayThemeColor ? { 
+                  backgroundColor: setAlpha(displayThemeColor, 0.1),
+                  borderColor: setAlpha(displayThemeColor, 0.3),
                 } : {}}
               >
                 <div 
@@ -630,14 +740,14 @@ const BookDetailPage: React.FC = () => {
                     className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-bold text-base sm:text-lg shrink-0 ${
                       isActive ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                     }`}
-                    style={isActive && themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}
+                    style={isActive && displayThemeColor ? { backgroundColor: toSolidColor(displayThemeColor) } : {}}
                   >
                     {chapter.chapter_index || (actualIndex + 1)}
                   </div>
                   <div className="min-w-0">
                     <p 
                       className={`font-bold truncate ${isActive ? '' : 'text-slate-900 dark:text-white'}`}
-                      style={isActive && themeColor ? { color: toSolidColor(themeColor) } : {}}
+                      style={isActive && displayThemeColor ? { color: toSolidColor(displayThemeColor) } : {}}
                     >
                       {chapter.title}
                     </p>
@@ -664,9 +774,9 @@ const BookDetailPage: React.FC = () => {
                 <div className="flex items-center gap-4">
                   {isCurrent && isPlaying ? (
                     <div className="flex gap-1 items-end h-5">
-                      <div className="w-1 animate-music-bar-1 rounded-full" style={themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}></div>
-                      <div className="w-1 animate-music-bar-2 rounded-full" style={themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}></div>
-                      <div className="w-1 animate-music-bar-3 rounded-full" style={themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}></div>
+                      <div className="w-1 animate-music-bar-1 rounded-full" style={displayThemeColor ? { backgroundColor: toSolidColor(displayThemeColor) } : {}}></div>
+                      <div className="w-1 animate-music-bar-2 rounded-full" style={displayThemeColor ? { backgroundColor: toSolidColor(displayThemeColor) } : {}}></div>
+                      <div className="w-1 animate-music-bar-3 rounded-full" style={displayThemeColor ? { backgroundColor: toSolidColor(displayThemeColor) } : {}}></div>
                     </div>
                   ) : (
                     <div 
@@ -676,7 +786,7 @@ const BookDetailPage: React.FC = () => {
                         playChapter(book!, chapters, chapter);
                       }}
                     >
-                      <Play size={16} className="text-primary-600 ml-1" fill="currentColor" style={themeColor ? { color: toSolidColor(themeColor) } : {}} />
+                      <Play size={16} className="text-primary-600 ml-1" fill="currentColor" style={displayThemeColor ? { color: toSolidColor(displayThemeColor) } : {}} />
                     </div>
                   )}
                 </div>
@@ -686,23 +796,126 @@ const BookDetailPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Chapter Manager Modal */}
+      {isChapterManagerOpen && book && (
+        <ChapterManagerModal
+          bookId={book.id}
+          initialChapters={chapters}
+          onClose={() => setIsChapterManagerOpen(false)}
+          onSave={() => {
+            // Reload chapters
+            apiClient.get(`/api/books/${id}/chapters`).then(res => setChapters(res.data));
+          }}
+        />
+      )}
+
+      {/* Scrape Diff Modal */}
+      {isScrapeDiffOpen && book && (
+        <ScrapeDiffModal
+          bookId={book.id}
+          onClose={() => setIsScrapeDiffOpen(false)}
+          onSave={() => {
+            // Reload book details
+            apiClient.get(`/api/books/${id}`).then(res => setBook(res.data));
+            apiClient.get(`/api/books/${id}/chapters`).then(res => setChapters(res.data));
+          }}
+        />
+      )}
+
       {/* Edit Modal */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsEditModalOpen(false)}></div>
           <div className="relative w-full max-w-2xl max-h-[90vh] bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-y-auto animate-in zoom-in-95 duration-200 no-scrollbar">
+            {showRegexGenerator ? (
+                <div className="p-4 sm:p-6 md:p-8">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-xl font-bold dark:text-white flex items-center gap-2">
+                            <Wand2 className="text-primary-600" /> 正则生成器
+                        </h2>
+                        <button onClick={() => setShowRegexGenerator(false)}><X size={24} className="text-slate-400" /></button>
+                    </div>
+                    
+                    <div className="space-y-4">
+                        <div className="space-y-1">
+                            <label className="text-xs font-bold text-slate-500">示例文件名 (不含后缀)</label>
+                            <input 
+                                type="text" 
+                                value={genFilename}
+                                onChange={e => setGenFilename(e.target.value)}
+                                placeholder="例如：仙子对我图谋不轨 第001集 病娇圣女想把我炼成剑灵1"
+                                className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
+                            />
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500">提取章节号</label>
+                                <input 
+                                    type="text" 
+                                    value={genNum}
+                                    onChange={e => setGenNum(e.target.value)}
+                                    placeholder="例如：1"
+                                    className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
+                                />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-slate-500">提取章节名</label>
+                                <input 
+                                    type="text" 
+                                    value={genTitle}
+                                    onChange={e => setGenTitle(e.target.value)}
+                                    placeholder="例如：病娇圣女想把我炼成剑灵1"
+                                    className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
+                                />
+                            </div>
+                        </div>
+                        
+                        <button 
+                            onClick={handleGenerateRegex}
+                            disabled={!genFilename || !genNum || !genTitle}
+                            className="w-full py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl shadow-lg shadow-primary-500/30 transition-all disabled:opacity-50"
+                        >
+                            生成规则
+                        </button>
+                        
+                        {genResult && (
+                            <div className="mt-6 p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3">
+                                <div>
+                                    <div className="text-xs font-bold text-slate-500 mb-1">生成正则</div>
+                                    <code className="block p-2 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 font-mono text-sm text-primary-600 break-all">
+                                        {genResult.regex}
+                                    </code>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4 text-sm">
+                                    <div>
+                                        <span className="text-slate-500 text-xs">提取序号:</span>
+                                        <div className={genResult.captured_index === genNum ? "text-green-600 font-bold" : "text-red-500"}>
+                                            {genResult.captured_index || "未匹配"}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span className="text-slate-500 text-xs">提取标题:</span>
+                                        <div className={genResult.captured_title === genTitle ? "text-green-600 font-bold" : "text-red-500"}>
+                                            {genResult.captured_title || "未匹配"}
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <button 
+                                    onClick={applyGeneratedRegex}
+                                    className="w-full py-2 border-2 border-primary-600 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-900/20 font-bold rounded-xl transition-all"
+                                >
+                                    使用此规则
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ) : (
             <div className="p-4 sm:p-6 md:p-8">
               <div className="flex items-center justify-between mb-4 sm:mb-6">
                 <h2 className="text-xl sm:text-2xl font-bold dark:text-white">编辑书籍元数据</h2>
-                <button 
-                  onClick={handleScrape}
-                  disabled={scraping}
-                  className="flex items-center gap-2 px-3 py-1.5 sm:px-4 sm:py-2 bg-primary-50 dark:bg-primary-900/20 text-primary-600 rounded-xl text-xs sm:text-sm font-bold hover:bg-primary-100 transition-all disabled:opacity-50"
-                >
-                  {scraping ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-                  <span className="hidden sm:inline">自动刮削 (喜马拉雅)</span>
-                  <span className="sm:hidden">刮削</span>
-                </button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -743,6 +956,26 @@ const BookDetailPage: React.FC = () => {
                       className="w-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm sm:text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                     />
                   </div>
+                  
+                  <div className="space-y-1">
+                    <label className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider flex justify-between items-center">
+                        <span>章节正则清洗规则</span>
+                        <button 
+                            onClick={() => setShowRegexGenerator(true)}
+                            className="text-primary-600 hover:text-primary-700 flex items-center gap-1"
+                        >
+                            <Wand2 size={12} /> 自动生成
+                        </button>
+                    </label>
+                    <input 
+                      type="text" 
+                      value={editData.chapterRegex || ''}
+                      onChange={e => setEditData({...editData, chapterRegex: e.target.value})}
+                      placeholder="^...(\d+)...(.+)$"
+                      className="w-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm sm:text-base font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
+                    />
+                    <p className="text-[10px] text-slate-400">用于从文件名提取章节号和标题。修改后需重新扫描生效。</p>
+                  </div>
                 </div>
                 
                 <div className="space-y-3 sm:space-y-4">
@@ -750,8 +983,8 @@ const BookDetailPage: React.FC = () => {
                     <label className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">封面 URL</label>
                     <input 
                       type="text" 
-                      value={editData.cover_url || ''}
-                      onChange={e => setEditData({...editData, cover_url: e.target.value})}
+                      value={editData.coverUrl || ''}
+                      onChange={e => setEditData({...editData, coverUrl: e.target.value})}
                       className="w-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm sm:text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                     />
                   </div>
@@ -760,8 +993,8 @@ const BookDetailPage: React.FC = () => {
                       <label className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">跳过片头 (秒)</label>
                       <input 
                         type="number" 
-                        value={editData.skip_intro || 0}
-                        onChange={e => setEditData({...editData, skip_intro: parseInt(e.target.value) || 0})}
+                        value={editData.skipIntro || 0}
+                        onChange={e => setEditData({...editData, skipIntro: parseInt(e.target.value) || 0})}
                         className="w-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm sm:text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                       />
                     </div>
@@ -769,8 +1002,8 @@ const BookDetailPage: React.FC = () => {
                       <label className="text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider">跳过片尾 (秒)</label>
                       <input 
                         type="number" 
-                        value={editData.skip_outro || 0}
-                        onChange={e => setEditData({...editData, skip_outro: parseInt(e.target.value) || 0})}
+                        value={editData.skipOutro || 0}
+                        onChange={e => setEditData({...editData, skipOutro: parseInt(e.target.value) || 0})}
                         className="w-full px-3 py-2 sm:px-4 sm:py-2.5 text-sm sm:text-base bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                       />
                     </div>
@@ -817,6 +1050,7 @@ const BookDetailPage: React.FC = () => {
                 </div>
               </div>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -836,7 +1070,7 @@ const BookDetailPage: React.FC = () => {
                 此操作将从书架中移除《{book.title}》，并清除所有相关的播放进度。
               </p>
 
-              {book.library_type === 'local' && (
+              {book.libraryType === 'local' && (
                 <div 
                   className="flex items-center gap-3 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl mb-8 cursor-pointer group"
                   onClick={() => setDeleteSourceFiles(!deleteSourceFiles)}

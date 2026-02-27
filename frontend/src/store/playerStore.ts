@@ -45,11 +45,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
         if (startChapterId) {
           chapter = chapters.find(c => c.id === startChapterId) || chapters[0];
         } else {
-          // Sort by progress_updated_at descending and take the first one that has progress
-          const playedChapters = [...chapters].filter(c => (c as any).progress_updated_at);
+          // Sort by progressUpdatedAt descending and take the first one that has progress
+          const playedChapters = [...chapters].filter(c => c.progressUpdatedAt);
           if (playedChapters.length > 0) {
             playedChapters.sort((a, b) => {
-              return new Date((b as any).progress_updated_at).getTime() - new Date((a as any).progress_updated_at).getTime();
+              return new Date(b.progressUpdatedAt!).getTime() - new Date(a.progressUpdatedAt!).getTime();
             });
             chapter = playedChapters[0];
           } else {
@@ -62,11 +62,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           chapters, 
           currentChapter: chapter,
           isPlaying: true,
-          currentTime: (chapter as any).progress_position || 0
+          currentTime: chapter.progressPosition || 0
         };
 
-        if (book.theme_color) {
-          newState.themeColor = book.theme_color;
+        if (book.themeColor) {
+          newState.themeColor = book.themeColor;
         } else {
           newState.themeColor = '#F2EDE4'; // Reset to default
         }
@@ -112,11 +112,11 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           chapters, 
           currentChapter: chapter, 
           isPlaying: true, 
-          currentTime: resumePosition ?? ((chapter as any).progress_position || 0)
+          currentTime: resumePosition ?? (chapter.progressPosition || 0)
         };
         
-        if (book.theme_color) {
-          newState.themeColor = book.theme_color;
+        if (book.themeColor) {
+          newState.themeColor = book.themeColor;
         } else {
           newState.themeColor = '#F2EDE4'; // Reset to default
         }

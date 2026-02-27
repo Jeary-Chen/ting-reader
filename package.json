@@ -1,18 +1,15 @@
 {
   "name": "ting-reader",
-  "version": "1.0.10",
-  "description": "A self-hosted audiobook platform",
+  "version": "1.1.0",
   "private": true,
-  "scripts": {
-    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
-    "build:frontend": "cd frontend && npm run build",
-    "start:backend": "cd backend && npm start"
+  "description": "Ting Reader - A self-hosted audiobook player",
+  "author": "coolsjc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coolsjc/ting-reader"
   },
-  "keywords": [
-    "audiobook",
-    "self-hosted",
-    "fnnas"
-  ],
-  "author": "dqsq2e2",
-  "license": "MIT"
+  "workspaces": [
+    "frontend"
+  ]
 }

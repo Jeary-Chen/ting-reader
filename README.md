@@ -1,6 +1,6 @@
 # Ting Reader
 
-Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱好者打造。它支持自动刮削元数据、多端播放进度同步、极致的视觉体验以及多架构 Docker 部署。
+Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱好者打造。它支持自动刮削元数据、多端播放进度同步、极致的视觉体验以及多架构 Docker 部署。后端现已完全重写为 **Rust**，带来更强的性能和更低的资源占用。
 
 > **🌐 官方网站：[https://www.tingreader.cn](https://www.tingreader.cn)**
 >
@@ -72,9 +72,11 @@ Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱�
 
 ## ✨ 功能特性
 
+- ⚡ **Rust 核心**：后端采用 Rust 重写，资源占用极低，响应速度极快，稳定性大幅提升。
 - 📚 **自动刮削**：集成喜马拉雅元数据刮削，自动获取书名、作者、演播者、简介及标签。
+- 🔌 **插件系统**：支持 JS、WASM 和 Native 插件，轻松扩展刮削源和格式支持。
 - 🎨 **自适应主题**：根据书籍封面**自动提取主色调**并实时调整书籍详情页背景与按钮颜色，视觉体验极致沉浸。
-- ☁️ **多源支持**：支持 WebDAV（如 Alist、PikPak）远程存储及本地目录挂载，轻松管理海量有声书资源。
+- ☁️ **多源支持**：支持本地目录挂载，未来将支持 WebDAV（如 Alist、PikPak）远程存储。
 - 🎵 **格式兼容**：支持多种音频格式，包括 **MP3, M4A, M4B, WAV, FLAC, OGG, OPUS, AAC, WMA** 以及喜马拉雅加密格式 **XM**。
 - 🎧 **沉浸播放**：支持跳过片头/片尾，支持播放速度调节及进度记忆。
 - 🏷️ **智能标签**：支持标签筛选，标签云横向滚动展示，交互体验佳。
@@ -97,14 +99,15 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - /path/to/data:/app/data
-      - /path/to/storage:/app/storage
-      - /path/to/cache:/app/cache
-    restart: always
+      - ./data:/app/data        # 数据库和配置
+      - ./storage:/app/storage  # 有声书文件目录
+      - ./plugins:/app/plugins  # 插件目录
+      - ./temp:/app/temp        # 临时缓存目录
+    restart: unless-stopped
     environment:
-      - JWT_SECRET=change-this-to-a-secure-secret
-      - PORT=3000
-      - DB_PATH=/app/data/ting-reader.db
+      - RUST_LOG=info
+      - TING_HOST=0.0.0.0
+      - TING_PORT=3000
 ```
 
 启动容器：
@@ -122,55 +125,44 @@ docker-compose up -d
     - 进入飞牛 fnOS 的 **应用中心**。
     - 点击右上角的 **手动安装** 按钮。
     - 选择并上传下载好的 `.fpk` 文件。
-3.  **完成向导**：按照图形化引导界面配置访问端口、JWT 密钥以及有声书存储路径，点击“完成”后应用将自动创建容器并添加桌面启动图标。
+3.  **完成向导**：按照图形化引导界面配置访问端口以及有声书存储路径，点击“完成”后应用将自动创建容器并添加桌面启动图标。
 
 访问 `http://localhost:3000` (或您自定义的端口) 即可开始使用。
 
 > ⚠️ **注意**：首次登录请使用管理员账号：`admin`，密码：`admin123`。登录后请务必及时在设置页面修改密码以保证安全。
 
-### 📱 移动端 APP (Android)
-
-Ting Reader 官方 Android 客户端，提供原生的后台播放控制与本地缓存管理。
-
-- **下载地址**：前往 [GitHub Releases](https://github.com/dqsq2e2/ting-reader/releases) 下载最新版本的 `.apk` 安装包。
-- **功能特性**：
-  - **原生体验**：支持系统级媒体通知栏控制、锁屏显示与耳机线控。
-  - **智能缓存**：内置 LRU 缓存管理器，自动清理过期音频，节省手机空间。
-  - **无缝漫游**：自动同步服务器播放进度，支持多端断点续传。
-
-### 💻 桌面客户端
-
-Ting Reader 现已推出桌面客户端，支持 Windows、macOS 和 Linux，提供更流畅的本地播放体验与系统级集成。
-
-- **下载地址**：前往 [GitHub Releases](https://github.com/dqsq2e2/ting-reader/releases) 下载对应系统的安装包（如 `Ting-Reader-Setup-x.x.x.exe`）。
-- **功能亮点**：
-  - **无缝连接**：完美解决自托管环境下的 HTTPS 证书与跨域问题，支持 302 重定向登录。
-  - **离线缓存**：自动缓存已播放章节，支持断网播放与秒级 Seek。
-  - **系统集成**：支持全局媒体快捷键、系统托盘控制及后台播放。
-
 ## 🛠️ 开发指南
 
 ### 环境要求
 - Node.js 20+
+- Rust 1.75+
 - SQLite3
-- **FFmpeg** (可选，用于 WMA/FLAC/OGG 等格式转码)
 
-### 安装步骤
+### 项目结构
+```
+ting-reader/
+├── backend/    # Rust 后端源代码
+├── frontend/   # React 前端源代码
+├── plugins/    # 官方插件源码
+└── .github/    # GitHub 工作流与 FPK 配置
+```
 
-1. 克隆仓库：
+### 本地开发
+
+1. **克隆仓库**：
    ```bash
    git clone https://github.com/dqsq2e2/ting-reader.git
    cd ting-reader
    ```
 
-2. 安装后端依赖：
+2. **启动后端**：
    ```bash
    cd backend
-   npm install
-   npm start
+   # 确保 config.toml 配置正确
+   cargo run
    ```
 
-3. 安装前端依赖：
+3. **启动前端**：
    ```bash
    cd ../frontend
    npm install
@@ -192,13 +184,6 @@ Ting Reader 现已推出桌面客户端，支持 Windows、macOS 和 Linux，提
 ## 📄 开源协议
 
 本项目采用 [MIT License](LICENSE) 协议。
-
-## 🙏 致谢
-
-本项目参考或使用了以下优秀开源项目，在此表示衷心的感谢：
-
-- [Abs-Ximalaya](https://github.com/search?q=Abs-Ximalaya&type=repositories): 喜马拉雅刮削与下载参考。
-- [xm_decryptor](https://github.com/jupitergao18/xm_decryptor): 喜马拉雅 xm 文件解密核心逻辑参考。
 
 ## 🤝 贡献指南
 

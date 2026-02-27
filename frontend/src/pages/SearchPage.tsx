@@ -97,7 +97,7 @@ const SearchPage: React.FC = () => {
         const params: any = {};
         if (debouncedQuery.trim()) params.search = debouncedQuery;
         if (selectedTag) params.tag = selectedTag;
-        if (selectedLibraryId) params.library_id = selectedLibraryId;
+        if (selectedLibraryId) params.libraryId = selectedLibraryId;
         
         const response = await apiClient.get('/api/books', { params });
         let filtered = response.data as Book[];
@@ -153,7 +153,7 @@ const SearchPage: React.FC = () => {
       return () => window.removeEventListener('resize', checkScroll);
     }, [items]);
 
-    if (items.length === 0) return null;
+    if (!items || items.length === 0) return null;
 
     return (
       <div className="flex flex-row items-center gap-3 sm:gap-6 py-1">

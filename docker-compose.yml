@@ -1,15 +1,26 @@
+version: '3.8'
+
 services:
   ting-reader:
-    build: .
+    image: dqsq2e2/ting-reader:latest
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: ting-reader
+    restart: unless-stopped
     ports:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+      - ./plugins:/app/plugins
+      - ./temp:/app/temp
       - ./storage:/app/storage
-      - ./cache:/app/cache
-    restart: unless-stopped
+      # 如果需要自定义配置，取消注释下一行
+      # - ./config.toml:/app/config.toml
     environment:
-      - JWT_SECRET=change-this-to-a-secure-secret
-      - PORT=3000
-      - DB_PATH=/app/data/ting-reader.db
+      - RUST_LOG=info
+      - TING_HOST=0.0.0.0
+      - TING_PORT=3000
+      - TEMP_DIR=/app/temp
+      - DATA_DIR=/app/data
+      - STORAGE_DIR=/app/storage
