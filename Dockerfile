@@ -16,6 +16,12 @@ RUN npm run build
 FROM rust:bookworm AS backend-builder
 WORKDIR /app/backend
 
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    cmake \
+    clang \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy manifests
 COPY backend/Cargo.toml backend/Cargo.lock ./
 
