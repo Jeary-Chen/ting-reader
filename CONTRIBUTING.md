@@ -62,10 +62,10 @@ npm run dev
 
 ## 🔌 插件开发
 
-如果你想开发新的刮削器或格式支持插件，请参考 [插件开发文档](backend/docs/plugins/)：
-- [JavaScript 插件指南](backend/docs/plugins/js_scraper_guide.md) (推荐初学者)
-- [WASM 插件指南](backend/docs/plugins/wasm_scraper_guide.md) (高性能需求)
-- [Native 插件指南](backend/docs/plugins/native_format_guide.md) (底层/加密格式)
+如果你想开发新的刮削器或格式支持插件，请参考 [插件开发文档](docs/plugins/)：
+- [JavaScript 插件指南](docs/plugins/js_scraper_guide.md) (推荐初学者)
+- [WASM 插件指南](docs/plugins/wasm_scraper_guide.md) (高性能需求)
+- [Native 插件指南](docs/plugins/native_format_guide.md) (底层/加密格式)
 
 ## 📐 代码规范
 
