@@ -1,1 +1,18 @@
+# Auto-detect text files and perform LF normalization
+* text=auto
+
+# Custom language detection
+*.rs linguist-language=Rust
+*.js linguist-language=JavaScript
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+*.css linguist-language=CSS
+*.toml linguist-language=TOML
+*.md linguist-language=Markdown
+*.json linguist-language=JSON
+
+# Export ignore (exclude files from git archive)
 .github/ export-ignore
+.gitignore export-ignore
+.dockerignore export-ignore
+.gitattributes export-ignore

@@ -1,39 +1,47 @@
-# Node.js
+# Rust / Backend
+/backend/target/
+/backend/**/*.rs.bk
+/backend/Cargo.lock
+
+# Node.js / Frontend
 node_modules/
-dist/
-dist-ssr/
-build/
-.npm
-.eslintcache
-*.log
+/frontend/dist/
+/frontend/dev-dist/
+/frontend/coverage/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# SQLite
+# Database & Storage
 *.db
-*.db-journal
 *.db-shm
 *.db-wal
+/data/
+/temp/
+/storage/
+/plugins/*/
 
 # Environment
 .env
-.env.local
-.env.*.local
+.env.*
+! .env.example
 
-# IDE
-.vscode/
+# IDE / Editor
 .idea/
+.vscode/
 *.swp
 *.swo
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Project specific
-cache/
-storage/
-data/
-public/dist/
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+
+# Docker
+docker-compose.override.yml
