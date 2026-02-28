@@ -3,18 +3,25 @@
  */
 
 /**
- * Changes the alpha (opacity) of an rgba color string
- * @param rgba The rgba string (e.g., "rgba(0, 0, 0, 0.1)")
+ * Changes the alpha (opacity) of an rgba color string or hex color
+ * @param color The color string (e.g., "rgba(0, 0, 0, 0.1)" or "#000000")
  * @param newAlpha The new alpha value (e.g., 1.0)
  * @returns The modified rgba string
  */
-export const setAlpha = (rgba: string | undefined, newAlpha: number | string): string => {
-  if (!rgba) return '';
-  if (!rgba.startsWith('rgba')) {
-    // If it's hex, we might need a different approach, but the project seems to use rgba for dynamic colors
-    return rgba;
+export const setAlpha = (color: string | undefined, newAlpha: number | string): string => {
+  if (!color) return '';
+  
+  if (color.startsWith('#')) {
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${newAlpha})`;
   }
-  return rgba.replace(/[\d.]+\)$/g, `${newAlpha})`);
+  
+  if (!color.startsWith('rgba')) {
+    return color;
+  }
+  return color.replace(/[\d.]+\)$/g, `${newAlpha})`);
 };
 
 /**

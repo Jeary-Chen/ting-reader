@@ -1,8 +1,5 @@
-version: '3.8'
-
 services:
   ting-reader:
-    image: dqsq2e2/ting-reader:latest
     build: 
       context: .
       dockerfile: Dockerfile
@@ -15,12 +12,11 @@ services:
       - ./plugins:/app/plugins
       - ./temp:/app/temp
       - ./storage:/app/storage
-      # 如果需要自定义配置，取消注释下一行
-      # - ./config.toml:/app/config.toml
     environment:
       - RUST_LOG=info
       - TING_SERVER__HOST=0.0.0.0
       - TING_SERVER__PORT=3000
+      - TING_SECURITY__JWT_SECRET=ting_reader_jwt_secret_change_me_in_prod
       - TEMP_DIR=/app/temp
       - DATA_DIR=/app/data
       - STORAGE_DIR=/app/storage

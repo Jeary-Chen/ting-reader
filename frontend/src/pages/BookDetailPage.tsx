@@ -32,7 +32,6 @@ import { getCoverUrl } from '../utils/image';
 import { useAuthStore } from '../store/authStore';
 import ExpandableTitle from '../components/ExpandableTitle';
 import { setAlpha, toSolidColor } from '../utils/color';
-import { FastAverageColor } from 'fast-average-color';
 
 const BookDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -148,24 +147,9 @@ const BookDetailPage: React.FC = () => {
 
   useEffect(() => {
     if (book) {
-      // Prefer camelCase if available, otherwise snake_case
-      const color = book.themeColor;
-      if (color) {
-        setThemeColor(color);
-      } else if (book.coverUrl) {
-        // If no theme color but we have a cover, extract it client-side
-        const coverUrl = getCoverUrl(book.coverUrl, book.libraryId, book.id);
-        const fac = new FastAverageColor();
-        fac.getColorAsync(coverUrl, { algorithm: 'dominant' })
-          .then(color => {
-            setThemeColor(color.hex);
-            // Optionally update the book object locally so it persists in this session
-            setBook(prev => prev ? { ...prev, themeColor: color.hex } : null);
-          })
-          .catch(e => console.warn('Failed to extract color from cover', e));
-      }
+      setThemeColor(book.themeColor || null);
     }
-  }, [book]);
+  }, [book?.themeColor]);
 
   useEffect(() => {
     const fetchBookDetails = async () => {
@@ -331,16 +315,15 @@ const BookDetailPage: React.FC = () => {
       // The API expects camelCase for updates (client will convert to snake_case)
       const payload: any = { ...dataToSave };
       
-      await apiClient.patch(`/api/books/${id}`, payload);
+      const res = await apiClient.patch(`/api/books/${id}`, payload);
+      const updatedBookData = res.data;
       
       // Update local state - merge the changes
-      const updatedBook = { ...book!, ...dataToSave };
-      if (payload.coverUrl) {
-        updatedBook.coverUrl = payload.coverUrl;
-      }
-      if (payload.themeColor) {
-        updatedBook.themeColor = payload.themeColor;
-      }
+      // Backend response doesn't include libraryType/isFavorite, so we merge
+      const updatedBook = { ...book!, ...updatedBookData };
+      // Preserve existing auxiliary fields if not in response
+      if (book!.libraryType) updatedBook.libraryType = book!.libraryType;
+      if (book!.isFavorite !== undefined) updatedBook.isFavorite = book!.isFavorite;
       
       setBook(updatedBook);
       
@@ -843,7 +826,7 @@ const BookDetailPage: React.FC = () => {
                                 type="text" 
                                 value={genFilename}
                                 onChange={e => setGenFilename(e.target.value)}
-                                placeholder="例如：仙子对我图谋不轨 第001集 病娇圣女想把我炼成剑灵1"
+                                placeholder="例如：书名 第1集 章节名"
                                 className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                             />
                         </div>
@@ -864,7 +847,7 @@ const BookDetailPage: React.FC = () => {
                                     type="text" 
                                     value={genTitle}
                                     onChange={e => setGenTitle(e.target.value)}
-                                    placeholder="例如：病娇圣女想把我炼成剑灵1"
+                                    placeholder="例如：章节名"
                                     className="w-full px-4 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"
                                 />
                             </div>
@@ -890,14 +873,14 @@ const BookDetailPage: React.FC = () => {
                                 <div className="grid grid-cols-2 gap-4 text-sm">
                                     <div>
                                         <span className="text-slate-500 text-xs">提取序号:</span>
-                                        <div className={genResult.captured_index === genNum ? "text-green-600 font-bold" : "text-red-500"}>
-                                            {genResult.captured_index || "未匹配"}
+                                        <div className={genResult.capturedIndex === genNum ? "text-green-600 font-bold" : "text-red-500"}>
+                                            {genResult.capturedIndex || "未匹配"}
                                         </div>
                                     </div>
                                     <div>
                                         <span className="text-slate-500 text-xs">提取标题:</span>
-                                        <div className={genResult.captured_title === genTitle ? "text-green-600 font-bold" : "text-red-500"}>
-                                            {genResult.captured_title || "未匹配"}
+                                        <div className={genResult.capturedTitle === genTitle ? "text-green-600 font-bold" : "text-red-500"}>
+                                            {genResult.capturedTitle || "未匹配"}
                                         </div>
                                     </div>
                                 </div>
