@@ -237,14 +237,29 @@ ALTER TABLE chapters ADD COLUMN manual_corrected INTEGER DEFAULT 0;
 /// Eighth schema migration (version 8)
 const MIGRATION_V8: &str = r#"
 -- Fix tasks table schema (missing columns in old versions)
--- We check for existence by trying to add them. Since SQLite doesn't support IF NOT EXISTS for ADD COLUMN
--- in older versions, we just attempt it. But wait, if we are in a transaction, failure aborts it.
--- Instead, we'll just run the ALTERs. If they fail (column exists), the migration fails.
--- But since user reported "no such column: retries", these should succeed.
+-- We check for existence by trying to add them.
+-- Since SQLite doesn't support IF NOT EXISTS for ADD COLUMN in older versions,
+-- and we are in a transaction, we need to handle this carefully.
 
-ALTER TABLE tasks ADD COLUMN retries INTEGER DEFAULT 0;
-ALTER TABLE tasks ADD COLUMN max_retries INTEGER DEFAULT 3;
+-- Add retries column if not exists
+SELECT CASE WHEN NOT EXISTS (
+  SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'retries'
+) THEN 1 ELSE 0 END;
+-- Actually we can't do conditional DDL easily in one batch string.
+-- But wait, the error is "duplicate column name: retries".
+-- This means the column ALREADY EXISTS but the version check thinks it doesn't.
+-- This happens if someone manually added it or a previous migration failed halfway but committed?
+-- Or maybe the create table definition already has it?
+
+-- Let's check the CREATE TABLE definition for tasks in MIGRATION_V1.
+-- It HAS retries and max_retries!
+-- So for new databases, MIGRATION_V1 creates the table WITH these columns.
+-- But MIGRATION_V8 tries to ADD them again.
+-- This is the problem. MIGRATION_V8 should only run if the columns are MISSING.
 "#;
+
+// We will change the implementation of apply_migration_v8 to check columns first.
+
 
 /// Run all pending database migrations
 ///
@@ -308,12 +323,33 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     
     if current_version < 8 {
         info!("Applying migration v8: Fix Tasks Table Schema");
-        // We need to be careful here. If columns exist, this will fail.
-        // Let's try to detect if columns exist first?
-        // SQLite doesn't have easy "ADD COLUMN IF NOT EXISTS".
-        // But apply_migration wraps in transaction.
-        // Given user error, they are missing.
-        apply_migration(conn, 8, MIGRATION_V8)?;
+        // Check if columns exist before applying
+        let has_retries: bool = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'retries'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0) > 0;
+
+        let has_max_retries: bool = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'max_retries'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(0) > 0;
+
+        if !has_retries {
+            info!("Adding missing column 'retries' to tasks table");
+            conn.execute("ALTER TABLE tasks ADD COLUMN retries INTEGER DEFAULT 0", []).map_err(TingError::DatabaseError)?;
+        }
+
+        if !has_max_retries {
+             info!("Adding missing column 'max_retries' to tasks table");
+             conn.execute("ALTER TABLE tasks ADD COLUMN max_retries INTEGER DEFAULT 3", []).map_err(TingError::DatabaseError)?;
+        }
+
+        // Update version manually since we are not using apply_migration for conditional logic
+        // Use INSERT OR IGNORE just in case, though the version check above should prevent duplicates
+        conn.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (8)", []).map_err(TingError::DatabaseError)?;
+        info!("Migration v8 applied successfully");
     }
 
     info!("Database migrations completed successfully");

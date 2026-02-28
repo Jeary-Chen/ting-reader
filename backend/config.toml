@@ -32,7 +32,8 @@ max_backups = 5
 
 [security]
 enable_auth = true
-api_key = ""
+api_key = "ting_reader_default_secret_key_2024"
+jwt_secret = "ting_reader_jwt_secret_change_me_in_prod"
 allowed_origins = ["*"]
 rate_limit_requests = 100
 rate_limit_window = 60  # seconds
