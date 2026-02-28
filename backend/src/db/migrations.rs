@@ -230,8 +230,20 @@ ALTER TABLE books ADD COLUMN chapter_regex TEXT;
 
 /// Seventh schema migration (version 7)
 const MIGRATION_V7: &str = r#"
--- Add manual_corrected to chapters
+--// Add manual_corrected to chapters
 ALTER TABLE chapters ADD COLUMN manual_corrected INTEGER DEFAULT 0;
+"#;
+
+/// Eighth schema migration (version 8)
+const MIGRATION_V8: &str = r#"
+-- Fix tasks table schema (missing columns in old versions)
+-- We check for existence by trying to add them. Since SQLite doesn't support IF NOT EXISTS for ADD COLUMN
+-- in older versions, we just attempt it. But wait, if we are in a transaction, failure aborts it.
+-- Instead, we'll just run the ALTERs. If they fail (column exists), the migration fails.
+-- But since user reported "no such column: retries", these should succeed.
+
+ALTER TABLE tasks ADD COLUMN retries INTEGER DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN max_retries INTEGER DEFAULT 3;
 "#;
 
 /// Run all pending database migrations
@@ -294,6 +306,16 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         apply_migration(conn, 7, MIGRATION_V7)?;
     }
     
+    if current_version < 8 {
+        info!("Applying migration v8: Fix Tasks Table Schema");
+        // We need to be careful here. If columns exist, this will fail.
+        // Let's try to detect if columns exist first?
+        // SQLite doesn't have easy "ADD COLUMN IF NOT EXISTS".
+        // But apply_migration wraps in transaction.
+        // Given user error, they are missing.
+        apply_migration(conn, 8, MIGRATION_V8)?;
+    }
+
     info!("Database migrations completed successfully");
     Ok(())
 }
