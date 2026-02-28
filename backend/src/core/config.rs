@@ -97,13 +97,18 @@ impl Config {
             .set_default("storage.max_disk_usage", 10737418240u64)?; // 10 GB
         
         // 2. Load from config file if specified (medium priority)
-        if let Some(config_path) = &cli_args.config {
-            if !config_path.exists() {
+        // Check CLI arg first, then TING_CONFIG_PATH env var
+        let config_path = cli_args.config.or_else(|| {
+            std::env::var("TING_CONFIG_PATH").ok().map(PathBuf::from)
+        });
+
+        if let Some(path) = config_path {
+            if !path.exists() {
                 return Err(ConfigError::FileNotFound(
-                    config_path.display().to_string()
+                    path.display().to_string()
                 ));
             }
-            builder = builder.add_source(File::from(config_path.as_path()));
+            builder = builder.add_source(File::from(path.as_path()));
         }
         
         // 3. Override with environment variables (higher priority)
