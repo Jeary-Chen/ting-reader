@@ -40,6 +40,8 @@ use axum::{
     middleware,
 };
 
+use axum::extract::DefaultBodyLimit;
+
 /// Build the API routes
 pub fn build_api_routes(state: AppState) -> Router {
     // Public routes (no authentication required)
@@ -98,7 +100,7 @@ pub fn build_api_routes(state: AppState) -> Router {
         // Plugin management endpoints
         .route("/api/v1/plugins", get(list_plugins))
         .route("/api/v1/plugins/:id", get(get_plugin_detail).delete(uninstall_plugin))
-        .route("/api/v1/plugins/install", post(install_plugin))
+        .route("/api/v1/plugins/install", post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024))) // 50MB limit for plugin upload
         .route("/api/v1/plugins/:id/reload", post(reload_plugin))
         .route("/api/v1/plugins/:id/config", get(get_plugin_config).put(update_plugin_config))
         // Task management endpoints
@@ -134,9 +136,10 @@ pub fn build_api_routes(state: AppState) -> Router {
         // Plugin management endpoints (without /v1)
         .route("/api/plugins", get(list_plugins))
         .route("/api/plugins/:id", get(get_plugin_detail).delete(uninstall_plugin))
-        .route("/api/plugins/install", post(install_plugin))
+        .route("/api/plugins/install", post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024))) // 50MB limit for plugin upload
         .route("/api/plugins/:id/reload", post(reload_plugin))
         .route("/api/plugins/:id/config", get(get_plugin_config).put(update_plugin_config))
+
         // Task management endpoints (without /v1)
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks/:id", get(get_task))
