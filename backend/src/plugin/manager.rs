@@ -34,6 +34,7 @@ struct PluginEntry {
     metadata: PluginMetadata,
     instance: Arc<dyn Plugin>,
     state: PluginState,
+    load_error: Option<String>,
     _active_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -43,6 +44,7 @@ impl PluginEntry {
             metadata,
             instance,
             state: PluginState::Loaded,
+            load_error: None,
             _active_tasks: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
@@ -68,6 +70,30 @@ pub struct PluginInfo {
     pub failed_calls: u64,
     #[serde(default)]
     pub supported_extensions: Option<Vec<String>>,
+    pub error: Option<String>,
+}
+
+/// A placeholder plugin implementation for failed plugins
+struct FailedPlugin {
+    metadata: PluginMetadata,
+    error: String,
+}
+
+impl FailedPlugin {
+    fn new(metadata: PluginMetadata, error: String) -> Self {
+        Self { metadata, error }
+    }
+}
+
+#[async_trait::async_trait]
+impl Plugin for FailedPlugin {
+    fn metadata(&self) -> &PluginMetadata { &self.metadata }
+    async fn initialize(&self, _context: &PluginContext) -> Result<()> { 
+        Err(TingError::PluginLoadError(self.error.clone())) 
+    }
+    async fn shutdown(&self) -> Result<()> { Ok(()) }
+    fn plugin_type(&self) -> PluginType { self.metadata.plugin_type }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 
 /// Event triggered when a plugin's state changes
@@ -166,6 +192,12 @@ impl PluginManager {
     pub async fn list_plugins(&self) -> Vec<PluginInfo> {
         let registry = self.registry.read().await;
         registry.values().map(|entry| {
+            let error = if entry.state == PluginState::Failed {
+                entry.load_error.clone()
+            } else {
+                None
+            };
+            
             PluginInfo {
                 id: entry.metadata.id(),
                 name: entry.metadata.name.clone(),
@@ -173,11 +205,12 @@ impl PluginManager {
                 author: entry.metadata.author.clone(),
                 description: entry.metadata.description.clone(),
                 plugin_type: entry.metadata.plugin_type,
-                state: entry.state,
+                state: entry.state.clone(),
                 total_calls: 0,
                 successful_calls: 0,
                 failed_calls: 0,
                 supported_extensions: entry.metadata.supported_extensions.clone(),
+                error,
             }
         }).collect()
     }
@@ -198,12 +231,25 @@ impl PluginManager {
         }
         
         // Load plugin instance
-        let instance = self.load_plugin_instance(plugin_path, &metadata).await?;
+        let (instance, state, error) = match self.load_plugin_instance(plugin_path, &metadata).await {
+            Ok(inst) => (inst, PluginState::Loaded, None),
+            Err(e) => {
+                error!("Failed to load plugin {}: {}", plugin_id, e);
+                (
+                    Arc::new(FailedPlugin::new(metadata.clone(), e.to_string())) as Arc<dyn Plugin>,
+                    PluginState::Failed,
+                    Some(e.to_string())
+                )
+            }
+        };
         
         // Register plugin
         {
             let mut registry = self.registry.write().await;
-            registry.insert(plugin_id.clone(), PluginEntry::new(metadata.clone(), instance));
+            let mut entry = PluginEntry::new(metadata.clone(), instance);
+            entry.state = state.clone();
+            entry.load_error = error;
+            registry.insert(plugin_id.clone(), entry);
         }
         
         // Update cache
@@ -212,8 +258,10 @@ impl PluginManager {
             cache.insert(plugin_id.clone(), plugin_path.to_path_buf());
         }
         
-        // Initialize plugin
-        self.initialize_plugin(&plugin_id).await?;
+        // Initialize plugin if not failed
+        if state != PluginState::Failed {
+            self.initialize_plugin(&plugin_id).await?;
+        }
         
         Ok(plugin_id)
     }
@@ -560,18 +608,27 @@ impl PluginManager {
         let registry = self.registry.read().await;
         registry.values()
             .filter(|e| e.metadata.plugin_type == plugin_type)
-            .map(|entry| PluginInfo {
-                id: entry.metadata.id(),
-                name: entry.metadata.name.clone(),
-                version: entry.metadata.version.clone(),
-                author: entry.metadata.author.clone(),
-                description: entry.metadata.description.clone(),
-                plugin_type: entry.metadata.plugin_type,
-                state: entry.state,
-                total_calls: 0,
-                successful_calls: 0,
-                failed_calls: 0,
-                supported_extensions: entry.metadata.supported_extensions.clone(),
+            .map(|entry| {
+                let error = if entry.state == PluginState::Failed {
+                    entry.load_error.clone()
+                } else {
+                    None
+                };
+
+                PluginInfo {
+                    id: entry.metadata.id(),
+                    name: entry.metadata.name.clone(),
+                    version: entry.metadata.version.clone(),
+                    author: entry.metadata.author.clone(),
+                    description: entry.metadata.description.clone(),
+                    plugin_type: entry.metadata.plugin_type,
+                    state: entry.state.clone(),
+                    total_calls: 0,
+                    successful_calls: 0,
+                    failed_calls: 0,
+                    supported_extensions: entry.metadata.supported_extensions.clone(),
+                    error,
+                }
             })
             .collect()
     }
@@ -599,18 +656,27 @@ impl PluginManager {
                     .map(|exts| exts.contains(&extension))
                     .unwrap_or(false)
             })
-            .map(|entry| PluginInfo {
-                id: entry.metadata.id(),
-                name: entry.metadata.name.clone(),
-                version: entry.metadata.version.clone(),
-                author: entry.metadata.author.clone(),
-                description: entry.metadata.description.clone(),
-                plugin_type: entry.metadata.plugin_type,
-                state: entry.state,
-                total_calls: 0,
-                successful_calls: 0,
-                failed_calls: 0,
-                supported_extensions: entry.metadata.supported_extensions.clone(),
+            .map(|entry| {
+                let error = if entry.state == PluginState::Failed {
+                    entry.load_error.clone()
+                } else {
+                    None
+                };
+
+                PluginInfo {
+                    id: entry.metadata.id(),
+                    name: entry.metadata.name.clone(),
+                    version: entry.metadata.version.clone(),
+                    author: entry.metadata.author.clone(),
+                    description: entry.metadata.description.clone(),
+                    plugin_type: entry.metadata.plugin_type,
+                    state: entry.state.clone(),
+                    total_calls: 0,
+                    successful_calls: 0,
+                    failed_calls: 0,
+                    supported_extensions: entry.metadata.supported_extensions.clone(),
+                    error,
+                }
             })
     }
 }
