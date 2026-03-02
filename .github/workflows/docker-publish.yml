@@ -84,17 +84,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Determine Docker tags
+        id: docker_tags
+        if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
+        run: |
+          if [ "${{ steps.check_release.outputs.exists }}" = "false" ]; then
+            echo "tags<<EOF" >> $GITHUB_OUTPUT
+            echo "dqsq2e2/ting-reader:latest" >> $GITHUB_OUTPUT
+            echo "dqsq2e2/ting-reader:${{ env.VERSION }}" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          else
+            echo "tags=dqsq2e2/ting-reader:beta" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build and push Docker image
         if: steps.filter.outputs.docker == 'true' || steps.filter.outputs.version == 'true' || steps.check_release.outputs.exists != 'true'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            dqsq2e2/ting-reader:latest
-            dqsq2e2/ting-reader:${{ env.VERSION }}
+          tags: ${{ steps.docker_tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
