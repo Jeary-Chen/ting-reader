@@ -181,8 +181,6 @@ impl TextCleaner {
 
     /// Extract chapter number from title
     pub fn extract_chapter_number(&self, title: &str) -> Option<i32> {
-        let pattern = Regex::new(r"(第\s*(\d+)\s*[集回章话])|([集回章话]\s*(\d+))|(\d+)").unwrap();
-        
         // Priority 1: "第xxx集" or "第xxx章"
         let re1 = Regex::new(r"第\s*(\d+)\s*[集回章话]").unwrap();
         if let Some(caps) = re1.captures(title) {
@@ -464,8 +462,6 @@ impl TextCleaner {
         }
     }
 }
-
-impl TextCleaner {
 
 
 
