@@ -388,12 +388,17 @@ const SettingsPage: React.FC = () => {
                   {`<iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>`}
                 </code>
                 <button 
-                  onClick={() => {
+                  onClick={async () => {
                     const baseUrl = window.location.origin;
                     const token = widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : '';
                     const embedCode = `<iframe src="${baseUrl}/widget${token}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>`;
-                    navigator.clipboard.writeText(embedCode);
-                    alert('已复制到剪贴板');
+                    try {
+                      await navigator.clipboard.writeText(embedCode);
+                      alert('已复制到剪贴板');
+                    } catch (err) {
+                      console.error('Failed to copy:', err);
+                      alert('复制失败，请手动复制');
+                    }
                   }}
                   className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors"
                   title="复制"
@@ -436,12 +441,17 @@ const SettingsPage: React.FC = () => {
 </div>`}
                     </code>
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         const code = `<div style="position: fixed; bottom: 0; left: 0; width: 100%; z-index: 9999;">
   <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>
 </div>`;
-                        navigator.clipboard.writeText(code);
-                        alert('已复制到剪贴板');
+                        try {
+                          await navigator.clipboard.writeText(code);
+                          alert('已复制到剪贴板');
+                        } catch (err) {
+                          console.error('Failed to copy:', err);
+                          alert('复制失败，请手动复制');
+                        }
                       }}
                       className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                       title="复制"
@@ -458,12 +468,17 @@ const SettingsPage: React.FC = () => {
 </div>`}
                     </code>
                     <button 
-                      onClick={() => {
+                      onClick={async () => {
                         const code = `<div style="position: fixed; bottom: 20px; right: 20px; width: 350px; height: 150px; z-index: 9999; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
   <iframe src="${window.location.origin}/widget${widgetEmbedType === 'private' ? `?token=${useAuthStore.getState().token}` : ''}" width="100%" height="100%" frameborder="0" allow="autoplay; fullscreen"></iframe>
 </div>`;
-                        navigator.clipboard.writeText(code);
-                        alert('已复制到剪贴板');
+                        try {
+                          await navigator.clipboard.writeText(code);
+                          alert('已复制到剪贴板');
+                        } catch (err) {
+                          console.error('Failed to copy:', err);
+                          alert('复制失败，请手动复制');
+                        }
                       }}
                       className="absolute top-2 right-2 p-1.5 bg-slate-100 dark:bg-slate-800 hover:bg-primary-50 dark:hover:bg-primary-900/30 text-slate-500 hover:text-primary-600 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
                       title="复制"
