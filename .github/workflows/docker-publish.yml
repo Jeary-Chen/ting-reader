@@ -106,21 +106,47 @@ jobs:
             dqsq2e2/ting-reader:beta
 
       - name: Prepare fnpack
-        if: steps.check_release.outputs.exists != 'true'
+        if: steps.check_release.outputs.exists != 'true' || steps.filter.outputs.fpk == 'true'
         run: |
           chmod +x .github/workflows/fnpack
           sudo mv .github/workflows/fnpack /usr/local/bin/fnpack
 
-      - name: Update FPK configuration
+      - name: Build FPK (Formal)
         if: steps.check_release.outputs.exists != 'true'
         run: |
+          cp .github/ting-reader-fpk/manifest .github/ting-reader-fpk/manifest.bak
           sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}/" .github/ting-reader-fpk/manifest
-
-      - name: Build FPK
-        if: steps.check_release.outputs.exists != 'true'
-        run: |
           fnpack build --directory .github/ting-reader-fpk
           mv ting-reader.fpk ting-reader-${{ env.VERSION }}.fpk
+          mv .github/ting-reader-fpk/manifest.bak .github/ting-reader-fpk/manifest
+
+      - name: Build FPK (Beta)
+        if: steps.filter.outputs.fpk == 'true'
+        run: |
+          sed -i "s/^version[[:space:]]*=.*/version = ${{ env.VERSION }}-beta/" .github/ting-reader-fpk/manifest
+          fnpack build --directory .github/ting-reader-fpk
+          mv ting-reader.fpk ting-reader-beta.fpk
+
+      - name: Update Beta Tag
+        if: steps.filter.outputs.fpk == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git tag -f beta
+          git push origin beta --force
+
+      - name: Release Beta FPK
+        uses: softprops/action-gh-release@v1
+        if: steps.filter.outputs.fpk == 'true'
+        with:
+          tag_name: beta
+          name: Beta Release
+          body: "Latest beta build of ting-reader FPK."
+          prerelease: true
+          make_latest: false
+          files: ting-reader-beta.fpk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Release Notes
         id: extract_notes
