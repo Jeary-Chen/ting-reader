@@ -50,7 +50,7 @@ pub struct AppState {
     pub cache_manager: Arc<CacheManager>,
     pub encryption_key: Arc<[u8; 32]>,
     pub storage_service: Arc<StorageService>,
-    pub preload_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, bytes::Bytes>>>,
+    pub preload_cache: Arc<tokio::sync::RwLock<std::collections::HashMap<String, (bytes::Bytes, std::time::Instant)>>>,
     pub audio_streamer: Arc<AudioStreamer>,
     pub merge_service: Arc<MergeService>,
     pub nfo_manager: Arc<NfoManager>,

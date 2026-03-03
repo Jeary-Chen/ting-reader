@@ -314,14 +314,34 @@ pub async fn stream_chapter(
                                         if auto_preload {
                                             let mut buf = Vec::new();
                                             if let Ok(_) = r.read_to_end(&mut buf).await {
-                                                state_clone.preload_cache.write().await.insert(next_chapter_id.clone(), bytes::Bytes::from(buf.clone()));
+                                                let bytes_data = bytes::Bytes::from(buf);
+                                                
+                                                // Limit preload cache size to prevent memory leaks
+                                                {
+                                                    let mut cache = state_clone.preload_cache.write().await;
+                                                    const MAX_PRELOAD_SIZE: usize = 3;
+                                                    
+                                                    if cache.len() >= MAX_PRELOAD_SIZE {
+                                                        // Find oldest entry to remove
+                                                        let oldest_key = cache.iter()
+                                                            .min_by_key(|(_, (_, time))| *time)
+                                                            .map(|(k, _)| k.clone());
+                                                        
+                                                        if let Some(key) = oldest_key {
+                                                            cache.remove(&key);
+                                                            tracing::debug!("Evicted oldest preloaded chapter from memory: {}", key);
+                                                        }
+                                                    }
+                                                    
+                                                    cache.insert(next_chapter_id.clone(), (bytes_data.clone(), std::time::Instant::now()));
+                                                }
                                                 tracing::info!("Auto-preloaded next chapter: {}", next_chapter_id);
                                                 
                                                 // If auto_cache is also enabled, use the buffer to write to disk
                                                 if auto_cache && lib_clone.library_type.to_lowercase() != "local" {
                                                     let cache_path = state_clone.cache_manager.get_cache_path(&next_chapter_id);
                                                     if !cache_path.exists() {
-                                                        if let Ok(_) = tokio::fs::write(&cache_path, &buf).await {
+                                                        if let Ok(_) = tokio::fs::write(&cache_path, &bytes_data).await {
                                                             tracing::info!("Auto-cached next chapter (from buffer): {}", next_chapter_id);
                                                             
                                                             // Enforce limits
@@ -384,9 +404,16 @@ pub async fn stream_chapter(
 
     // 1. Check Preload Cache (Memory)
     {
-        let cache = state.preload_cache.read().await;
-        if let Some(data) = cache.get(&chapter_id) {
+        let mut cache = state.preload_cache.write().await;
+        if let Some((data, last_access)) = cache.get_mut(&chapter_id) {
+            // Update access time to implement LRU (keep frequently accessed chapters in memory)
+            *last_access = std::time::Instant::now();
+            
             tracing::info!(chapter_id = %chapter_id, "Serving from preload cache (memory)");
+            let data = data.clone(); // Clone bytes (cheap reference count increment)
+            // Drop write lock early
+            drop(cache);
+            
             let file_size = data.len() as u64;
             let mime_type = mime_guess::from_path(&chapter.path).first_or_octet_stream().to_string();
             
@@ -427,8 +454,8 @@ pub async fn stream_chapter(
             ).into_response());
         }
     }
-
-        // 2. Check Disk Cache
+    
+    // 2. Check Disk Cache
         let cache_path = state.cache_manager.get_cache_path(&chapter_id);
         if cache_path.exists() {
             tracing::info!(chapter_id = %chapter_id, "Serving from disk cache");
@@ -568,6 +595,14 @@ pub async fn stream_chapter(
             match segment {
                 DecryptionSegment::Encrypted { offset, length, params } => {
                     tracing::debug!("Decrypting segment: offset={}, length={}", offset, length);
+                    
+                    // Safety check for encrypted segment size to prevent OOM
+                    const MAX_ENCRYPTED_SEGMENT_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+                    if length as u64 > MAX_ENCRYPTED_SEGMENT_SIZE {
+                        tracing::error!("Encrypted segment too large: {} bytes", length);
+                        return Err(TingError::PluginExecutionError(format!("Encrypted segment too large: {} bytes (max 10MB)", length)));
+                    }
+
                     // Download encrypted chunk
                     let (mut reader, _) = if cache_path.exists() {
                         let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((offset, offset + length as u64))).await?;
@@ -580,11 +615,15 @@ pub async fn stream_chapter(
                         (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
                     };
                     
-                    let mut chunk = Vec::new();
-                    reader.read_to_end(&mut chunk).await?;
+                    // Scope for chunk to ensure early drop
+                    let chunk_base64 = {
+                        let mut chunk = Vec::with_capacity(length as usize);
+                        reader.read_to_end(&mut chunk).await?;
+                        base64::engine::general_purpose::STANDARD.encode(&chunk)
+                    };
+                    // chunk is dropped here
                     
                     // Decrypt in memory
-                    let chunk_base64 = base64::engine::general_purpose::STANDARD.encode(&chunk);
                     let result_json = state.plugin_manager.call_format(
                         &plugin.id,
                         FormatMethod::DecryptChunk,
@@ -599,6 +638,7 @@ pub async fn stream_chapter(
                     
                     let decrypted_base64 = result_json["data_base64"].as_str()
                         .ok_or_else(|| TingError::PluginExecutionError("Missing data_base64 in response".to_string()))?;
+                    
                     let decrypted = base64::engine::general_purpose::STANDARD.decode(decrypted_base64)
                         .map_err(|e| TingError::SerializationError(format!("Invalid base64: {}", e)))?;
                         
@@ -701,7 +741,7 @@ pub async fn stream_chapter(
         None
     };
 
-    let (mut reader, content_length) = if library.library_type == "local" {
+    let (reader, _content_length) = if library.library_type == "local" {
         let (f, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter.path), range).await
              .map_err(|e| TingError::NotFound(format!("Local file not found: {}", e)))?;
         (Box::new(f) as Box<dyn tokio::io::AsyncRead + Send + Unpin>, size)
@@ -710,14 +750,20 @@ pub async fn stream_chapter(
              .map_err(|e| TingError::NotFound(format!("WebDAV file not found: {}", e)))?
     };
 
-    let mut body = Vec::new();
-    reader.read_to_end(&mut body).await?;
-    
+    // Convert AsyncRead to Stream
+    let stream = ReaderStream::new(reader);
+    let body = Body::from_stream(stream);
+
+    let status_code = if range_header.is_some() {
+        StatusCode::PARTIAL_CONTENT
+    } else {
+        StatusCode::OK
+    };
+
     Ok((
-        StatusCode::OK,
+        status_code,
         [
             (header::CONTENT_TYPE, "audio/mpeg".to_string()),
-            (header::CONTENT_LENGTH, content_length.to_string()),
             (header::ACCEPT_RANGES, "bytes".to_string()),
             (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
             ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
