@@ -243,7 +243,8 @@ const SettingsPage: React.FC = () => {
         </section>
 
         {/* Cache Management */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+        {user?.role === 'admin' && (
+          <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
             <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
               <Zap size={20} className="text-yellow-500" />
               服务端缓存管理
@@ -264,7 +265,8 @@ const SettingsPage: React.FC = () => {
                 </div>
                 <ChevronRight size={18} className="text-slate-400" />
             </div>
-        </section>
+          </section>
+        )}
 
         {/* Playback Settings */}
         <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -332,11 +334,12 @@ const SettingsPage: React.FC = () => {
         </section>
 
         {/* Widget Settings */}
-        <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
-          <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
-            <Code size={20} className="text-purple-500" />
-            外挂组件 (Widget)
-          </h2>
+        {user?.role === 'admin' && (
+          <section className="bg-white dark:bg-slate-900 rounded-3xl p-4 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
+            <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
+              <Code size={20} className="text-purple-500" />
+              外挂组件 (Widget)
+            </h2>
           <div className="space-y-6">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -471,8 +474,8 @@ const SettingsPage: React.FC = () => {
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
 
       <div className="text-center text-slate-400 text-sm py-8">
