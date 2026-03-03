@@ -474,8 +474,9 @@ const SettingsPage: React.FC = () => {
                 </div>
               </div>
             </div>
-          </section>
-        )}
+          </div>
+        </section>
+      )}
       </div>
 
       <div className="text-center text-slate-400 text-sm py-8">
