@@ -763,7 +763,7 @@ impl LibraryScanner {
         let mut main_counter = 0;
         let mut extra_counter = 0;
 
-        for (index, file_url) in file_urls.iter().enumerate() {
+        for file_url in file_urls.iter() {
             // Decode filename for title
             let decoded_file_url = self.decode_url_path(file_url);
             let filename = decoded_file_url.split('/').last().unwrap_or("chapter").to_string();
