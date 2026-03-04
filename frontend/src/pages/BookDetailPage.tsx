@@ -523,7 +523,7 @@ const BookDetailPage: React.FC = () => {
 
             <div className="flex gap-3 max-w-md mx-auto md:mx-0">
               <button 
-                onClick={() => playBook(book, chapters)}
+                onClick={() => playBook(book, currentChapters)}
                 className="flex-1 flex items-center justify-center gap-2 px-8 py-4 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-2xl shadow-xl shadow-primary-500/30 transition-all active:scale-95 group"
                 style={displayThemeColor ? { 
                   backgroundColor: toSolidColor(displayThemeColor),
@@ -705,7 +705,7 @@ const BookDetailPage: React.FC = () => {
               <div 
                 key={chapter.id}
                 id={`chapter-${chapter.id}`}
-                onClick={() => playChapter(book!, chapters, chapter)}
+                onClick={() => playChapter(book!, currentChapters, chapter)}
                 className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all border ${
                   isActive 
                     ? 'bg-opacity-10 border-opacity-20' 
@@ -766,7 +766,7 @@ const BookDetailPage: React.FC = () => {
                       className="w-10 h-10 rounded-full bg-slate-50 dark:bg-slate-800 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all cursor-pointer hover:scale-105"
                       onClick={(e) => {
                         e.stopPropagation();
-                        playChapter(book!, chapters, chapter);
+                        playChapter(book!, currentChapters, chapter);
                       }}
                     >
                       <Play size={16} className="text-primary-600 ml-1" fill="currentColor" style={displayThemeColor ? { color: toSolidColor(displayThemeColor) } : {}} />
