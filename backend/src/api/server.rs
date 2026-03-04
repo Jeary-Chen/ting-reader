@@ -177,6 +177,7 @@ impl ApiServer {
             audio_streamer,
             merge_service,
             nfo_manager,
+            active_preload_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         };
         
         // Create public routes (no authentication required)

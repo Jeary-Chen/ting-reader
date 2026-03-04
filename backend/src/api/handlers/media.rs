@@ -295,12 +295,35 @@ pub async fn stream_chapter(
                 if let Ok(chapters) = state.chapter_repo.find_by_book(&book.id).await {
                     if let Some(pos) = chapters.iter().position(|c| c.id == chapter_id) {
                         if let Some(next_chapter) = chapters.get(pos + 1).cloned() {
+                            // Spawn preload task
                             let state_clone = state.clone();
                             let next_chapter_id = next_chapter.id.clone();
                             let next_chapter_path = next_chapter.path.clone();
                             let lib_clone = library.clone();
+                            let user_id = user.id.clone();
                             
-                            tokio::spawn(async move {
+                            // Cancel any previous preload task for this user
+                            {
+                                let mut tasks = state.active_preload_tasks.lock().await;
+                                if let Some(handle) = tasks.remove(&user_id) {
+                                    handle.abort();
+                                    tracing::debug!("Cancelled previous preload task for user {}", user_id);
+                                }
+                            }
+                            
+                            let handle = tokio::spawn(async move {
+                                // Check if already in cache BEFORE starting any heavy work
+                                if auto_preload {
+                                    let cache = state_clone.preload_cache.read().await;
+                                    if cache.contains_key(&next_chapter_id) {
+                                        tracing::debug!("Skipping auto-preload for {} - already in cache", next_chapter_id);
+                                        return;
+                                    }
+                                }
+                                
+                                // Add a small delay to debounce rapid switching
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
                                 let reader_res = if lib_clone.library_type.to_lowercase() == "local" {
                                     state_clone.storage_service.get_local_reader(std::path::Path::new(&next_chapter_path), None).await
                                         .map(|(f, s)| (Box::new(f) as Box<dyn tokio::io::AsyncRead + Send + Unpin>, s))
@@ -312,6 +335,15 @@ pub async fn stream_chapter(
                                     Ok((mut r, _)) => {
                                         // For auto_preload (memory), we need to read to buffer
                                         if auto_preload {
+                                            // Double check cache before reading heavy data
+                                            {
+                                                let cache = state_clone.preload_cache.read().await;
+                                                if cache.contains_key(&next_chapter_id) {
+                                                    tracing::debug!("Skipping auto-preload for {} - already in cache (double check)", next_chapter_id);
+                                                    return;
+                                                }
+                                            }
+
                                             let mut buf = Vec::new();
                                             if let Ok(_) = r.read_to_end(&mut buf).await {
                                                 let bytes_data = bytes::Bytes::from(buf);
@@ -395,6 +427,10 @@ pub async fn stream_chapter(
                                     }
                                 }
                             });
+                            
+                            // Store the handle for cancellation
+                            let mut tasks = state.active_preload_tasks.lock().await;
+                            tasks.insert(user.id.clone(), handle);
                         }
                     }
                 }
@@ -586,75 +622,27 @@ pub async fn stream_chapter(
         let plan: DecryptionPlan = serde_json::from_value(plan_json)
             .map_err(|e| TingError::SerializationError(format!("Invalid decryption plan: {}", e)))?;
 
-        // 5. Process Segments
-        // We assume a simple structure: [Encrypted] [Plain]
-        let mut decrypted_header = Vec::new();
-        let mut plain_segment_offset = 0;
-        
-        for segment in plan.segments {
+        // 5. Calculate Logic Size and Range
+        // First calculate total logical size to handle Range requests correctly
+        let mut logic_size = 0;
+        for segment in &plan.segments {
             match segment {
-                DecryptionSegment::Encrypted { offset, length, params } => {
-                    tracing::debug!("Decrypting segment: offset={}, length={}", offset, length);
-                    
-                    // Safety check for encrypted segment size to prevent OOM
-                    const MAX_ENCRYPTED_SEGMENT_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-                    if length as u64 > MAX_ENCRYPTED_SEGMENT_SIZE {
-                        tracing::error!("Encrypted segment too large: {} bytes", length);
-                        return Err(TingError::PluginExecutionError(format!("Encrypted segment too large: {} bytes (max 10MB)", length)));
-                    }
-
-                    // Download encrypted chunk
-                    let (mut reader, _) = if cache_path.exists() {
-                        let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((offset, offset + length as u64))).await?;
-                        (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
-                    } else if library.library_type == "local" {
-                        let (reader, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter.path), Some((offset, offset + length as u64))).await?;
-                        (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                DecryptionSegment::Encrypted { length, .. } => logic_size += *length as u64,
+                DecryptionSegment::Plain { length, offset } => {
+                    if *length <= 0 {
+                        logic_size += total_file_size - offset;
                     } else {
-                        let (reader, size) = state.storage_service.get_webdav_reader(&library, &chapter.path, Some((offset, offset + length as u64)), state.encryption_key.as_ref()).await?;
-                        (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
-                    };
-                    
-                    // Scope for chunk to ensure early drop
-                    let chunk_base64 = {
-                        let mut chunk = Vec::with_capacity(length as usize);
-                        reader.read_to_end(&mut chunk).await?;
-                        base64::engine::general_purpose::STANDARD.encode(&chunk)
-                    };
-                    // chunk is dropped here
-                    
-                    // Decrypt in memory
-                    let result_json = state.plugin_manager.call_format(
-                        &plugin.id,
-                        FormatMethod::DecryptChunk,
-                        serde_json::json!({
-                            "data_base64": chunk_base64,
-                            "params": params
-                        })
-                    ).await.map_err(|e| {
-                        tracing::error!("Decryption chunk call failed: {}", e);
-                        TingError::PluginExecutionError(format!("Decryption failed: {}", e))
-                    })?;
-                    
-                    let decrypted_base64 = result_json["data_base64"].as_str()
-                        .ok_or_else(|| TingError::PluginExecutionError("Missing data_base64 in response".to_string()))?;
-                    
-                    let decrypted = base64::engine::general_purpose::STANDARD.decode(decrypted_base64)
-                        .map_err(|e| TingError::SerializationError(format!("Invalid base64: {}", e)))?;
-                        
-                    decrypted_header.extend(decrypted);
-                },
-                DecryptionSegment::Plain { offset, .. } => {
-                    plain_segment_offset = offset;
-                    // We only support one plain segment at the end for now
-                    break;
+                        logic_size += *length as u64;
+                    }
                 }
             }
         }
+        // Override if plan provides explicit total size
+        if let Some(s) = plan.total_size {
+            logic_size = s;
+        }
 
-        // 6. Calculate Logic Size and Range
-        let logic_size = decrypted_header.len() as u64 + (total_file_size - plain_segment_offset);
-        tracing::info!("Stream prepared: logic_size={}, decrypted_header_len={}, plain_offset={}", logic_size, decrypted_header.len(), plain_segment_offset);
+        tracing::info!("Stream prepared: logic_size={}", logic_size);
         
         // Parse Range Header
         let range_header = headers.get(header::RANGE).and_then(|v| v.to_str().ok());
@@ -671,43 +659,172 @@ pub async fn stream_chapter(
         let content_length = end - start;
         let mime_type = "audio/mp4"; // Decrypted XM is usually m4a/aac
 
-        // 7. Construct Response Stream
-        // Header part
-        let header_len = decrypted_header.len() as u64;
-        let mut stream_chain = Vec::new();
-        
-        if start < header_len {
-            let h_start = start as usize;
-            let h_end = std::cmp::min(end, header_len) as usize;
-            if h_start < h_end {
-                let data = bytes::Bytes::from(decrypted_header[h_start..h_end].to_vec());
-                stream_chain.push(futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(data)]).boxed());
-            }
-        }
-        
-        // Body part
-        if end > header_len {
-            let req_start = plain_segment_offset + (std::cmp::max(start, header_len) - header_len);
-            let req_end = plain_segment_offset + (end - header_len);
-            
-            tracing::debug!("Streaming body: req_start={}, req_end={}", req_start, req_end);
+        // 6. Construct Lazy Stream Chain
+        let mut stream_chain: Vec<futures::stream::BoxStream<'static, std::result::Result<bytes::Bytes, std::io::Error>>> = Vec::new();
+        let mut current_pos = 0;
 
-            let (reader, _) = if cache_path.exists() {
-                let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((req_start, req_end))).await?;
-                (Box::new(reader.take(req_end - req_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
-            } else if library.library_type == "local" {
-                let (reader, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter.path), Some((req_start, req_end))).await?;
-                (Box::new(reader.take(req_end - req_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
-            } else {
-                let (reader, size) = state.storage_service.get_webdav_reader(&library, &chapter.path, Some((req_start, req_end)), state.encryption_key.as_ref()).await?;
-                (Box::new(reader.take(req_end - req_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
+        for segment in plan.segments {
+            // Calculate segment length
+            let seg_len = match segment {
+                DecryptionSegment::Encrypted { length, .. } => length as u64,
+                DecryptionSegment::Plain { length, offset } => {
+                    if length <= 0 {
+                        total_file_size - offset
+                    } else {
+                        length as u64
+                    }
+                }
             };
+
+            let seg_start = current_pos;
+            let seg_end = current_pos + seg_len;
             
-            // Convert AsyncRead to Stream
-            let stream = ReaderStream::new(reader).map(|res| res.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
-            stream_chain.push(stream.boxed());
+            // Check intersection with requested Range
+            if seg_end > start && seg_start < end {
+                // Calculate overlap relative to segment
+                let req_seg_start = std::cmp::max(start, seg_start);
+                let req_seg_end = std::cmp::min(end, seg_end);
+                
+                let relative_start = req_seg_start - seg_start;
+                let relative_end = req_seg_end - seg_start;
+                let _length_to_read = relative_end - relative_start;
+
+                match segment {
+                    DecryptionSegment::Encrypted { offset, length, params } => {
+                         // Clone state for async block
+                         let state = state.clone();
+                         let cache_path = cache_path.clone();
+                         let library = library.clone();
+                         let chapter_path = chapter.path.clone();
+                         let plugin_id = plugin.id.clone();
+                         let encryption_key = state.encryption_key.clone();
+                         let params = params.clone();
+                         
+                         // Create Lazy Future for this chunk
+                         let future = async move {
+                             tracing::debug!("Lazy loading encrypted segment: offset={}, length={}", offset, length);
+                             
+                             // Safety check
+                             const MAX_ENCRYPTED_SEGMENT_SIZE: u64 = 10 * 1024 * 1024; // 10MB
+                             if length as u64 > MAX_ENCRYPTED_SEGMENT_SIZE {
+                                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Encrypted segment too large"));
+                             }
+
+                             // Download encrypted chunk (full segment)
+                             // Note: We download the full encrypted segment because decryption usually depends on it.
+                             // Optimization: If plugin supports partial decryption, we could optimize this.
+                             let (mut reader, _) = if cache_path.exists() {
+                                 let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((offset, offset + length as u64))).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             } else if library.library_type == "local" {
+                                 let (reader, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter_path), Some((offset, offset + length as u64))).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             } else {
+                                 let (reader, size) = state.storage_service.get_webdav_reader(&library, &chapter_path, Some((offset, offset + length as u64)), encryption_key.as_ref()).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(length as u64)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             };
+                             
+                             // Read and Encode
+                             let chunk_base64 = {
+                                 let mut chunk = Vec::with_capacity(length as usize);
+                                 reader.read_to_end(&mut chunk).await?;
+                                 base64::engine::general_purpose::STANDARD.encode(&chunk)
+                             };
+                             
+                             // Decrypt
+                             let result_json = state.plugin_manager.call_format(
+                                 &plugin_id,
+                                 FormatMethod::DecryptChunk,
+                                 serde_json::json!({
+                                     "data_base64": chunk_base64,
+                                     "params": params
+                                 })
+                             ).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+                             
+                             let decrypted_base64 = result_json["data_base64"].as_str()
+                                 .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "Missing data_base64"))?;
+                             
+                             let decrypted = base64::engine::general_purpose::STANDARD.decode(decrypted_base64)
+                                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+                                 
+                             // Slice the result based on range
+                             // Be careful with bounds
+                             let slice_start = relative_start as usize;
+                             let slice_end = std::cmp::min(relative_end as usize, decrypted.len());
+                             
+                             if slice_start >= decrypted.len() {
+                                 return Ok(bytes::Bytes::new());
+                             }
+                             
+                             Ok(bytes::Bytes::from(decrypted[slice_start..slice_end].to_vec()))
+                         };
+                         
+                         // Wrap future in a stream that yields once
+                         stream_chain.push(futures::stream::once(future).boxed());
+                    },
+                    DecryptionSegment::Plain { offset, .. } => {
+                        // Plain segment: use ReaderStream
+                        let read_start = offset + relative_start;
+                        let read_end = offset + relative_end;
+                        
+                        // We need to construct the stream here, but ReaderStream creation is async (opening file)
+                        // Wait, storage_service.get_... is async.
+                        // We need to wrap this in a future too?
+                        // Yes, stream::once(async { ... }) or stream::unfold?
+                        // Actually, ReaderStream expects an AsyncRead.
+                        // So we need an async block to OPEN the file, then return a stream.
+                        
+                        let state = state.clone();
+                        let cache_path = cache_path.clone();
+                        let library = library.clone();
+                        let chapter_path = chapter.path.clone();
+                        let encryption_key = state.encryption_key.clone();
+                        
+                        let future = async move {
+                             let (reader, _) = if cache_path.exists() {
+                                 let (reader, size) = state.storage_service.get_local_reader(&cache_path, Some((read_start, read_end))).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(read_end - read_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             } else if library.library_type == "local" {
+                                 let (reader, size) = state.storage_service.get_local_reader(std::path::Path::new(&chapter_path), Some((read_start, read_end))).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(read_end - read_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             } else {
+                                 let (reader, size) = state.storage_service.get_webdav_reader(&library, &chapter_path, Some((read_start, read_end)), encryption_key.as_ref()).await
+                                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+                                 (Box::new(reader.take(read_end - read_start)) as Box<dyn AsyncRead + Send + Unpin>, size)
+                             };
+                             
+                             // Convert reader to stream
+                             let stream = ReaderStream::new(reader)
+                                 .map(|res| res.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
+                                 
+                             Ok(stream)
+                        };
+                        
+                        // We have a Future that returns a Stream.
+                        // We want a Stream that yields Bytes.
+                        // stream::once(future) -> Stream<Item = Result<Stream<Bytes>>>
+                        // We need to flatten this.
+                        // stream::once(future).map_ok(|s| s).try_flatten()
+                        
+                        let stream = futures::stream::once(future)
+                             .map(|res| match res {
+                                 Ok(s) => s.boxed(),
+                                 Err(e) => futures::stream::iter(vec![Err(e)]).boxed(),
+                             })
+                             .flatten();
+                             
+                        stream_chain.push(stream.boxed());
+                    }
+                }
+            }
+            current_pos += seg_len;
         }
-        
+
         let final_stream = futures::stream::iter(stream_chain).flatten();
         let body = Body::from_stream(final_stream);
 
@@ -723,6 +840,7 @@ pub async fn stream_chapter(
             ],
             body,
         ).into_response());
+
     }
     
     // Non-encrypted: Stream directly

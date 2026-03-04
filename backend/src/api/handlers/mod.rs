@@ -54,4 +54,5 @@ pub struct AppState {
     pub audio_streamer: Arc<AudioStreamer>,
     pub merge_service: Arc<MergeService>,
     pub nfo_manager: Arc<NfoManager>,
+    pub active_preload_tasks: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
