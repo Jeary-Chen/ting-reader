@@ -48,7 +48,7 @@ jobs:
       - name: Prepare App Directory
         run: |
           mkdir -p .github/ting-reader-fpk-native/app/server
-          cp backend/target/x86_64-unknown-linux-gnu/release/ting-reader .github/ting-reader-fpk-native/app/server/
+          find backend/target -name ting-reader -type f -exec cp {} .github/ting-reader-fpk-native/app/server/ \;
           cp backend/config.toml .github/ting-reader-fpk-native/app/server/
           cp -r frontend/dist .github/ting-reader-fpk-native/app/server/static
           chmod +x .github/ting-reader-fpk-native/app/server/ting-reader
