@@ -1,0 +1,135 @@
+#!/bin/bash
+
+LOG_FILE="${TRIM_PKGVAR}/info.log"
+PID_FILE="${TRIM_PKGVAR}/app.pid"
+
+# Set environment variables for Rust app
+export RUST_LOG=info
+export TING_SERVER__HOST=0.0.0.0
+export TING_SERVER__PORT=3000
+
+# Handle Wizard Variables
+if [ -n "$wizard_port" ]; then
+    export TING_SERVER__PORT="$wizard_port"
+fi
+
+if [ -n "$wizard_jwt_secret" ]; then
+    export TING_AUTH__JWT_SECRET="$wizard_jwt_secret"
+fi
+
+# Map shared directories
+# TRIM_DATA_SHARE_PATHS format: /vol1/@appshare/ting-reader/data:/vol1/@appshare/ting-reader/storage:...
+IFS=':' read -r -a SHARES <<< "$TRIM_DATA_SHARE_PATHS"
+
+# Order must match config/resource
+export DATA_DIR="${SHARES[0]}"
+export STORAGE_DIR="${SHARES[1]}"
+export PLUGINS_DIR="${SHARES[2]}"
+export TEMP_DIR="${SHARES[3]}"
+
+# Override STORAGE_DIR if wizard_storage_path is set
+if [ -n "$wizard_storage_path" ]; then
+    export STORAGE_DIR="$wizard_storage_path"
+fi
+
+export STATIC_DIR="${TRIM_APPDEST}/server/static"
+export TING_CONFIG_PATH="${TRIM_APPDEST}/server/config.toml"
+
+# Command to start the application
+CMD="${TRIM_APPDEST}/server/ting-reader"
+
+log_msg() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> ${LOG_FILE}
+}
+
+start_process() {
+    if status; then
+        return 0
+    fi
+
+    log_msg "Starting process ..."
+    log_msg "DATA_DIR: $DATA_DIR"
+    log_msg "STORAGE_DIR: $STORAGE_DIR"
+    log_msg "PLUGINS_DIR: $PLUGINS_DIR"
+    log_msg "TEMP_DIR: $TEMP_DIR"
+    log_msg "PORT: $TING_SERVER__PORT"
+    
+    # Run the process
+    $CMD >> ${LOG_FILE} 2>&1 &
+    
+    # write pid to pidfile
+    printf "%s" "$!" > ${PID_FILE}
+    return 0
+}
+
+stop_process() {
+    log_msg "Stopping process ..."
+
+    if [ -r "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        
+        log_msg "pid=${pid}"
+        if ! check_process "${pid}"; then
+            rm -f "${PID_FILE}"
+            return
+        fi
+
+        log_msg "send TERM signal to PID:${pid}..."
+        kill -TERM ${pid} >> ${LOG_FILE} 2>&1
+
+        local count=0
+        while check_process "${pid}" && [ $count -lt 10 ]; do
+            sleep 1
+            count=$((count + 1))
+        done
+
+        if check_process "${pid}"; then
+            log_msg "send KILL signal to PID:${pid}..."
+            kill -KILL "${pid}"
+            sleep 1
+            rm -f "${PID_FILE}"
+        fi
+    fi
+
+    return 0
+}
+
+check_process() {
+    local pid=$1
+    if kill -0 "${pid}" 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+status() {
+    if [ -f "${PID_FILE}" ]; then
+        pid=$(head -n 1 "${PID_FILE}" | tr -d '[:space:]')
+        if check_process "${pid}"; then
+            return 0
+        else
+            rm -f "${PID_FILE}"
+        fi    
+    fi
+    return 1
+}
+
+case $1 in
+start)
+    start_process
+    ;;
+stop)
+    stop_process
+    ;;
+status)
+    if status; then 
+        exit 0
+    else 
+        exit 3
+    fi
+    ;;
+*)
+    exit 1
+    ;;
+esac

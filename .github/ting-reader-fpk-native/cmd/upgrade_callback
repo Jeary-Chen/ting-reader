@@ -1,0 +1,74 @@
+#!/bin/bash
+
+### This script is called after the user upgrades the application.
+
+SECRET_FILE="${TRIM_PKGETC}/jwt_secret"
+ENV_FILE="${TRIM_APPDEST}/docker/.env"
+
+if [ -f "$SECRET_FILE" ]; then
+    # Existing secret found
+    JWT_SECRET=$(cat "$SECRET_FILE")
+    echo "Found existing JWT Secret."
+else
+    # No secret file found (upgrade from old version or first time using this logic)
+    # Check if we have old wizard variable (might not work if wizard config changed)
+    if [ -n "$wizard_jwt_secret" ]; then
+        JWT_SECRET="$wizard_jwt_secret"
+        echo "Migrating old wizard JWT Secret..."
+    else
+        # Generate new secret
+        # Ensure LC_ALL=C for tr to handle binary input correctly
+        export LC_ALL=C
+        # Use head -c to limit input reading, avoiding infinite read if tr fails
+        JWT_SECRET=$(head -c 512 /dev/urandom | tr -dc 'a-zA-Z0-9' | head -c 32)
+        
+        # Fallback if empty
+        if [ -z "$JWT_SECRET" ]; then
+            # Try openssl if available
+            if command -v openssl >/dev/null 2>&1; then
+                JWT_SECRET=$(openssl rand -hex 16)
+            else
+                # Last resort: use date + random number
+                JWT_SECRET="defaultsecret$(date +%s)$RANDOM"
+            fi
+        fi
+        
+        echo "Generating new JWT Secret..."
+    fi
+    
+    # Save to persistent file
+    mkdir -p "$(dirname "$SECRET_FILE")"
+    echo "$JWT_SECRET" > "$SECRET_FILE"
+fi
+
+# Create .env file for docker-compose
+ENV_FILE="${TRIM_APPDEST}/docker/.env"
+if [ -d "$(dirname "$ENV_FILE")" ]; then
+    echo "TING_SECURITY__JWT_SECRET=${JWT_SECRET}" > "$ENV_FILE"
+    echo "Environment file updated at: $ENV_FILE"
+    
+    # Also update docker-compose.yaml directly to be safe
+    DOCKER_COMPOSE_FILE="${TRIM_APPDEST}/docker/docker-compose.yaml"
+    if [ -f "$DOCKER_COMPOSE_FILE" ]; then
+        ESCAPED_SECRET=$(printf '%s\n' "$JWT_SECRET" | sed -e 's/[\/&]/\\&/g')
+        sed -i "s|\${TING_SECURITY__JWT_SECRET}|$ESCAPED_SECRET|g" "$DOCKER_COMPOSE_FILE"
+        echo "Updated docker-compose.yaml with JWT Secret directly."
+    fi
+else
+    echo "Error: Docker directory not found at $(dirname "$ENV_FILE")"
+    # Try to find docker directory
+    if [ -d "${TRIM_APPDEST}/app/docker" ]; then
+         ENV_FILE="${TRIM_APPDEST}/app/docker/.env"
+         echo "TING_SECURITY__JWT_SECRET=${JWT_SECRET}" > "$ENV_FILE"
+         echo "Environment file updated at: $ENV_FILE"
+         
+         DOCKER_COMPOSE_FILE="${TRIM_APPDEST}/app/docker/docker-compose.yaml"
+         if [ -f "$DOCKER_COMPOSE_FILE" ]; then
+            ESCAPED_SECRET=$(printf '%s\n' "$JWT_SECRET" | sed -e 's/[\/&]/\\&/g')
+            sed -i "s|\${TING_SECURITY__JWT_SECRET}|$ESCAPED_SECRET|g" "$DOCKER_COMPOSE_FILE"
+            echo "Updated docker-compose.yaml with JWT Secret directly."
+         fi
+    fi
+fi
+
+exit 0

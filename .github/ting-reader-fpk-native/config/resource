@@ -1,0 +1,45 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "ting-reader/data",
+                "permission": {
+                    "rw": [
+                        "ting-reader"
+                    ]
+                }
+            },
+            {
+                "name": "ting-reader/storage",
+                "permission": {
+                    "rw": [
+                        "ting-reader"
+                    ]
+                }
+            },
+            {
+                "name": "ting-reader/plugins",
+                "permission": {
+                    "rw": [
+                        "ting-reader"
+                    ]
+                }
+            },
+            {
+                "name": "ting-reader/temp",
+                "permission": {
+                    "rw": [
+                        "ting-reader"
+                    ]
+                }
+            }
+        ]
+    },
+    "authorization-path": [
+        {
+            "field": "wizard_storage_path",
+            "description": "有声书存储目录",
+            "permission": "rw"
+        }
+    ]
+}

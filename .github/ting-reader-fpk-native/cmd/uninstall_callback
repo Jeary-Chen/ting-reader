@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# 获取用户在卸载向导中选择的清理项
+CLEAN_OPTIONS="$wizard_clean_options"
+
+# 定义内部默认路径
+DEFAULT_DATA_PATH="${TRIM_APPDEST_VOL}/@appshare/ting-reader/data"
+DEFAULT_PLUGINS_PATH="${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins"
+DEFAULT_TEMP_PATH="${TRIM_APPDEST_VOL}/@appshare/ting-reader/temp"
+
+# 判断环境变量中是否包含指定的清理项
+contains_option() {
+    echo "$CLEAN_OPTIONS" | grep -q "$1"
+}
+
+echo "Starting uninstallation data cleanup callback..."
+echo "User selected options: $CLEAN_OPTIONS"
+
+# 1. 清理 data 文件夹
+if contains_option "data"; then
+    if [ -d "$DEFAULT_DATA_PATH" ]; then
+        echo "Cleaning data directory: $DEFAULT_DATA_PATH"
+        rm -rf "$DEFAULT_DATA_PATH"
+    fi
+fi
+
+# 2. 清理 plugins 文件夹
+if contains_option "plugins"; then
+    if [ -d "$DEFAULT_PLUGINS_PATH" ]; then
+        echo "Cleaning plugins directory: $DEFAULT_PLUGINS_PATH"
+        rm -rf "$DEFAULT_PLUGINS_PATH"
+    fi
+fi
+
+# 3. 清理 temp 文件夹
+if contains_option "temp"; then
+    if [ -d "$DEFAULT_TEMP_PATH" ]; then
+        echo "Cleaning temp directory: $DEFAULT_TEMP_PATH"
+        rm -rf "$DEFAULT_TEMP_PATH"
+    fi
+fi
+
+echo "Cleanup finished."
+exit 0
