@@ -7,7 +7,7 @@ import {
   Sun, 
   Monitor, 
   Zap, 
-  // FastForward, 
+  FastForward, 
   // Timer,
   CheckCircle2,
   User,
