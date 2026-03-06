@@ -293,7 +293,7 @@ const ChapterManagerModal: React.FC<Props> = ({ bookId, initialChapters, onClose
         {/* Book Selector Modal */}
         {showBookSelector && (
             <BookSelector
-                currentBookId={bookId}
+                excludeIds={[bookId]}
                 onClose={() => setShowBookSelector(false)}
                 onSelect={handleMoveChapters}
             />

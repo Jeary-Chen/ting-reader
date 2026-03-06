@@ -125,6 +125,19 @@ export interface ChapterChange {
   status: 'match' | 'update' | 'missing' | 'new';
 }
 
+export interface Series {
+  id: string;
+  libraryId: string;
+  title: string;
+  author?: string;
+  narrator?: string;
+  description?: string;
+  coverUrl?: string;
+  createdAt: string;
+  updatedAt?: string;
+  books?: Book[];
+}
+
 export interface ScrapeDiff {
   current: BookMetadata;
   scraped: BookMetadata;
