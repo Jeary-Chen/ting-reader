@@ -32,7 +32,9 @@ const ScrapeDiffModal: React.FC<Props> = ({ bookId, onClose, onSave }) => {
       // }
       
       const res = await apiClient.post(`/api/books/${bookId}/scrape-diff`, {
-        query: bookTitle
+        query: bookTitle,
+        author: bookRes.data.author,
+        narrator: bookRes.data.narrator
       });
 
       // Fix camelCase vs snake_case issue if needed
