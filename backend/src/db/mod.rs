@@ -12,7 +12,7 @@ pub mod repository;
 pub mod migrations;
 
 pub use manager::DatabaseManager;
-pub use models::{Book, Chapter, PluginRecord, TaskRecord, User};
+pub use models::{Book, Chapter, PluginRecord, TaskRecord, User, Series, SeriesBook};
 pub use repository::{
-    Repository, BookRepository, ChapterRepository, PluginRepository, TaskRepository, UserRepository
+    Repository, BookRepository, ChapterRepository, PluginRepository, TaskRepository, UserRepository, SeriesRepository
 };

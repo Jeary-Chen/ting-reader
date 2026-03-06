@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Response for library operations (compatible with Node.js version)
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LibraryResponse {
     pub id: String,
     pub name: String,
@@ -105,6 +106,7 @@ pub struct FolderInfo {
 
 /// Information about a cached chapter
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CacheInfoResponse {
     pub chapter_id: String,
     pub book_id: Option<String>,

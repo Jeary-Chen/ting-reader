@@ -234,6 +234,36 @@ const MIGRATION_V7: &str = r#"
 ALTER TABLE chapters ADD COLUMN manual_corrected INTEGER DEFAULT 0;
 "#;
 
+/// Ninth schema migration (version 9)
+const MIGRATION_V9: &str = r#"
+-- Series table
+CREATE TABLE IF NOT EXISTS series (
+    id TEXT PRIMARY KEY,
+    library_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    author TEXT,
+    narrator TEXT,
+    cover_url TEXT,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
+);
+
+-- Series books junction table
+CREATE TABLE IF NOT EXISTS series_books (
+    series_id TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    book_order INTEGER NOT NULL,
+    PRIMARY KEY (series_id, book_id),
+    FOREIGN KEY (series_id) REFERENCES series(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_series_library_id ON series(library_id);
+CREATE INDEX IF NOT EXISTS idx_series_books_series_id ON series_books(series_id);
+"#;
+
 /// Run all pending database migrations
 ///
 /// This function applies database schema migrations in order.
@@ -323,6 +353,11 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         // Use INSERT OR IGNORE just in case, though the version check above should prevent duplicates
         conn.execute("INSERT OR IGNORE INTO schema_migrations (version) VALUES (8)", []).map_err(TingError::DatabaseError)?;
         info!("Migration v8 applied successfully");
+    }
+
+    if current_version < 9 {
+        info!("Applying migration v9: Series System");
+        apply_migration(conn, 9, MIGRATION_V9)?;
     }
 
     info!("Database migrations completed successfully");

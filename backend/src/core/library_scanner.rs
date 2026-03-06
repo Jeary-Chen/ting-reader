@@ -1048,7 +1048,14 @@ impl LibraryScanner {
                 let cover_path = if url.starts_with("http") {
                     url.clone()
                 } else {
-                    dir.join(url).to_string_lossy().to_string()
+                    // Check if url is already a valid path (absolute or relative to CWD)
+                    let p = Path::new(url);
+                    if p.exists() {
+                        url.clone()
+                    } else {
+                        // Try joining with dir (for relative filenames like "cover.jpg")
+                        dir.join(url).to_string_lossy().to_string()
+                    }
                 };
 
                 match crate::core::color::calculate_theme_color_with_client(&cover_path, &self.http_client).await {

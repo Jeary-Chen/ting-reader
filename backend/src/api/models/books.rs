@@ -143,6 +143,7 @@ pub struct UpdateBookRequest {
 
 /// Response for book operations
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BookResponse {
     pub id: String,
     pub library_id: String,
@@ -202,6 +203,7 @@ pub struct BooksListResponse {
 
 /// Response for chapter operations
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChapterResponse {
     pub id: String,
     pub book_id: String,
@@ -262,6 +264,7 @@ pub struct TagsResponse {
 
 /// Response for statistics
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StatsResponse {
     pub total_books: usize,
     pub total_chapters: usize,
@@ -371,4 +374,59 @@ pub struct ScrapeApplyRequest {
 pub struct MoveChaptersRequest {
     pub target_book_id: String,
     pub chapter_ids: Vec<String>,
+}
+
+// Series API models
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateSeriesRequest {
+    pub library_id: String,
+    pub title: String,
+    pub book_ids: Vec<String>,
+    pub author: Option<String>,
+    pub narrator: Option<String>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateSeriesRequest {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub narrator: Option<String>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+    pub book_ids: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SeriesResponse {
+    pub id: String,
+    pub library_id: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub narrator: Option<String>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub books: Vec<BookResponse>,
+}
+
+impl From<crate::db::models::Series> for SeriesResponse {
+    fn from(series: crate::db::models::Series) -> Self {
+        Self {
+            id: series.id,
+            library_id: series.library_id,
+            title: series.title,
+            author: series.author,
+            narrator: series.narrator,
+            cover_url: series.cover_url,
+            description: series.description,
+            created_at: series.created_at,
+            updated_at: series.updated_at,
+            books: Vec::new(),
+        }
+    }
 }

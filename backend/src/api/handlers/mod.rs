@@ -5,6 +5,7 @@ pub mod plugins;
 pub mod system;
 pub mod media;
 pub mod tools;
+pub mod series;
 
 pub use books::*;
 pub use users::*;
@@ -13,12 +14,13 @@ pub use plugins::*;
 pub use system::*;
 pub use media::*;
 pub use tools::*;
+pub use series::*;
 
 use crate::core::services::{BookService, ScraperService};
 use crate::core::task_queue::TaskQueue;
 use crate::db::repository::{
     BookRepository, UserRepository, ProgressRepository, 
-    FavoriteRepository, UserSettingsRepository, LibraryRepository, ChapterRepository
+    FavoriteRepository, UserSettingsRepository, LibraryRepository, ChapterRepository, SeriesRepository
 };
 use std::sync::Arc;
 use crate::core::merge_service::MergeService;
@@ -40,6 +42,7 @@ pub struct AppState {
     pub settings_repo: Arc<UserSettingsRepository>,
     pub library_repo: Arc<LibraryRepository>,
     pub chapter_repo: Arc<ChapterRepository>,
+    pub series_repo: Arc<SeriesRepository>,
     pub book_service: Arc<BookService>,
     pub scraper_service: Arc<ScraperService>,
     pub plugin_manager: Arc<PluginManager>,

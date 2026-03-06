@@ -83,6 +83,7 @@ impl ApiServer {
         let library_repo = Arc::new(crate::db::repository::LibraryRepository::new(db.clone()));
         let chapter_repo = Arc::new(crate::db::repository::ChapterRepository::new(db.clone()));
         let suggestion_repo = Arc::new(MergeSuggestionRepository::new(db.clone()));
+        let series_repo = Arc::new(crate::db::repository::SeriesRepository::new(db.clone()));
         
         // Get JWT secret from config
         let jwt_secret = Arc::new(config.security.jwt_secret.clone());
@@ -163,6 +164,7 @@ impl ApiServer {
             settings_repo,
             library_repo,
             chapter_repo,
+            series_repo,
             book_service,
             scraper_service,
             plugin_manager,

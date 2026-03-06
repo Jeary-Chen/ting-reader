@@ -198,3 +198,25 @@ pub struct ScraperConfig {
     #[serde(default)]
     pub prefer_audio_title: bool,
 }
+
+/// Series record in the database
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Series {
+    pub id: String,
+    pub library_id: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub narrator: Option<String>,
+    pub cover_url: Option<String>,
+    pub description: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Series book link record
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeriesBook {
+    pub series_id: String,
+    pub book_id: String,
+    pub book_order: i32,
+}

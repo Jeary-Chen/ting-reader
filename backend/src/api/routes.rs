@@ -24,6 +24,8 @@ use crate::api::handlers::{
     list_users, create_user, update_user, delete_user,
     // Library management
     list_libraries, create_library, update_library, delete_library, scan_library, get_storage_folders,
+    // Series management
+    list_series, get_series, create_series, update_series, delete_series,
     // Cache management
     cache_chapter, get_cache_list, delete_chapter_cache, clear_all_caches,
     // Proxy API
@@ -74,6 +76,9 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/libraries/:id", patch(update_library).delete(delete_library))
         .route("/api/libraries/:id/scan", post(scan_library))
         .route("/api/storage/folders", get(get_storage_folders))
+        // Series management endpoints
+        .route("/api/v1/series", get(list_series).post(create_series))
+        .route("/api/v1/series/:id", get(get_series).put(update_series).delete(delete_series))
         // Book CRUD endpoints (with /v1 prefix)
         .route("/api/v1/books", get(list_books).post(create_book))
         .route(
