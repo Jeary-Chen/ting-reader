@@ -194,4 +194,7 @@ pub struct ScraperConfig {
     /// Whether to write metadata to NFO files
     #[serde(default)]
     pub nfo_writing_enabled: bool,
+    /// Whether to prefer ID3 title over directory name for book title
+    #[serde(default)]
+    pub prefer_audio_title: bool,
 }

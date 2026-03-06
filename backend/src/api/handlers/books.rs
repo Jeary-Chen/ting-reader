@@ -415,8 +415,22 @@ pub async fn delete_book(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    if state.book_repo.find_by_id(&id).await?.is_none() {
-        return Err(TingError::NotFound(format!("Book with id {} not found", id)));
+    let book = state.book_repo.find_by_id(&id).await?
+        .ok_or_else(|| TingError::NotFound(format!("Book with id {} not found", id)))?;
+
+    // Cleanup cover if cached (WebDAV temp/cache covers)
+    if let Some(cover_url) = &book.cover_url {
+        let path_str = cover_url.replace('\\', "/");
+        if path_str.contains("/temp/covers/") || path_str.contains("/storage/cache/covers/") {
+            let path = std::path::Path::new(&path_str);
+            if path.exists() {
+                 if let Err(e) = std::fs::remove_file(path) {
+                     tracing::warn!("Failed to delete cover cache {}: {}", cover_url, e);
+                 } else {
+                     tracing::info!("Deleted orphan cover cache: {}", cover_url);
+                 }
+            }
+        }
     }
 
     state.book_repo.delete(&id).await?;

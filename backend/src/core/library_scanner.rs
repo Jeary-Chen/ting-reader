@@ -26,6 +26,7 @@ use quick_xml::events::Event;
 use quick_xml::reader::Reader;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use base64::Engine;
+use id3::TagLike;
 
 /// Supported audio file extensions
 // Removed hardcoded encrypted extensions. Plugins should declare their supported extensions.
@@ -643,7 +644,8 @@ impl LibraryScanner {
         // Derive title from directory name
         // Decode URL to handle percent-encoded characters (e.g. Chinese)
         let decoded_url = self.decode_url_path(dir_url);
-        let title = decoded_url.trim_end_matches('/').split('/').last().unwrap_or("Unknown Book").to_string();
+        let dir_name_title = decoded_url.trim_end_matches('/').split('/').last().unwrap_or("Unknown Book").to_string();
+        let (cleaned_dir_name, _) = self.text_cleaner.clean_chapter_title(&dir_name_title, None);
         
         // No local path, use URL as path
         // We use the original URL as path to ensure connectivity, but StorageService needs to handle it correctly
@@ -661,13 +663,34 @@ impl LibraryScanner {
              (String::new(), String::new(), None, None, None, 0)
         };
         
-        let mut book_title = title.clone();
-        if !meta_album.trim().is_empty() {
-            // If the title from metadata is actually an album title, we might use it.
-            if !meta_album.trim().is_empty() {
-                book_title = meta_album.clone();
-            }
+        // Check for special format
+        let mut is_special_format = false;
+        if !file_urls.is_empty() {
+             if let Some(ext_pos) = file_urls[0].rfind('.') {
+                 let ext = file_urls[0][ext_pos+1..].to_lowercase();
+                 if !STANDARD_EXTENSIONS.contains(&ext.as_str()) {
+                     is_special_format = true;
+                 }
+             }
         }
+
+        let mut book_title;
+        let source;
+
+        // Title Selection Logic
+        if is_special_format && !meta_album.trim().is_empty() {
+            book_title = meta_album.clone();
+            source = MetadataSource::FileMetadata;
+        } else if scraper_config.prefer_audio_title && !meta_album.trim().is_empty() {
+            book_title = meta_album.clone();
+            source = MetadataSource::FileMetadata;
+        } else {
+            book_title = cleaned_dir_name.clone();
+            source = MetadataSource::Fallback;
+        }
+        
+        // Clean the book title (whether from ID3 or Directory)
+        book_title = self.text_cleaner.clean_filename(&book_title);
 
         let existing_book = self.book_repo.find_by_hash(&path_hash).await?;
         let book_id = if let Some(book) = existing_book {
@@ -680,7 +703,7 @@ impl LibraryScanner {
         let mut book = crate::db::models::Book {
             id: book_id.clone(),
             library_id: library.id.clone(),
-            title: Some(book_title),
+            title: Some(book_title.clone()),
             author: meta_author.or(Some("Unknown".to_string())),
             narrator: meta_narrator,
             cover_url: meta_cover_url,
@@ -699,40 +722,49 @@ impl LibraryScanner {
 
         // Run scraper if enabled
         if let Some(scraper_service) = &self.scraper_service {
-             match scraper_service.scrape_book_metadata(&title, scraper_config).await {
+             match scraper_service.scrape_book_metadata(&book_title, scraper_config).await {
                 Ok(detail) => {
-                    // Only overwrite if we don't have ID3 metadata (meta_album is empty)
                     if !detail.title.is_empty() {
-                        if meta_album.trim().is_empty() {
+                        // Overwrite if ID3 is empty OR if we are using Fallback source (Directory Name)
+                        // Requirement: "If using directory name as book name, then scraped data > ID3 data"
+                        if source == MetadataSource::Fallback || meta_album.trim().is_empty() {
                             book.title = Some(detail.title);
                         }
                     }
                     
                     if !detail.author.is_empty() {
-                        // Only overwrite if current is Unknown (meaning no ID3 author found)
-                        if book.author.as_deref() == Some("Unknown") || book.author.is_none() {
+                        // Overwrite if Fallback source (Directory Name) OR if current is Unknown/None
+                        if source == MetadataSource::Fallback || book.author.as_deref() == Some("Unknown") || book.author.is_none() {
                             book.author = Some(detail.author);
                         }
                     }
                     
                     if !detail.intro.is_empty() {
-                        book.description = Some(detail.intro);
+                        if source == MetadataSource::Fallback || book.description.is_none() {
+                            book.description = Some(detail.intro);
+                        }
                     }
                     
-                    if detail.cover_url.is_some() && book.cover_url.is_none() {
-                        book.cover_url = detail.cover_url;
+                    if detail.cover_url.is_some() {
+                        if source == MetadataSource::Fallback || book.cover_url.is_none() {
+                            book.cover_url = detail.cover_url;
+                        }
                     }
                     
-                    if detail.narrator.is_some() && book.narrator.is_none() {
-                        book.narrator = detail.narrator;
+                    if detail.narrator.is_some() {
+                        if source == MetadataSource::Fallback || book.narrator.is_none() {
+                            book.narrator = detail.narrator;
+                        }
                     }
                     
                     if !detail.tags.is_empty() {
-                        book.tags = Some(detail.tags.join(","));
+                        if source == MetadataSource::Fallback || book.tags.is_none() {
+                            book.tags = Some(detail.tags.join(","));
+                        }
                     }
                 },
                 Err(e) => {
-                    warn!("Scraper failed for WebDAV book {}: {}", title, e);
+                    warn!("Scraper failed for WebDAV book {}: {}", book_title, e);
                 }
             }
         }
@@ -913,7 +945,7 @@ impl LibraryScanner {
             }
         } else {
             // Not corrected (or New), proceed with extraction
-            let (t, a, n, d, tg, c, source) = self.extract_metadata(dir, files).await;
+            let (t, a, n, d, tg, c, source) = self.extract_metadata(dir, files, scraper_config).await;
             let mut title = t;
             let mut author = a;
             let mut narrator = n;
@@ -972,14 +1004,23 @@ impl LibraryScanner {
                             // Only update if we have better info and not manually corrected (which is checked outside)
                             // We prefer scraper info over local extraction for these fields if scraper provides them
                             
-                            if !detail.intro.is_empty() { description = Some(detail.intro); }
+                            if !detail.intro.is_empty() { 
+                                if source == MetadataSource::Fallback || description.is_none() {
+                                    description = Some(detail.intro); 
+                                }
+                            }
                             if !detail.tags.is_empty() { 
-                                tags = Some(detail.tags.join(",")); 
+                                if source == MetadataSource::Fallback || tags.is_none() {
+                                    tags = Some(detail.tags.join(",")); 
+                                }
                             }
                             
-                            // Update cover if scraper has one AND local cover is missing (Prioritize ID3/Local)
-                            if detail.cover_url.is_some() && cover_url.is_none() { 
-                                cover_url = detail.cover_url; 
+                            // Update cover if scraper has one AND (local cover is missing OR we are using fallback/directory mode)
+                            // User requested: "如果使用了目录名作为书名则通过插件刮削出来的数据要高于id3提取出来的数据"
+                            if detail.cover_url.is_some() { 
+                                if cover_url.is_none() || source == MetadataSource::Fallback {
+                                    cover_url = detail.cover_url; 
+                                }
                             }
                             
                             // Update narrator if scraper has one AND local narrator is missing/fallback
@@ -1116,7 +1157,7 @@ impl LibraryScanner {
         Ok(final_book_id)
     }
 
-    async fn extract_metadata(&self, dir: &Path, files: &[PathBuf]) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, MetadataSource) {
+    async fn extract_metadata(&self, dir: &Path, files: &[PathBuf], scraper_config: &crate::db::models::ScraperConfig) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, MetadataSource) {
         // Try NFO
         let nfo_path = dir.join("book.nfo");
         if let Ok(meta) = self.nfo_manager.read_book_nfo(&nfo_path) {
@@ -1251,13 +1292,41 @@ impl LibraryScanner {
             }
         }
 
-        // Fallback: Directory Name
-        if title.is_empty() {
-            let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown Book");
-            let (cleaned, _) = self.text_cleaner.clean_chapter_title(dir_name, None);
-            title = cleaned;
+        // --- TITLE SELECTION LOGIC ---
+        // Directory Name
+        let dir_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("Unknown Book");
+        let (cleaned_dir_name, _) = self.text_cleaner.clean_chapter_title(dir_name, None);
+        
+        // Special handling for non-standard formats (Plugins)
+        // User requested: "xm等需要格式支持插件的特殊格式所有规则不变"
+        // If it's a special format and we successfully extracted a title, we should probably keep it
+        // regardless of the `prefer_audio_title` setting, OR imply that for special formats we always prefer extracted title.
+        // Let's assume if !is_standard and we have a title, we keep it.
+        
+        let mut is_special_format = false;
+        if !files.is_empty() {
+             let ext = files[0].extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+             if !STANDARD_EXTENSIONS.contains(&ext.as_str()) {
+                 is_special_format = true;
+             }
+        }
+
+        if is_special_format && !title.is_empty() {
+            // Keep plugin title, do not fallback to directory
+            // And clean it
+            title = self.text_cleaner.clean_filename(&title);
+        } else if scraper_config.prefer_audio_title && !title.is_empty() {
+            // Use extracted ID3 title
+            // Clean it just in case
+            title = self.text_cleaner.clean_filename(&title);
+        } else {
+            // Prefer Directory Name (default behavior) or ID3 missing
+            // Clean directory name
+            title = cleaned_dir_name;
             source = MetadataSource::Fallback;
         }
+        
+        // --- TITLE SELECTION END ---
 
         // Fallback Author from "Author - Title" pattern
         if author.is_none() {
@@ -1270,21 +1339,34 @@ impl LibraryScanner {
              }
         }
 
-        let mut cover_url = self.find_cover_image(dir).or(cover_url_from_plugin);
+        // --- FIXED COVER EXTRACTION LOGIC START ---
         
-        // If cover still not found and we have audio files, try to extract from ID3
+        // 1. Try to find local cover image first (cover.jpg, etc.)
+        let mut cover_url = self.find_cover_image(dir);
+        
+        // 2. If no local cover, check if plugin provided one (e.g. scraped URL)
+        if cover_url.is_none() {
+            cover_url = cover_url_from_plugin;
+        }
+
+        // 3. If still no cover, TRY TO EXTRACT FROM ID3 AND SAVE IT
+        // This was missing: we need to actively extract and SAVE the cover to disk so `find_cover_image` or the frontend can use it.
+        // We only do this if we have files.
         if cover_url.is_none() && !files.is_empty() {
              // Only try for MP3 files for now as we use id3 crate
              let first_file = &files[0];
              if let Some(ext) = first_file.extension() {
                  let ext_str = ext.to_string_lossy().to_lowercase();
                  if ext_str == "mp3" {
+                     // This function extracts, saves to disk, and returns the relative path
                      if let Some(path) = self.extract_and_save_cover(first_file, dir) {
                          cover_url = Some(path);
                      }
                  }
              }
         }
+        
+        // --- FIXED COVER EXTRACTION LOGIC END ---
 
         (title, author, narrator, None, None, cover_url, source)
     }
@@ -1310,13 +1392,23 @@ impl LibraryScanner {
                 let cover_path = book_dir.join(&cover_filename);
                 
                 // Save to file
+                // Force overwrite if needed? Or check existence?
+                // If we are here, find_cover_image failed, so likely it doesn't exist.
                 if let Err(e) = std::fs::write(&cover_path, &picture.data) {
                     warn!("Failed to save extracted cover to {:?}: {}", cover_path, e);
                     return None;
                 }
                 
                 info!("Extracted cover from ID3 tag to {:?}", cover_path);
-                return Some(cover_path.to_string_lossy().to_string());
+                
+                // Return just the filename, find_cover_image will resolve it later or frontend uses relative
+                // But wait, Book struct stores cover_url.
+                // find_cover_image returns absolute path string.
+                // We should return absolute path string here to match.
+                // But wait, for local files, frontend might expect relative path if served statically?
+                // Looking at find_cover_image: it returns `path.to_string_lossy().to_string()` which is absolute path.
+                // So we should return absolute path.
+                return Some(cover_path.to_string_lossy().replace('\\', "/"));
             }
         }
         None
@@ -1556,9 +1648,12 @@ impl LibraryScanner {
             // Decryption key
             let key = self.encryption_key.as_deref().unwrap_or(&[0u8; 32]);
             
-            // 1. Probe Header (512 bytes) to determine required size
-            let probe_size = 512;
-            let mut required_size = 2 * 1024 * 1024; // Default 2MB fallback
+            // 1. Probe Header
+            // We need enough bytes to detect ID3v2 header and size.
+            // ID3v2 header is 10 bytes. Size is encoded in bytes 6-9 (Synchsafe integer).
+            // Let's probe 64KB first, usually enough for metadata, but maybe not cover.
+            let probe_size = 64 * 1024; 
+            let mut required_size = probe_size as u64; // Default fallback
             let mut probe_data = Vec::with_capacity(probe_size);
             
             if let Ok((mut reader, _)) = storage.get_webdav_reader(library, file_url, Some((0, probe_size as u64)), key).await {
@@ -1569,7 +1664,26 @@ impl LibraryScanner {
             }
             
             if !probe_data.is_empty() {
-                // Ask plugins for required size
+                // Check for ID3v2 header
+                if probe_data.len() >= 10 && &probe_data[0..3] == b"ID3" {
+                    // Parse ID3v2 size
+                    // Size is 4 bytes (6-9), each byte uses 7 bits (MSB is 0)
+                    let size_bytes = &probe_data[6..10];
+                    let tag_size = ((size_bytes[0] as u32) << 21) |
+                                   ((size_bytes[1] as u32) << 14) |
+                                   ((size_bytes[2] as u32) << 7) |
+                                   (size_bytes[3] as u32);
+                    
+                    // Total size = Header (10) + Tag Size + Footer (10, optional but we ignore for read size)
+                    // We need to download at least this much to get full ID3 tag including cover
+                    let total_id3_size = 10 + tag_size as u64;
+                    if total_id3_size > required_size {
+                        required_size = total_id3_size;
+                        debug!("Detected ID3v2 tag size: {} bytes", required_size);
+                    }
+                }
+
+                // Ask plugins for required size (e.g. for encrypted formats)
                 let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
                 for plugin in plugins {
                     let params = serde_json::json!({
@@ -1578,10 +1692,9 @@ impl LibraryScanner {
                     
                     if let Ok(result) = self.plugin_manager.call_format(&plugin.id, FormatMethod::GetMetadataReadSize, params).await {
                         if let Some(size) = result.get("size").and_then(|v| v.as_u64()) {
-                             if size > 0 {
-                                 required_size = size as usize;
+                             if size > required_size {
+                                 required_size = size;
                                  debug!("Plugin {} requested {} bytes for metadata", plugin.name, required_size);
-                                 break;
                              }
                         }
                     }
@@ -1593,24 +1706,132 @@ impl LibraryScanner {
                 // Write probe data
                 if file.write_all(&probe_data).await.is_ok() {
                     // Download rest if needed
-                    if required_size > probe_data.len() {
+                    if required_size > probe_data.len() as u64 {
                         let start = probe_data.len() as u64;
-                        let end = required_size as u64;
-                        // Avoid requesting past EOF if file is small (though WebDAV usually handles it)
-                        // But we don't know total size.
-                        // However, if ID3 says size is X, file MUST be at least X.
+                        let end = required_size;
+                        
                         if let Ok((mut reader, _)) = storage.get_webdav_reader(library, file_url, Some((start, end)), key).await {
                             let _ = tokio::io::copy(&mut reader, &mut file).await;
                         }
                     }
                     
-                    // Extract metadata using existing logic
-                    let result = self.extract_chapter_metadata(&temp_path).await;
+                    // Extract metadata
+                    // 1. Try explicit ID3 extraction for MP3 (robust for partial files)
+                    let mut album = String::new();
+                    let mut title = String::new();
+                    let mut author = None;
+                    let mut narrator = None;
+                    let mut duration = 0;
                     
+                    let mut cover_url = None;
+                    
+                    // Try reading ID3 tag directly (works better for partial files than symphonia)
+                    if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
+                        debug!("ID3 extraction successful for WebDAV temp file");
+                        if let Some(t) = tag.album() { 
+                            if !t.trim().is_empty() { album = t.to_string(); }
+                        }
+                        if let Some(t) = tag.title() { 
+                            if !t.trim().is_empty() { title = t.to_string(); }
+                        }
+                        
+                        // Author logic: Album Artist > Artist
+                        if let Some(t) = tag.album_artist() { 
+                            if !t.trim().is_empty() { author = Some(t.to_string()); }
+                        }
+                        
+                        if let Some(t) = tag.artist() {
+                             if !t.trim().is_empty() {
+                                 if author.is_none() {
+                                     author = Some(t.to_string());
+                                 } else if author.as_deref() != Some(t) {
+                                     // If we have an author (AlbumArtist) and Artist is different, treat as Narrator
+                                     narrator = Some(t.to_string());
+                                 }
+                             }
+                        }
+                        
+                        // Duration from TLEN?
+                        if let Some(d) = tag.duration() {
+                            duration = (d / 1000) as i32;
+                        }
+                    }
+
+                    // 2. Fallback to standard extraction (might fail for partial files, but handles other formats/plugins)
+                    // Only run if we missed key metadata
+                    if album.is_empty() || title.is_empty() {
+                         let (a, t, au, n, c, d) = self.extract_chapter_metadata(&temp_path).await;
+                         if album.is_empty() { album = a; }
+                         if title.is_empty() { title = t; }
+                         if author.is_none() { author = au; }
+                         if narrator.is_none() { narrator = n; }
+                         if duration == 0 { duration = d; }
+                         if cover_url.is_none() { cover_url = c; }
+                    }
+                    
+                    // For WebDAV, if we extracted a cover (e.g. from plugin), it might be a temp path or base64?
+                    // extract_chapter_metadata returns a string path for cover.
+                    // If it came from ID3 extraction (which we need to add support for in extract_chapter_metadata),
+                    // we should save it to a persistent cache.
+                    
+                    // But wait, extract_chapter_metadata currently returns None for ID3 covers unless we implement it.
+                    // We need to enhance extract_chapter_metadata to extract and save ID3 cover to a specific location if provided.
+                    
+                    // Let's manually extract ID3 cover here since we have the temp file
+                    let mut final_cover_url = cover_url;
+                    
+                    // Only try to extract and save cover if we haven't found one yet
+                    // AND if this is the first file being processed for this book (to avoid duplication)
+                    // But here we are inside extract_webdav_metadata, we don't know if we are the first file easily.
+                    // However, we can check if the file already exists in cache using the hash.
+                    
+                    if final_cover_url.is_none() {
+                         // Create cache directory if not exists
+                         let cache_dir = Path::new("./temp/covers");
+                         if !cache_dir.exists() {
+                             let _ = std::fs::create_dir_all(cache_dir);
+                         }
+                         
+                         // Generate a hash for the file URL to use as filename
+                         // We use the PARENT DIRECTORY URL hash (Book Hash) if possible, to avoid one cover per chapter.
+                         // But we only have file_url here.
+                         // Let's derive parent URL hash.
+                         let parent_url = if let Some(idx) = file_url.rfind('/') {
+                             &file_url[..idx]
+                         } else {
+                             file_url
+                         };
+                         
+                         let mut hasher = Sha256::new();
+                         hasher.update(parent_url.as_bytes());
+                         let book_hash = format!("{:x}", hasher.finalize());
+                         
+                         // Try to read from ID3 tag
+                         if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
+                             if let Some(picture) = tag.pictures().next() {
+                                 let ext = match picture.mime_type.as_str() {
+                                     "image/png" => "png",
+                                     _ => "jpg",
+                                 };
+                                 let target_path = cache_dir.join(format!("{}.{}", book_hash, ext));
+                                 
+                                 // Only write if not exists or overwrite?
+                                 // If we overwrite every time, we waste I/O.
+                                 // If we check existence, we save I/O.
+                                 if !target_path.exists() {
+                                     if std::fs::write(&target_path, &picture.data).is_ok() {
+                                         debug!("Saved WebDAV cover to {:?}", target_path);
+                                     }
+                                 }
+                                 final_cover_url = Some(target_path.to_string_lossy().replace('\\', "/"));
+                             }
+                         }
+                    }
+
                     // Cleanup
                     let _ = tokio::fs::remove_file(&temp_path).await;
                     
-                    return result;
+                    return (album, title, author, narrator, final_cover_url, duration);
                 }
             }
             
@@ -1737,7 +1958,8 @@ impl LibraryScanner {
         for name in cover_names {
             let path = dir.join(name);
             if path.exists() {
-                return Some(path.to_string_lossy().to_string());
+                // Return path with forward slashes for better JSON/URL compatibility
+                return Some(path.to_string_lossy().replace('\\', "/"));
             }
         }
         if let Ok(mut entries) = std::fs::read_dir(dir) {
@@ -1747,7 +1969,8 @@ impl LibraryScanner {
                      if let Some(ext) = path.extension() {
                          let ext_str = ext.to_string_lossy().to_lowercase();
                          if ["jpg", "jpeg", "png", "webp"].contains(&ext_str.as_str()) {
-                             return Some(path.to_string_lossy().to_string());
+                             // Return path with forward slashes for better JSON/URL compatibility
+                             return Some(path.to_string_lossy().replace('\\', "/"));
                          }
                      }
                  }

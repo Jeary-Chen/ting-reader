@@ -242,6 +242,13 @@ pub async fn delete_library(
         // Continue with deletion even if cancellation fails
     }
 
+    // Get books to clean up covers before deleting library
+    let books = state.book_repo.find_by_library(&library_id).await.unwrap_or_default();
+    let covers_to_delete: Vec<String> = books.into_iter()
+        .filter_map(|b| b.cover_url)
+        .filter(|url| url.contains("temp/covers") || url.contains("storage/cache/covers"))
+        .collect();
+
     state.library_repo.delete(&library_id).await?;
 
     // Cleanup any orphan books that might have been created during the deletion process
@@ -250,6 +257,24 @@ pub async fn delete_library(
         tracing::error!(library_id = %library_id, error = %e, "Failed to cleanup orphan books");
     }
 
+    // Cleanup cached covers for WebDAV libraries
+    for cover_path in covers_to_delete {
+        // Normalize path just in case
+        let path_str = cover_path.replace('\\', "/");
+        let path = std::path::Path::new(&path_str);
+        
+        // Security check: ensure we are deleting from allowed directories
+        if path_str.contains("/temp/covers/") || path_str.contains("/storage/cache/covers/") {
+            if path.exists() {
+                 if let Err(e) = std::fs::remove_file(path) {
+                     tracing::warn!("Failed to delete cover cache {}: {}", cover_path, e);
+                 } else {
+                     tracing::info!("Deleted orphan cover cache: {}", cover_path);
+                 }
+            }
+        }
+    }
+    
     Ok(Json(serde_json::json!({
         "message": "Library deleted successfully"
     })))

@@ -204,6 +204,7 @@ pub async fn clear_all_caches(
 
 /// Query parameters for proxy cover
 #[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProxyCoverQuery {
     pub path: String,
     pub library_id: String,
@@ -221,15 +222,42 @@ pub async fn proxy_cover(
         return Err(TingError::NotFound("Embedded cover extraction not yet implemented".to_string()));
     }
     
-    let image_path = std::path::Path::new(&params.path);
+    // Normalize path separators (Windows compatibility)
+    let normalized_path = params.path.replace('\\', "/");
+    let image_path = std::path::Path::new(&normalized_path);
     
-    if !image_path.exists() {
-        return Err(TingError::NotFound(format!("Cover image not found: {}", params.path)));
-    }
+    tracing::info!("Proxy cover request: original='{}', normalized='{}'", params.path, normalized_path);
     
-    let image_data = tokio::fs::read(image_path).await?;
+    // Try to resolve path
+    let final_path = if image_path.exists() {
+        image_path.to_path_buf()
+    } else {
+        // Try relative to CWD if not found directly
+        if let Ok(cwd) = std::env::current_dir() {
+            let abs_path = cwd.join(image_path);
+            if abs_path.exists() {
+                abs_path
+            } else {
+                 // Try stripping './' if present
+                 if normalized_path.starts_with("./") {
+                     let stripped = cwd.join(&normalized_path[2..]);
+                     if stripped.exists() {
+                         stripped
+                     } else {
+                         return Err(TingError::NotFound(format!("Cover image not found: {}", params.path)));
+                     }
+                 } else {
+                     return Err(TingError::NotFound(format!("Cover image not found: {}", params.path)));
+                 }
+            }
+        } else {
+            return Err(TingError::NotFound(format!("Cover image not found: {}", params.path)));
+        }
+    };
     
-    let mime_type = mime_guess::from_path(image_path)
+    let image_data = tokio::fs::read(&final_path).await?;
+    
+    let mime_type = mime_guess::from_path(&final_path)
         .first_or_octet_stream()
         .to_string();
     
