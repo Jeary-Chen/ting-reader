@@ -29,6 +29,31 @@ jobs:
           VERSION=$(jq -r '.version' package.json)
           echo "VERSION=$VERSION" >> $GITHUB_ENV
 
+      - name: Check Release Status
+        id: check_release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ env.VERSION }}"
+          ARTIFACT_NAME="ting-reader-native-${{ matrix.fpk_suffix }}-${VERSION}.fpk"
+          
+          echo "Checking for release v$VERSION and artifact $ARTIFACT_NAME..."
+          
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION exists."
+            # Check if artifact exists in the release assets
+            if gh release view "v$VERSION" --json assets -q ".assets[].name" | grep -q "^$ARTIFACT_NAME$"; then
+               echo "Artifact $ARTIFACT_NAME already exists in release."
+               echo "target=beta" >> $GITHUB_OUTPUT
+            else
+               echo "Artifact $ARTIFACT_NAME missing from release."
+               echo "target=formal" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Release v$VERSION does not exist."
+            echo "target=formal" >> $GITHUB_OUTPUT
+          fi
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -107,9 +132,6 @@ jobs:
       - name: Prepare fnpack
         run: |
           # Use local fnpack if available, otherwise assume it's in PATH or download it
-          # Since this job runs multiple times, we need to handle fnpack setup carefully or just reuse the logic
-          # The original logic moved it to /usr/local/bin, which persists for the runner? 
-          # No, runner is clean for each job usually, but matrix jobs might run in parallel on different runners.
           if [ ! -f /usr/local/bin/fnpack ]; then
             chmod +x .github/workflows/fnpack
             sudo cp .github/workflows/fnpack /usr/local/bin/fnpack
@@ -118,7 +140,18 @@ jobs:
       - name: Build FPK
         run: |
           VERSION="${{ env.VERSION }}"
-          # Update manifest with version and platform
+          TARGET="${{ steps.check_release.outputs.target }}"
+          
+          if [ "$TARGET" = "beta" ]; then
+            echo "Building for Beta release..."
+            VERSION="beta"
+            OUTPUT_NAME="ting-reader-native-${{ matrix.fpk_suffix }}-beta.fpk"
+          else
+            echo "Building for Formal release v$VERSION..."
+            OUTPUT_NAME="ting-reader-native-${{ matrix.fpk_suffix }}-${VERSION}.fpk"
+          fi
+          
+          # Update manifest with version
           sed -i "s/^version[[:space:]]*=.*/version = $VERSION/" .github/ting-reader-fpk-native/manifest
           
           # Update arch/platform in manifest
@@ -127,17 +160,35 @@ jobs:
           sed -i "/^platform[[:space:]]*=/d" .github/ting-reader-fpk-native/manifest
           
           # Add new platform config
-          # Using platform for new format, arch for compatibility if needed?
-          # Doc says: "arch - 架构类型，目前固定为 x86_64废弃"
-          # "platform - 架构类型... 声明为 x86 时... 声明为 arm 时..."
-          # Let's use platform since it's the new standard
           echo "platform = ${{ matrix.arch }}" >> .github/ting-reader-fpk-native/manifest
           
           fnpack build --directory .github/ting-reader-fpk-native
-          mv ting-reader.fpk ting-reader-native-${{ matrix.fpk_suffix }}-${VERSION}.fpk
+          mv ting-reader.fpk "$OUTPUT_NAME"
 
-      - name: Release Native FPK
+      - name: Update Beta Tag
+        if: steps.check_release.outputs.target == 'beta'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git tag -f beta
+          git push origin beta --force
+
+      - name: Release Beta FPK
         uses: softprops/action-gh-release@v1
+        if: steps.check_release.outputs.target == 'beta'
+        with:
+          tag_name: beta
+          name: Beta Release
+          body: "Latest beta build of ting-reader native FPK."
+          prerelease: true
+          make_latest: false
+          files: ting-reader-native-${{ matrix.fpk_suffix }}-beta.fpk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Formal FPK
+        uses: softprops/action-gh-release@v1
+        if: steps.check_release.outputs.target == 'formal'
         with:
           tag_name: v${{ env.VERSION }}
           files: ting-reader-native-${{ matrix.fpk_suffix }}-${{ env.VERSION }}.fpk
