@@ -14,7 +14,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             arch: x86
             fpk_suffix: x86_64
-            use_cross: false
+            use_cross: true
           - target: aarch64-unknown-linux-gnu
             arch: arm
             fpk_suffix: arm64
@@ -81,7 +81,6 @@ jobs:
           npm run build
 
       - name: Inject OpenSSL Vendored Dependency
-        if: matrix.arch == 'arm'
         run: |
           cd backend
           # Inject openssl vendored dependency for static linking to avoid shared library issues
@@ -98,8 +97,10 @@ jobs:
         run: |
           cd backend
           if [ "${{ matrix.use_cross }}" = "true" ]; then
-            # Create Cross.toml to install openssl dependencies in the container
-            printf "[target.aarch64-unknown-linux-gnu]\npre-build = [\n    \"dpkg --add-architecture arm64\",\n    \"apt-get update && apt-get install -y libssl-dev:arm64\"\n]\n" > Cross.toml
+            # Create Cross.toml to install openssl dependencies in the container for ARM
+            if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+              printf "[target.aarch64-unknown-linux-gnu]\npre-build = [\n    \"dpkg --add-architecture arm64\",\n    \"apt-get update && apt-get install -y libssl-dev:arm64\"\n]\n" > Cross.toml
+            fi
             cross build --release --target ${{ matrix.target }}
           else
             cargo build --release --target ${{ matrix.target }}
