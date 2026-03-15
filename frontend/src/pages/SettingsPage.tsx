@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import apiClient from '../api/client';
+import axios from 'axios';
 import { useTheme } from '../hooks/useTheme';
 import { 
   Settings as SettingsIcon, 
@@ -44,6 +45,45 @@ const SettingsPage: React.FC = () => {
   const [accountSaved, setAccountSaved] = useState(false);
   const [widgetEmbedType, setWidgetEmbedType] = useState<'private' | 'public'>('private');
   const [backendVersion, setBackendVersion] = useState<string>('');
+  const [showAbout, setShowAbout] = useState(false);
+  
+  type UpdateInfo = {
+    version: string;
+    downloadUrl: string;
+    size: string;
+    date: string;
+  };
+  const [backendUpdateInfo, setBackendUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checkingBackendUpdate, setCheckingBackendUpdate] = useState(false);
+
+  const handleCheckBackendUpdate = async () => {
+      if (checkingBackendUpdate || !backendVersion) return;
+      setCheckingBackendUpdate(true);
+      try {
+          // Use our own backend proxy to avoid CORS issues
+          const { data } = await apiClient.get('/api/system/check-update');
+          const remoteVersion = data.version.replace(/^v/, '');
+          const currentVersion = backendVersion.replace(/^v/, '');
+          
+          if (remoteVersion !== currentVersion) {
+              setBackendUpdateInfo(data);
+          } else {
+              const toast = document.createElement('div');
+              toast.className = 'fixed bottom-20 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg animate-in fade-in slide-in-from-bottom-4 z-50';
+              toast.innerText = '服务端已是最新版本';
+              document.body.appendChild(toast);
+              setTimeout(() => {
+                  toast.classList.add('animate-out', 'fade-out', 'slide-out-to-bottom-4');
+                  setTimeout(() => toast.remove(), 300);
+              }, 2000);
+          }
+      } catch (error) {
+          console.error('Check backend update failed', error);
+          alert('检查服务端更新失败，请稍后重试');
+      } finally {
+          setCheckingBackendUpdate(false);
+      }
+  };
 
   const handleCopy = async (text: string) => {
     try {
@@ -523,10 +563,97 @@ const SettingsPage: React.FC = () => {
       )}
       </div>
 
-      <div className="text-center text-slate-400 text-sm py-8">
-        {backendVersion && <p className="mb-2 text-xs opacity-60">版本 v{backendVersion}</p>}
-        <p>©2026 Ting Reader.保留所有权利。</p>
+      <div className="text-center text-slate-400 text-sm py-8 pb-24 md:pb-8">
+        <button 
+            onClick={() => setShowAbout(true)}
+            className="text-slate-400 hover:text-primary-600 transition-colors text-sm font-bold underline decoration-slate-300 dark:decoration-slate-700 underline-offset-4"
+        >
+            关于 Ting Reader
+        </button>
+        <p className="mt-4 text-xs opacity-60">©2026 Ting Reader.保留所有权利。</p>
       </div>
+
+      {/* About Modal */}
+      {showAbout && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 border border-slate-100 dark:border-slate-800">
+                <div className="text-center mb-6">
+                    <img src="/logo.png" alt="Ting Reader Logo" className="w-16 h-16 mx-auto mb-4 rounded-2xl shadow-sm object-contain p-1" />
+                    <h3 className="text-xl font-bold dark:text-white">关于 Ting Reader</h3>
+                </div>
+                
+                <div className="space-y-4 mb-6">
+                    <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl">
+                        <span className="text-sm font-bold text-slate-500">服务端版本</span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold dark:text-white">v{backendVersion || 'Unknown'}</span>
+                            <button 
+                                onClick={handleCheckBackendUpdate}
+                                disabled={checkingBackendUpdate || !backendVersion}
+                                className="text-xs bg-primary-50 dark:bg-primary-900/20 text-primary-600 px-2 py-1 rounded-lg font-bold hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors disabled:opacity-50"
+                            >
+                                {checkingBackendUpdate ? '检查中...' : '检查更新'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="text-center mb-6">
+                    <span className="text-sm text-slate-500 mr-2">官网地址</span>
+                    <a 
+                        href="https://www.tingreader.cn" 
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-primary-600 hover:text-primary-700 font-bold"
+                    >
+                        www.tingreader.cn
+                    </a>
+                </div>
+
+                <button 
+                    onClick={() => setShowAbout(false)}
+                    className="w-full py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                >
+                    关闭
+                </button>
+            </div>
+        </div>
+      )}
+
+      {/* Backend Update Modal */}
+      {backendUpdateInfo && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white dark:bg-slate-900 rounded-3xl p-6 w-full max-w-sm shadow-2xl scale-100 animate-in zoom-in-95 duration-200 border border-slate-100 dark:border-slate-800">
+                <div className="text-center mb-6">
+                    <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-2xl flex items-center justify-center mx-auto mb-4 text-blue-600">
+                        <CheckCircle2 size={32} />
+                    </div>
+                    <h3 className="text-xl font-bold dark:text-white">发现服务端新版本 {backendUpdateInfo.version}</h3>
+                    <p className="text-sm text-slate-500 mt-2">
+                        发布时间: {new Date(backendUpdateInfo.date).toLocaleDateString()}
+                    </p>
+                </div>
+                
+                <div className="flex gap-3">
+                    <button 
+                        onClick={() => setBackendUpdateInfo(null)}
+                        className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                    >
+                        暂不更新
+                    </button>
+                    <button 
+                        onClick={() => {
+                            window.open('https://www.tingreader.cn/guide/update', '_blank');
+                            setBackendUpdateInfo(null);
+                        }}
+                        className="flex-1 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors shadow-lg shadow-blue-500/30"
+                    >
+                        前往官网更新
+                    </button>
+                </div>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

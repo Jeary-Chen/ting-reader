@@ -172,90 +172,109 @@ const BookDetailPage: React.FC = () => {
     fetchBookDetails();
   }, [id]);
 
-  // Auto-scroll to current chapter logic
-  useEffect(() => {
-    if (hasInitialScrolled.current) return;
-    if (book?.id !== id) return; // Ensure we are looking at the correct book
+  // Find the chapter to resume or highlight
+  const resumeChapter = React.useMemo(() => {
+    if (!book || chapters.length === 0) return null;
 
-    if (book && chapters.length > 0) {
-      let targetChapter = null;
-
-      // 1. Priority: Currently playing chapter if it belongs to this book
-      if (currentChapter && currentChapter.bookId === book.id) {
-        targetChapter = currentChapter;
-      } 
-      // 2. Fallback: Most recently played chapter from history
-      else {
+    // 1. Priority: Currently playing chapter if it belongs to this book
+    if (currentChapter && currentChapter.bookId === book.id) {
+      return currentChapter;
+    } 
+    
+    // 2. Fallback: Most recently played chapter from history
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const playedChapters = [...chapters].filter(c => (c as any).progressUpdatedAt);
+    if (playedChapters.length > 0) {
+      playedChapters.sort((a, b) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const playedChapters = [...chapters].filter(c => (c as any).progressUpdatedAt);
-        if (playedChapters.length > 0) {
-          playedChapters.sort((a, b) => {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            return new Date((b as any).progressUpdatedAt).getTime() - new Date((a as any).progressUpdatedAt).getTime();
-          });
-          targetChapter = playedChapters[0];
-        }
-      }
-
-      if (targetChapter) {
-        setHighlightedChapterId(targetChapter.id);
-        // Determine if target chapter is in main or extra
-        const inMain = mainChapters.find(c => c.id === targetChapter!.id);
-        const inExtra = extraChapters.find(c => c.id === targetChapter!.id);
-        
-        let targetList = currentChapters;
-        
-        if (inMain) {
-          if (activeTab !== 'main') {
-            setActiveTab('main');
-            return; // Wait for tab switch
-          }
-          targetList = mainChapters;
-        } else if (inExtra) {
-          if (activeTab !== 'extra') {
-            setActiveTab('extra');
-            return; // Wait for tab switch
-          }
-          targetList = extraChapters;
-        }
-        
-        // Calculate group index
-        const index = targetList.findIndex(c => c.id === targetChapter.id);
-        if (index !== -1) {
-          const groupIndex = Math.floor(index / chaptersPerGroup);
-          if (currentGroupIndex !== groupIndex) {
-            setCurrentGroupIndex(groupIndex);
-            return; // Wait for group switch
-          }
-          
-          // Scroll into view
-          const timer = setTimeout(() => {
-            const el = document.getElementById(`chapter-${targetChapter!.id}`);
-            if (el) {
-              el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-              hasInitialScrolled.current = true;
-            }
-            
-            const groupTab = document.getElementById(`group-tab-${groupIndex}`);
-            const container = scrollRef.current;
-            if (groupTab && container) {
-              // Manual scroll to center for better compatibility
-              const containerWidth = container.offsetWidth;
-              const tabWidth = groupTab.offsetWidth;
-              const tabLeft = groupTab.offsetLeft;
-              
-              container.scrollTo({
-                left: tabLeft - containerWidth / 2 + tabWidth / 2,
-                behavior: 'smooth'
-              });
-            }
-          }, 300); // Increased timeout to ensure DOM is ready
-          return () => clearTimeout(timer);
-        }
-      }
+        return new Date((b as any).progressUpdatedAt).getTime() - new Date((a as any).progressUpdatedAt).getTime();
+      });
+      return playedChapters[0];
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [book?.id, currentChapter?.id, chapters, mainChapters, extraChapters, activeTab, currentGroupIndex, currentChapters, chaptersPerGroup]);
+    return null;
+  }, [book, chapters, currentChapter]);
+
+  // Auto-highlight current chapter logic (without scroll)
+  useEffect(() => {
+    if (book?.id !== id) return; 
+
+    if (resumeChapter) {
+      setHighlightedChapterId(resumeChapter.id);
+    }
+  }, [book?.id, id, resumeChapter]);
+
+  const doScroll = (chapterId: string, groupIndex: number) => {
+      const el = document.getElementById(`chapter-${chapterId}`);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }
+      
+      const groupTab = document.getElementById(`group-tab-${groupIndex}`);
+      const container = scrollRef.current;
+      if (groupTab && container) {
+        const containerWidth = container.offsetWidth;
+        const tabWidth = groupTab.offsetWidth;
+        const tabLeft = groupTab.offsetLeft;
+        
+        container.scrollTo({
+          left: tabLeft - containerWidth / 2 + tabWidth / 2,
+          behavior: 'smooth'
+        });
+      }
+  };
+
+  const scrollToChapterElement = (chapterId: string, list: Chapter[]) => {
+      // Calculate group index
+      const index = list.findIndex(c => c.id === chapterId);
+      if (index !== -1) {
+        const groupIndex = Math.floor(index / chaptersPerGroup);
+        if (currentGroupIndex !== groupIndex) {
+          setCurrentGroupIndex(groupIndex);
+          // Wait for group switch
+          setTimeout(() => doScroll(chapterId, groupIndex), 100);
+          return;
+        }
+        doScroll(chapterId, groupIndex);
+      }
+  };
+
+  const handlePlayClick = () => {
+    if (resumeChapter) {
+      // If we have a resume chapter, play it and scroll to it
+      playChapter(book!, currentChapters, resumeChapter);
+      
+      // Scroll logic
+      const targetChapter = resumeChapter;
+      
+      // Determine if target chapter is in main or extra
+      const inMain = mainChapters.find(c => c.id === targetChapter.id);
+      const inExtra = extraChapters.find(c => c.id === targetChapter.id);
+      
+      let targetList = currentChapters;
+      
+      if (inMain) {
+        if (activeTab !== 'main') {
+          setActiveTab('main');
+          // Wait for tab switch then continue
+          setTimeout(() => scrollToChapterElement(targetChapter.id, mainChapters), 100);
+          return;
+        }
+        targetList = mainChapters;
+      } else if (inExtra) {
+        if (activeTab !== 'extra') {
+          setActiveTab('extra');
+          setTimeout(() => scrollToChapterElement(targetChapter.id, extraChapters), 100);
+          return;
+        }
+        targetList = extraChapters;
+      }
+      
+      scrollToChapterElement(targetChapter.id, targetList);
+    } else {
+      // Default play behavior
+      playBook(book!, currentChapters);
+    }
+  };
 
   useEffect(() => {
     const checkOverflow = () => {
@@ -520,7 +539,7 @@ const BookDetailPage: React.FC = () => {
 
             <div className="w-full flex flex-col gap-3 md:max-w-md mx-auto md:mx-0">
               <button 
-                onClick={() => playBook(book, currentChapters)}
+                onClick={handlePlayClick}
                 className="w-full flex items-center justify-center gap-2 px-5 sm:px-8 py-3.5 sm:py-4 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-2xl shadow-xl shadow-primary-500/30 transition-all active:scale-95 group"
                 style={displayThemeColor ? { 
                   backgroundColor: toSolidColor(displayThemeColor),
@@ -528,7 +547,7 @@ const BookDetailPage: React.FC = () => {
                 } : {}}
               >
                 <Play size={18} fill="currentColor" />
-                立即播放
+                {resumeChapter ? '继续播放' : '立即播放'}
               </button>
 
               <div className="w-full flex gap-2 sm:gap-3">
@@ -631,18 +650,18 @@ const BookDetailPage: React.FC = () => {
             )}
           </h2>
           
-          <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start">
-            <button 
-              onClick={() => { setActiveTab('main'); setCurrentGroupIndex(0); }}
-              className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
-                activeTab === 'main' 
-                  ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-              }`}
-            >
-              正文 ({mainChapters.length})
-            </button>
-            {extraChapters.length > 0 && (
+          {extraChapters.length > 0 && (
+            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl self-start">
+              <button 
+                onClick={() => { setActiveTab('main'); setCurrentGroupIndex(0); }}
+                className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                  activeTab === 'main' 
+                    ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                }`}
+              >
+                正文 ({mainChapters.length})
+              </button>
               <button 
                 onClick={() => { setActiveTab('extra'); setCurrentGroupIndex(0); }}
                 className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${
@@ -653,8 +672,8 @@ const BookDetailPage: React.FC = () => {
               >
                 番外 ({extraChapters.length})
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Chapter Groups Selector */}
@@ -1029,27 +1048,27 @@ const BookDetailPage: React.FC = () => {
                   删除书籍
                 </button>
                 <div className="flex-1" />
-                <div className="flex gap-3">
+                <div className="flex gap-2 sm:gap-3">
                   <button 
                     onClick={handleWriteMetadata}
-                    className="flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 font-bold text-primary-600 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 rounded-xl transition-all flex items-center justify-center gap-2 text-sm sm:text-base"
+                    className="flex-1 sm:flex-none px-2.5 sm:px-6 py-2.5 sm:py-3 font-bold text-primary-600 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 rounded-xl transition-all flex items-center justify-center gap-1.5 sm:gap-2 text-xs sm:text-base whitespace-nowrap"
                     title="将元数据写入音频文件"
                   >
-                    <FileSignature size={18} className="sm:w-5 sm:h-5" />
+                    <FileSignature size={16} className="sm:w-5 sm:h-5" />
                     写入文件
                   </button>
                   <button 
                     onClick={() => setIsEditModalOpen(false)}
-                    className="flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-sm sm:text-base"
+                    className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs sm:text-base whitespace-nowrap"
                   >
                     取消
                   </button>
                   <button 
                     onClick={handleEditSave}
-                    className="flex-1 sm:flex-none px-6 sm:px-8 py-2.5 sm:py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl shadow-lg shadow-primary-500/30 flex items-center justify-center gap-2 transition-all text-sm sm:text-base"
+                    className="flex-1 sm:flex-none px-3 sm:px-8 py-2.5 sm:py-3 bg-primary-600 hover:bg-primary-700 text-white font-bold rounded-xl shadow-lg shadow-primary-500/30 flex items-center justify-center gap-1.5 sm:gap-2 transition-all text-xs sm:text-base whitespace-nowrap"
                   >
-                    <Save size={18} className="sm:w-5 sm:h-5" />
-                    保存更改
+                    <Save size={16} className="sm:w-5 sm:h-5" />
+                    <span>保存<span className="hidden min-[380px]:inline">更改</span></span>
                   </button>
                 </div>
               </div>

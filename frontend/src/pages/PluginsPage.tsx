@@ -11,10 +11,7 @@ import {
   AlertCircle,
   ShoppingBag,
   Download,
-  ArrowUpCircle,
   Search,
-  Filter,
-  // MoreVertical
 } from 'lucide-react';
 
 const PluginName = ({ name, className = "" }: { name: string, className?: string }) => {
@@ -58,7 +55,8 @@ const PluginName = ({ name, className = "" }: { name: string, className?: string
 };
 
 const PluginsPage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'installed' | 'store' | 'updates'>('installed');
+  // activeTab: 'store' = 全部(All/Store), 'installed' = 已安装(Installed), 'updates' = 可升级(Updates)
+  const [activeTab, setActiveTab] = useState<'installed' | 'store' | 'updates'>('store');
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [storePlugins, setStorePlugins] = useState<StorePlugin[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +64,8 @@ const PluginsPage: React.FC = () => {
   const [uploading, setUploading] = useState(false);
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState<string>('all');
+  // category: 'all' | 'scraper' | 'format' | 'utility'
+  const [category, setCategory] = useState<string>('all');
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,8 +81,6 @@ const PluginsPage: React.FC = () => {
       return next;
     });
   };
-
-
 
   const fetchPlugins = async () => {
     try {
@@ -120,7 +117,6 @@ const PluginsPage: React.FC = () => {
   }, [activeTab]);
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    // ... existing upload logic ...
     const file = event.target.files?.[0];
     if (!file) return;
 
@@ -166,7 +162,6 @@ const PluginsPage: React.FC = () => {
   };
 
   const handleReload = async (id: string) => {
-    // ... existing reload logic ...
     try {
       await apiClient.post(`/api/v1/plugins/${id}/reload`);
       fetchPlugins();
@@ -180,7 +175,6 @@ const PluginsPage: React.FC = () => {
   };
 
   const handleUninstall = async (id: string) => {
-    // ... existing uninstall logic ...
     if (!confirm('Are you sure you want to uninstall this plugin?')) return;
 
     try {
@@ -215,10 +209,7 @@ const PluginsPage: React.FC = () => {
   // Filter logic
   const getFilteredStorePlugins = () => {
     return storePlugins.filter(plugin => {
-      // Filter out installed plugins for store tab
-      if (activeTab === 'store' && getInstalledVersion(plugin.id)) {
-        return false;
-      }
+      // Show installed plugins in store tab (activeTab === 'store' is now "All")
       
       // Filter for updates tab
       if (activeTab === 'updates' && !isUpdateAvailable(plugin)) {
@@ -231,8 +222,8 @@ const PluginsPage: React.FC = () => {
         return false;
       }
 
-      // Type filter
-      if (filterType !== 'all' && plugin.pluginType !== filterType) {
+      // Category filter
+      if (category !== 'all' && plugin.pluginType !== category) {
         return false;
       }
 
@@ -240,157 +231,151 @@ const PluginsPage: React.FC = () => {
     });
   };
 
-  const updateCount = storePlugins.filter(p => isUpdateAvailable(p)).length;
+  // Filter logic for installed plugins
+  const getFilteredInstalledPlugins = () => {
+      return plugins.filter(plugin => {
+          // Search query
+          if (searchQuery && !plugin.name.toLowerCase().includes(searchQuery.toLowerCase()) && 
+              !plugin.description.toLowerCase().includes(searchQuery.toLowerCase())) {
+            return false;
+          }
+    
+          // Category filter
+          if (category !== 'all' && plugin.pluginType !== category) {
+            return false;
+          }
+    
+          return true;
+      });
+  };
 
-  if (loading && activeTab === 'installed') {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-      </div>
-    );
-  }
+  const updateCount = storePlugins.filter(p => isUpdateAvailable(p)).length;
 
   return (
     <div className="flex-1 min-h-full flex flex-col p-4 sm:p-6 md:p-8 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white flex items-center gap-3">
-            <Puzzle size={28} className="text-primary-600 md:w-8 md:h-8" />
-            插件管理
-          </h1>
-          <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-1">管理系统的扩展功能插件</p>
-        </div>
-        <div className="flex gap-3">
-          <button 
-            onClick={() => activeTab === 'installed' ? fetchPlugins() : fetchStorePlugins()} 
-            className="p-2 text-slate-500 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw size={20} />
-          </button>
-          
-          {activeTab === 'installed' && (
-            <>
-              <button 
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 px-4 py-2 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {uploading ? (
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-slate-600"></div>
-                ) : (
-                  <Upload size={18} />
-                )}
-                <span>手动安装</span>
-              </button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleUpload} 
-                accept=".zip" 
-                className="hidden" 
-              />
-            </>
-          )}
-        </div>
+      
+      {/* Top Header & Tabs */}
+      <div className="flex flex-col gap-4 mb-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
+                  <button
+                    onClick={() => setActiveTab('store')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        activeTab === 'store' 
+                        ? 'bg-white dark:bg-slate-700 text-primary-600 dark:text-primary-400 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    全部
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('installed')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 ${
+                        activeTab === 'installed' 
+                        ? 'bg-white dark:bg-slate-700 text-primary-600 dark:text-primary-400 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    已安装
+                    {plugins.length > 0 && (
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                            activeTab === 'installed' ? 'bg-primary-50 text-primary-600' : 'bg-slate-200 text-slate-600'
+                        }`}>
+                            {plugins.length}
+                        </span>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('updates')}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2 relative ${
+                        activeTab === 'updates' 
+                        ? 'bg-white dark:bg-slate-700 text-primary-600 dark:text-primary-400 shadow-sm' 
+                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    }`}
+                  >
+                    可升级
+                    {updateCount > 0 && (
+                        <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-100 dark:border-slate-800"></span>
+                    )}
+                  </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                 {activeTab === 'installed' && (
+                    <>
+                        <button 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={uploading}
+                            className="text-sm font-medium text-slate-600 hover:text-primary-600 flex items-center gap-2 px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                        >
+                            {uploading ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div> : <Upload size={16} />}
+                            手动安装
+                        </button>
+                        <input type="file" ref={fileInputRef} onChange={handleUpload} accept=".zip" className="hidden" />
+                    </>
+                 )}
+                 <button 
+                    onClick={() => activeTab === 'installed' ? fetchPlugins() : fetchStorePlugins()} 
+                    className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 shadow-sm"
+                 >
+                    <RefreshCw size={16} />
+                    更新应用列表
+                 </button>
+              </div>
+          </div>
+
+          {/* Categories & Search */}
+          <div className="flex flex-col md:flex-row gap-4 justify-between items-start md:items-center bg-white dark:bg-slate-900 p-1 rounded-xl border border-transparent"> 
+              <div className="flex flex-wrap items-center gap-2">
+                  {[
+                      { id: 'all', label: '全部' },
+                      { id: 'scraper', label: '元数据' },
+                      { id: 'format', label: '格式' },
+                      { id: 'utility', label: '工具' }
+                  ].map(cat => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setCategory(cat.id)}
+                        className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                            category === cat.id
+                            ? 'bg-primary-50 text-primary-600 font-medium'
+                            : 'text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                          {cat.label}
+                      </button>
+                  ))}
+              </div>
+
+              <div className="relative w-full md:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                <input 
+                  type="text" 
+                  placeholder="搜索..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-4 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 transition-all"
+                />
+              </div>
+          </div>
       </div>
 
-      <div className="flex border-b border-slate-200 dark:border-slate-700 mb-6">
-        <button
-          className={`px-4 py-2 font-medium text-sm transition-colors relative ${
-            activeTab === 'installed' 
-              ? 'text-primary-600 dark:text-primary-400' 
-              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-          onClick={() => setActiveTab('installed')}
-        >
-          <div className="flex items-center gap-2">
-            <Puzzle size={18} />
-            <span>已安装</span>
-            <span className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-xs px-2 py-0.5 rounded-full">{plugins.length}</span>
-          </div>
-          {activeTab === 'installed' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600 dark:bg-primary-500"></div>
-          )}
-        </button>
-        <button
-          className={`px-4 py-2 font-medium text-sm transition-colors relative ${
-            activeTab === 'store' 
-              ? 'text-primary-600 dark:text-primary-400' 
-              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-          onClick={() => setActiveTab('store')}
-        >
-          <div className="flex items-center gap-2">
-            <ShoppingBag size={18} />
-            <span>插件商店</span>
-          </div>
-          {activeTab === 'store' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600 dark:bg-primary-500"></div>
-          )}
-        </button>
-        <button
-          className={`px-4 py-2 font-medium text-sm transition-colors relative ${
-            activeTab === 'updates' 
-              ? 'text-primary-600 dark:text-primary-400' 
-              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-          }`}
-          onClick={() => setActiveTab('updates')}
-        >
-          <div className="flex items-center gap-2">
-            <ArrowUpCircle size={18} />
-            <span>可升级</span>
-            {updateCount > 0 && (
-              <span className="bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs px-2 py-0.5 rounded-full">{updateCount}</span>
-            )}
-          </div>
-          {activeTab === 'updates' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary-600 dark:bg-primary-500"></div>
-          )}
-        </button>
-      </div>
-
-      {(activeTab === 'store' || activeTab === 'updates') && (
-        <div className="mb-6 flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="搜索插件..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500"
-            />
-          </div>
-          <div className="relative">
-             <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
-               <Filter size={16} />
-             </div>
-             <select 
-               value={filterType}
-               onChange={(e) => setFilterType(e.target.value)}
-               className="pl-10 pr-8 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 appearance-none cursor-pointer"
-             >
-               <option value="all">所有类型</option>
-               <option value="scraper">元数据刮削 (Scraper)</option>
-               <option value="format">格式支持 (Format)</option>
-               <option value="utility">工具 (Utility)</option>
-             </select>
-          </div>
-        </div>
-      )}
-
+      {/* Content Area */}
       {activeTab === 'installed' ? (
-        plugins.length === 0 ? (
+        loading ? (
+          <div className="flex-1 flex items-center justify-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+          </div>
+        ) : getFilteredInstalledPlugins().length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-slate-400 py-12">
             <Puzzle size={64} className="mb-4 opacity-50" />
             <p className="text-lg font-medium">暂无已安装的插件</p>
-            <p className="text-sm mt-2">点击"插件商店"或"手动安装"添加新功能</p>
+            <p className="text-sm mt-2">点击"全部"查看可安装插件</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {plugins.map((plugin) => (
-              <div key={plugin.id} className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
+            {getFilteredInstalledPlugins().map((plugin) => (
+              <div key={plugin.id} className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col hover:shadow-md transition-shadow">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
                     <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 text-white ${
@@ -465,7 +450,7 @@ const PluginsPage: React.FC = () => {
           </div>
         )
       ) : (
-        // Store or Updates Tab
+        // Store or Updates Tab (All)
         storeLoading ? (
           <div className="flex-1 flex items-center justify-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
@@ -482,22 +467,28 @@ const PluginsPage: React.FC = () => {
             {getFilteredStorePlugins().map((plugin) => {
               const installedVersion = getInstalledVersion(plugin.id);
               const hasUpdate = isUpdateAvailable(plugin);
+              const isInstalled = !!installedVersion;
               
               return (
-                <div key={plugin.id} className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col">
+                <div key={plugin.id} className="bg-white dark:bg-slate-900 rounded-2xl p-6 shadow-sm border border-slate-100 dark:border-slate-800 flex flex-col hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 bg-slate-100 dark:bg-slate-800 text-2xl">
                         {plugin.icon || '🧩'}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <PluginName 
-                          name={plugin.name} 
-                          className="font-bold text-slate-900 dark:text-white"
-                        />
+                        <div className="flex items-center gap-2">
+                            <PluginName 
+                            name={plugin.name} 
+                            className="font-bold text-slate-900 dark:text-white"
+                            />
+                            {isInstalled && (
+                                <span className="shrink-0 text-[10px] text-green-600 bg-green-50 px-1.5 py-0.5 rounded border border-green-100">已安装</span>
+                            )}
+                        </div>
                         <div className="flex items-center gap-2">
                            <p className="text-xs text-slate-500 dark:text-slate-400">{plugin.version}</p>
-                           {installedVersion && (
+                           {hasUpdate && installedVersion && (
                              <p className="text-xs text-slate-400 dark:text-slate-500 line-through">{installedVersion}</p>
                            )}
                         </div>
@@ -542,13 +533,15 @@ const PluginsPage: React.FC = () => {
                     
                     <button 
                       onClick={() => handleInstallFromStore(plugin.id)}
-                      disabled={installingId === plugin.id}
+                      disabled={installingId === plugin.id || (isInstalled && !hasUpdate)}
                       className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-colors ${
                         installingId === plugin.id
                           ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                          : hasUpdate
-                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                            : 'bg-primary-600 hover:bg-primary-700 text-white'
+                          : (isInstalled && !hasUpdate)
+                             ? 'bg-slate-100 text-slate-400 cursor-not-allowed' // Installed style
+                             : hasUpdate
+                               ? 'bg-green-600 hover:bg-green-700 text-white'
+                               : 'bg-primary-600 hover:bg-primary-700 text-white'
                       }`}
                     >
                       {installingId === plugin.id ? (
@@ -557,7 +550,7 @@ const PluginsPage: React.FC = () => {
                         <Download size={18} />
                       )}
                       <span>
-                        {hasUpdate ? '更新' : '安装'}
+                        {installingId === plugin.id ? '处理中...' : (hasUpdate ? '更新' : (isInstalled ? '已安装' : '安装'))}
                       </span>
                     </button>
                   </div>

@@ -174,6 +174,7 @@ const Player: React.FC = () => {
   const [showVolumeControl, setShowVolumeControl] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
+  const [activeTab, setActiveTab] = useState<'main' | 'extra'>('main');
   const scrollRef = useRef<HTMLDivElement>(null);
   const volumeControlRef = useRef<HTMLDivElement>(null);
 
@@ -249,11 +250,20 @@ const Player: React.FC = () => {
     }
   };
 
+  const { mainChapters, extraChapters } = React.useMemo(() => {
+    return {
+      mainChapters: chapters.filter(c => !c.isExtra),
+      extraChapters: chapters.filter(c => c.isExtra)
+    };
+  }, [chapters]);
+
+  const currentChapters = activeTab === 'main' ? mainChapters : extraChapters;
+
   const chaptersPerGroup = 100;
   const groups = React.useMemo(() => {
     const g = [];
-    for (let i = 0; i < chapters.length; i += chaptersPerGroup) {
-      const slice = chapters.slice(i, i + chaptersPerGroup);
+    for (let i = 0; i < currentChapters.length; i += chaptersPerGroup) {
+      const slice = currentChapters.slice(i, i + chaptersPerGroup);
       g.push({
         start: slice[0]?.chapterIndex || (i + 1),
         end: slice[slice.length - 1]?.chapterIndex || (i + slice.length),
@@ -261,7 +271,7 @@ const Player: React.FC = () => {
       });
     }
     return g;
-  }, [chapters]);
+  }, [currentChapters]);
 
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
   const progressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -567,6 +577,9 @@ const Player: React.FC = () => {
         }
       }
 
+      // Ensure playback rate is applied
+      audioRef.current.playbackRate = playbackSpeed;
+
       // Sync duration back to server if it's significantly different and valid
       if (currentChapter && Number.isFinite(browserDuration) && browserDuration > 0) {
         const diff = Math.abs(browserDuration - (currentChapter.duration || 0));
@@ -738,7 +751,12 @@ const Player: React.FC = () => {
         onProgress={handleProgress}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleEnded}
-        onPlay={() => setIsPlaying(true)}
+        onPlay={() => {
+          setIsPlaying(true);
+          if (audioRef.current) {
+            audioRef.current.playbackRate = playbackSpeed;
+          }
+        }}
         onPause={() => setIsPlaying(false)}
         onError={(e) => {
           const audio = audioRef.current;
@@ -1084,7 +1102,17 @@ const Player: React.FC = () => {
                 onClick={() => {
                   // Calculate group index for current chapter
                   if (currentChapter && chapters.length > 0) {
-                    const index = chapters.findIndex(c => c.id === currentChapter.id);
+                    // Determine if target chapter is in main or extra
+                    const isExtra = !!currentChapter.isExtra || /番外|SP|Extra/i.test(currentChapter.title);
+                    const targetTab = isExtra ? 'extra' : 'main';
+                    if (activeTab !== targetTab) setActiveTab(targetTab);
+
+                    const targetList = chapters.filter(c => {
+                         const cIsExtra = !!c.isExtra || /番外|SP|Extra/i.test(c.title);
+                         return (cIsExtra === isExtra);
+                    });
+                    
+                    const index = targetList.findIndex(c => c.id === currentChapter.id);
                     if (index !== -1) {
                       const groupIndex = Math.floor(index / chaptersPerGroup);
                       setCurrentGroupIndex(groupIndex);
@@ -1445,10 +1473,36 @@ const Player: React.FC = () => {
               />
               <div className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-t-[32px] sm:rounded-[32px] h-[80vh] sm:h-[70vh] flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-300 shadow-2xl">
                 <div className="p-4 sm:p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                  <h3 className="text-lg sm:text-xl font-bold dark:text-white flex items-center gap-2">
-                    <ListMusic size={24} className="text-primary-600" />
-                    章节列表
-                  </h3>
+                  <div className="flex items-center gap-3 sm:gap-4">
+                    <h3 className="text-lg sm:text-xl font-bold dark:text-white flex items-center gap-2">
+                      <ListMusic size={24} className="text-primary-600" />
+                      章节列表
+                    </h3>
+                    {extraChapters.length > 0 && (
+                      <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl scale-90 origin-left">
+                        <button 
+                          onClick={() => { setActiveTab('main'); setCurrentGroupIndex(0); }}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            activeTab === 'main' 
+                              ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                          }`}
+                        >
+                          正文
+                        </button>
+                        <button 
+                          onClick={() => { setActiveTab('extra'); setCurrentGroupIndex(0); }}
+                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                            activeTab === 'extra' 
+                              ? 'bg-white dark:bg-slate-700 text-primary-600 shadow-sm' 
+                              : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                          }`}
+                        >
+                          番外
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <button 
                     onClick={() => setShowChapters(false)}
                     className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors"
@@ -1457,8 +1511,7 @@ const Player: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Chapter Groups Selector */}
-                {groups.length > 0 && (
+                {groups.length > 1 && (
                   <div className="relative group/nav border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
                     <button 
                       onClick={() => scrollGroups('left')}
@@ -1499,7 +1552,7 @@ const Player: React.FC = () => {
                 )}
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                  {(groups[currentGroupIndex]?.chapters || chapters).map((chapter, index) => {
+                  {(groups[currentGroupIndex]?.chapters || currentChapters).map((chapter, index) => {
                     const actualIndex = currentGroupIndex * chaptersPerGroup + index;
                     const isCurrent = currentChapter?.id === chapter.id;
                     
@@ -1508,7 +1561,7 @@ const Player: React.FC = () => {
                         key={chapter.id}
                         id={`player-chapter-${chapter.id}`}
                         onClick={() => {
-                          playChapter(currentBook!, chapters, chapter);
+                          playChapter(currentBook!, currentChapters, chapter);
                           setShowChapters(false);
                         }}
                         className={`group flex items-center justify-between p-4 rounded-2xl cursor-pointer transition-all border ${
