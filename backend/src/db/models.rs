@@ -181,29 +181,40 @@ pub struct Library {
 pub struct ScraperConfig {
     /// Default list of scraper sources in order of priority
     #[serde(default)]
+    #[serde(rename = "defaultSources")]
     pub default_sources: Vec<String>,
     /// Specific sources for author
+    #[serde(rename = "authorSources")]
     pub author_sources: Option<Vec<String>>,
     /// Specific sources for narrator
+    #[serde(rename = "narratorSources")]
     pub narrator_sources: Option<Vec<String>>,
     /// Specific sources for cover image
+    #[serde(rename = "coverSources")]
     pub cover_sources: Option<Vec<String>>,
     /// Specific sources for introduction/description
+    #[serde(rename = "introSources")]
     pub intro_sources: Option<Vec<String>>,
     /// Specific sources for tags
+    #[serde(rename = "tagsSources")]
     pub tags_sources: Option<Vec<String>>,
     /// Whether to write metadata to NFO files
     #[serde(default)]
+    #[serde(rename = "nfoWritingEnabled")]
     pub nfo_writing_enabled: bool,
     /// Whether to write metadata to metadata.json files
     #[serde(default)]
+    #[serde(rename = "metadataWritingEnabled")]
     pub metadata_writing_enabled: bool,
-    /// Whether to prefer ID3 title over directory name for book title
+    /// Whether to force using file/folder name as title (ignoring priority)
+    /// This field was previously "prefer_audio_title" with inverted logic
     #[serde(default)]
-    pub prefer_audio_title: bool,
+    #[serde(rename = "preferAudioTitle", alias = "prefer_audio_title")] 
+    pub use_filename_as_title: bool,
     /// Priority order for metadata sources
     /// Values: "local_metadata" (nfo/json), "audio_metadata" (id3 tags), "scraper"
     #[serde(default = "default_metadata_priority")]
+    #[serde(rename = "metadataPriority")]
     pub metadata_priority: Vec<String>,
 }
 

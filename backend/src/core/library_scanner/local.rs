@@ -213,7 +213,7 @@ impl LibraryScanner {
                 if let Ok(re) = regex::Regex::new(pattern) {
                     if re.is_match(dir_name) {
                         info!("New Chapter Protection: Merging {} into existing book {}", dir_name, book_id);
-                        let has_changes = self.process_chapters(book_id, files, last_scanned, task_id, scraper_config.prefer_audio_title, None).await?;
+                        let has_changes = self.process_chapters(book_id, files, last_scanned, task_id, scraper_config.use_filename_as_title, None).await?;
                         return Ok((book_id.clone(), if has_changes { ScanStatus::Updated } else { ScanStatus::Skipped }));
                     }
                 }
@@ -250,7 +250,7 @@ impl LibraryScanner {
         if skip_metadata_update && existing_book_id.is_some() {
              let book_id = existing_book_id.unwrap();
              // Just process chapters (which also has skip logic)
-             let has_changes = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.prefer_audio_title, None).await?;
+             let has_changes = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.use_filename_as_title, None).await?;
              return Ok((book_id, if has_changes { ScanStatus::Updated } else { ScanStatus::Skipped }));
         }
 
@@ -347,7 +347,7 @@ impl LibraryScanner {
         };
 
         // 5. Process Chapters
-        let chapters_changed = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.prefer_audio_title, json_chapters).await?;
+        let chapters_changed = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.use_filename_as_title, json_chapters).await?;
 
         // 5.1 Process Series
         if !json_series.is_empty() {
@@ -457,18 +457,15 @@ impl LibraryScanner {
              }
         }
 
-        // 1. Iterate Priority List
-        // Default: local > audio > scraper (Matches user's "Default local metadata priority")
-        // But we iterate in REVERSE (Lowest -> Highest) so higher priority overrides.
+        // 1. Check if we should force filename as title
+        debug!("Processing dir: {:?}, scraper_config: {:?}", dir, scraper_config);
+
+        // 2. Iterate Priority List
         let default_priority = vec![
             "scraper".to_string(), 
             "audio_metadata".to_string(),
             "local_metadata".to_string() 
         ];
-        
-        // User config: if they set ["local", "audio", "scraper"], that means Local is Highest.
-        // So we should iterate: Scraper -> Audio -> Local.
-        // So we iterate `scraper_config.metadata_priority.iter().rev()`.
         
         let priority_list = if scraper_config.metadata_priority.is_empty() {
             &default_priority
@@ -479,32 +476,55 @@ impl LibraryScanner {
         for source_type in priority_list.iter().rev() {
             match source_type.as_str() {
                 "local_metadata" => {
-                    // NFO
                     if let Some(meta) = self.extract_from_nfo(dir) {
-                        final_meta.merge(meta);
-                        final_source = MetadataSource::Nfo;
+                        if scraper_config.use_filename_as_title {
+                            let mut m = meta.clone();
+                            m.title = None;
+                            final_meta.merge(m);
+                        } else {
+                            final_meta.merge(meta);
+                            if final_meta.title.is_some() {
+                                final_source = MetadataSource::Nfo;
+                            }
+                        }
                     }
-                    // JSON (Overrides NFO within local category)
                     if let Some(meta) = self.extract_from_json(dir) {
-                        final_meta.merge(meta);
-                        final_source = MetadataSource::Nfo;
+                        if scraper_config.use_filename_as_title {
+                            let mut m = meta.clone();
+                            m.title = None;
+                            final_meta.merge(m);
+                        } else {
+                            final_meta.merge(meta);
+                            if final_meta.title.is_some() {
+                                final_source = MetadataSource::Nfo;
+                            }
+                        }
                     }
                 },
                 "audio_metadata" => {
                     if let Some(meta) = self.extract_from_audio(dir, files).await {
-                        final_meta.merge(meta);
-                        // Only update source if we actually got a title from audio
-                        if final_meta.title.is_some() {
-                            final_source = MetadataSource::FileMetadata;
+                        if scraper_config.use_filename_as_title {
+                            let mut m = meta.clone();
+                            m.title = None;
+                            final_meta.merge(m);
+                        } else {
+                            final_meta.merge(meta);
+                            if final_meta.title.is_some() {
+                                final_source = MetadataSource::FileMetadata;
+                            }
                         }
                     }
                 },
                 "scraper" => {
-                    // Only run scraper if we have a title
                     if let Some(ref title) = final_meta.title {
                          if let Some(meta) = self.extract_from_scraper(title, &final_meta.author, scraper_config).await {
-                             final_meta.merge(meta);
-                             // Scraper doesn't change source type usually? Or maybe it does.
+                             if scraper_config.use_filename_as_title {
+                                 let mut m = meta.clone();
+                                 m.title = None;
+                                 final_meta.merge(m);
+                             } else {
+                                 final_meta.merge(meta);
+                             }
                          }
                     }
                 },
@@ -749,7 +769,7 @@ impl LibraryScanner {
         files: &[PathBuf], 
         last_scanned: Option<chrono::DateTime<chrono::Utc>>,
         task_id: Option<&str>,
-        prefer_audio_title: bool,
+        use_filename_as_title: bool,
         json_chapters: Option<Vec<crate::core::metadata_writer::AudiobookshelfChapter>>,
     ) -> Result<bool> {
         let mut has_changes = false;
@@ -819,6 +839,24 @@ impl LibraryScanner {
                 true // No last scan, force check
             };
 
+            // Common Logic: Calculate Regex/Filename properties
+            let filename_str = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
+            let mut regex_idx = None;
+            let mut regex_title = None;
+            
+            if let Some(re) = &chapter_regex {
+                if let Some(caps) = re.captures(&filename_str) {
+                        if let Some(m) = caps.get(1) {
+                            if let Ok(idx) = m.as_str().parse::<i32>() {
+                                regex_idx = Some(idx);
+                            }
+                        }
+                        if let Some(m) = caps.get(2) {
+                            regex_title = Some(m.as_str().to_string());
+                        }
+                }
+            }
+
             // Optimization: If chapter exists and file is not modified, skip processing!
             if let Some(ref ch) = existing_chapter {
                 if !is_modified {
@@ -826,7 +864,7 @@ impl LibraryScanner {
                     // Also respect manual_corrected if we were to update anything else
                     
                     let is_extra_ch = ch.is_extra == 1;
-                    let mut idx_from_counter = if is_extra_ch {
+                    let idx_from_counter = if is_extra_ch {
                          extra_counter += 1;
                          extra_counter
                     } else {
@@ -834,33 +872,67 @@ impl LibraryScanner {
                          main_counter
                     };
                     
-                    // Apply regex if exists to override index
-                    if let Some(re) = &chapter_regex {
-                        if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
-                            if let Some(caps) = re.captures(filename) {
-                                if let Some(m) = caps.get(1) {
-                                    if let Ok(idx) = m.as_str().parse::<i32>() {
-                                        idx_from_counter = idx;
-                                    }
-                                }
-                            }
-                        }
+                    // Final Index (Regex overrides counter)
+                    let target_idx = regex_idx.unwrap_or_else(|| {
+                         // If no regex rule, try to extract chapter number using TextCleaner heuristics
+                         if chapter_regex.is_none() {
+                             if let Some(idx) = self.text_cleaner.extract_chapter_number(&filename_str) {
+                                 return idx;
+                             }
+                         }
+                         idx_from_counter
+                    });
+
+                    // Check if we need to update Title or Index
+                    // Cases to update even if not modified:
+                    // 1. Regex applied/changed and provides new title/index.
+                    // 2. use_filename_as_title is TRUE and current title != filename.
+                    // 3. Index changed due to reordering.
+                    
+                    let mut should_update = false;
+                    let mut new_title = ch.title.clone();
+                    let mut new_idx = ch.chapter_index;
+
+                    // Check Index
+                    if new_idx != Some(target_idx) {
+                        new_idx = Some(target_idx);
+                        should_update = true;
                     }
 
-                    if ch.chapter_index != Some(idx_from_counter) {
-                         // Only update index
-                         // Check manual_corrected? 
-                         // Usually index is structural, but if user manually ordered chapters, we might break it.
-                         // But we sort files by name.
-                         // If user manually corrected, we probably shouldn't touch index either?
-                         // "manual_corrected" on chapter usually means Title correction.
-                         // But let's respect it for index too if set.
-                         if ch.manual_corrected == 0 {
-                             let mut updated_ch = ch.clone();
-                             updated_ch.chapter_index = Some(idx_from_counter);
-                             self.chapter_repo.update(&updated_ch).await?;
-                             has_changes = true;
+                    // Check Title
+                    // If JSON chapters used, we don't touch title here (it's from JSON)
+                    // If Regex Title exists, use it.
+                    // If use_filename_as_title, use filename.
+                    if !use_json_chapters && ch.manual_corrected == 0 {
+                         let target_title = if let Some(rt) = regex_title.clone() {
+                             // Apply text cleaner to regex result as requested
+                             let (cleaned, _) = self.text_cleaner.clean_chapter_title(&rt, book.title.as_deref());
+                             cleaned
+                         } else if use_filename_as_title {
+                             let (cleaned, _) = self.text_cleaner.clean_chapter_title(&filename_str, book.title.as_deref());
+                             cleaned
+                         } else {
+                             // If not forced and no regex, keep existing title (audio or whatever it was)
+                             // Unless we want to re-run text cleaner?
+                             // Let's assume existing title is fine if no config change.
+                             ch.title.clone().unwrap_or_default()
+                         };
+                         
+                         if ch.title.as_deref() != Some(&target_title) {
+                             // Only update if we are forcing filename OR regex provided a title
+                             if use_filename_as_title || regex_title.is_some() {
+                                 new_title = Some(target_title);
+                                 should_update = true;
+                             }
                          }
+                    }
+
+                    if should_update && ch.manual_corrected == 0 {
+                         let mut updated_ch = ch.clone();
+                         updated_ch.chapter_index = new_idx;
+                         updated_ch.title = new_title;
+                         self.chapter_repo.update(&updated_ch).await?;
+                         has_changes = true;
                     }
                     continue;
                 }
@@ -901,34 +973,24 @@ impl LibraryScanner {
                         chapters[index].title.clone()
                     } else {
                         // Should not happen if use_json_chapters is true
-                        file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string()
+                        filename_str.clone()
                     }
                 } else {
-                    file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string()
+                    filename_str.clone()
                 }
-            } else if prefer_audio_title && !extracted_title.is_empty() {
+            } else if use_filename_as_title {
+                filename_str.clone()
+            } else if !extracted_title.is_empty() {
+                // Default: Audio Title
                 extracted_title
             } else {
-                file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string()
+                filename_str.clone()
             };
 
-            // Check Regex for Title and Index
-            let mut regex_idx = None;
-            if let Some(re) = &chapter_regex {
-                if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
-                    if let Some(caps) = re.captures(filename) {
-                         if let Some(m) = caps.get(1) {
-                             if let Ok(idx) = m.as_str().parse::<i32>() {
-                                 regex_idx = Some(idx);
-                             }
-                         }
-                         // Only override title with regex if NOT using JSON chapters
-                         if !use_json_chapters {
-                             if let Some(m) = caps.get(2) {
-                                 title = m.as_str().to_string(); // Update title from regex
-                             }
-                         }
-                    }
+            // Regex Title Override (if not using JSON)
+            if !use_json_chapters {
+                if let Some(rt) = regex_title {
+                    title = rt;
                 }
             }
             
@@ -954,10 +1016,8 @@ impl LibraryScanner {
             let chapter_idx = regex_idx.unwrap_or_else(|| {
                  // If no regex rule, try to extract chapter number using TextCleaner heuristics
                  if chapter_regex.is_none() {
-                     if let Some(filename) = file_path.file_stem().and_then(|s| s.to_str()) {
-                         if let Some(idx) = self.text_cleaner.extract_chapter_number(filename) {
-                             return idx;
-                         }
+                     if let Some(idx) = self.text_cleaner.extract_chapter_number(&filename_str) {
+                         return idx;
                      }
                  }
                  counter_idx

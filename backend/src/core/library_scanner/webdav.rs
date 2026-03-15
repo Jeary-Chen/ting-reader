@@ -1,4 +1,4 @@
-use super::{LibraryScanner, ScanResult, MetadataSource, STANDARD_EXTENSIONS};
+use super::{LibraryScanner, ScanResult, MetadataSource};
 use crate::core::error::{Result, TingError};
 use crate::core::nfo_manager::BookMetadata;
 use crate::db::repository::Repository;
@@ -467,25 +467,17 @@ impl LibraryScanner {
              (String::new(), String::new(), None, None, None, 0)
         };
         
-        // Check for special format
-        let mut is_special_format = false;
-        if !file_urls.is_empty() {
-             if let Some(ext_pos) = file_urls[0].rfind('.') {
-                 let ext = file_urls[0][ext_pos+1..].to_lowercase();
-                 if !STANDARD_EXTENSIONS.contains(&ext.as_str()) {
-                     is_special_format = true;
-                 }
-             }
-        }
+
 
         let mut book_title;
         let source;
 
         // Title Selection Logic
-        if is_special_format && !meta_album.trim().is_empty() {
-            book_title = meta_album.clone();
-            source = MetadataSource::FileMetadata;
-        } else if scraper_config.prefer_audio_title && !meta_album.trim().is_empty() {
+        if scraper_config.use_filename_as_title {
+            book_title = cleaned_dir_name.clone();
+            source = MetadataSource::Fallback;
+        } else if !meta_album.trim().is_empty() {
+            // Default: Prioritize Audio extracted metadata
             book_title = meta_album.clone();
             source = MetadataSource::FileMetadata;
         } else {
@@ -635,11 +627,36 @@ impl LibraryScanner {
         let mut main_counter = 0;
         let mut extra_counter = 0;
 
+        // Fetch book to check for regex rule
+        let book_for_regex = self.book_repo.find_by_id(&book_id).await?.unwrap_or_else(|| book.clone());
+        let chapter_regex = if let Some(pattern) = &book_for_regex.chapter_regex {
+            regex::Regex::new(pattern).ok()
+        } else {
+            None
+        };
+
         for file_url in file_urls.iter() {
             // Decode filename for title
             let decoded_file_url = self.decode_url_path(file_url);
             let filename = decoded_file_url.split('/').last().unwrap_or("chapter").to_string();
             
+            // Regex extraction
+            let mut regex_idx = None;
+            let mut regex_title = None;
+            
+            if let Some(re) = &chapter_regex {
+                if let Some(caps) = re.captures(&filename) {
+                        if let Some(m) = caps.get(1) {
+                            if let Ok(idx) = m.as_str().parse::<i32>() {
+                                regex_idx = Some(idx);
+                            }
+                        }
+                        if let Some(m) = caps.get(2) {
+                            regex_title = Some(m.as_str().to_string());
+                        }
+                }
+            }
+
             // Check if chapter exists to avoid duplicates
             let mut ch_hasher = Sha256::new();
             ch_hasher.update(file_url.as_bytes());
@@ -652,7 +669,11 @@ impl LibraryScanner {
             let (_, meta_title, _, _, _, meta_duration) = self.extract_webdav_metadata(library, file_url, None).await;
             
             // Determine Title
-            let raw_title = if !meta_title.trim().is_empty() {
+            let raw_title = if let Some(rt) = regex_title {
+                rt
+            } else if scraper_config.use_filename_as_title {
+                filename
+            } else if !meta_title.trim().is_empty() {
                 meta_title
             } else {
                 filename
@@ -661,13 +682,15 @@ impl LibraryScanner {
             // Clean Title
             let (final_title, is_extra) = self.text_cleaner.clean_chapter_title(&raw_title, book.title.as_deref());
             
-            let chapter_idx = if is_extra {
+            let counter_idx = if is_extra {
                  extra_counter += 1;
                  extra_counter
             } else {
                  main_counter += 1;
                  main_counter
             };
+
+            let chapter_idx = regex_idx.unwrap_or(counter_idx);
 
             let chapter = crate::db::models::Chapter {
                 id: Uuid::new_v4().to_string(),
