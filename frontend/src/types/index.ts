@@ -111,6 +111,7 @@ export interface StorePlugin {
   downloadUrl: string | Record<string, string>;
   size?: string | Record<string, string>;
   date?: string;
+  dependencies?: string[];
 }
 
 export interface MergeSuggestion {

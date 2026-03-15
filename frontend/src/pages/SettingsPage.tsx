@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import apiClient from '../api/client';
-import axios from 'axios';
 import { useTheme } from '../hooks/useTheme';
 import { 
   Settings as SettingsIcon, 

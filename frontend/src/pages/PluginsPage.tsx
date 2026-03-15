@@ -146,6 +146,39 @@ const PluginsPage: React.FC = () => {
   };
 
   const handleInstallFromStore = async (pluginId: string) => {
+    // Check dependencies
+    const plugin = storePlugins.find(p => p.id === pluginId);
+    if (plugin?.dependencies) {
+      const missingDeps = plugin.dependencies.filter(depId => !getInstalledVersion(depId));
+      
+      if (missingDeps.length > 0) {
+        const missingDepNames = missingDeps.map(depId => {
+           const dep = storePlugins.find(p => p.id === depId);
+           return dep ? dep.name : depId;
+        });
+
+        if (confirm(`安装 ${plugin.name} 需要以下依赖插件：\n${missingDepNames.join('\n')}\n\n是否立即安装这些依赖？`)) {
+           for (const depId of missingDeps) {
+              setInstallingId(depId);
+              try {
+                await apiClient.post('/api/v1/store/install', { pluginId: depId });
+              } catch (err: unknown) {
+                 console.error(`Failed to install dependency ${depId}`, err);
+                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                 const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
+                 alert(`无法安装依赖插件 ${depId}: ${msg}`);
+                 setInstallingId(null);
+                 return;
+              }
+           }
+           // Refresh plugins list to reflect installed dependencies
+           await fetchPlugins(); 
+        } else {
+          return;
+        }
+      }
+    }
+
     setInstallingId(pluginId);
     try {
       await apiClient.post('/api/v1/store/install', { pluginId });
