@@ -240,12 +240,38 @@ impl PluginMetadata {
 /// 
 /// Specifies a dependency on another plugin with version requirements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "PluginDependencyDef")]
 pub struct PluginDependency {
     /// Name of the required plugin
     pub plugin_name: String,
     
     /// Version requirement (e.g., "^1.0.0", ">=2.0.0")
     pub version_requirement: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+enum PluginDependencyDef {
+    Simple(String),
+    Detailed {
+        plugin_name: String,
+        version_requirement: String,
+    },
+}
+
+impl From<PluginDependencyDef> for PluginDependency {
+    fn from(def: PluginDependencyDef) -> Self {
+        match def {
+            PluginDependencyDef::Simple(name) => PluginDependency {
+                plugin_name: name,
+                version_requirement: "*".to_string(),
+            },
+            PluginDependencyDef::Detailed { plugin_name, version_requirement } => PluginDependency {
+                plugin_name,
+                version_requirement,
+            },
+        }
+    }
 }
 
 impl PluginDependency {

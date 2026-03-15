@@ -18,6 +18,7 @@ pub struct StorePlugin {
     pub size: Option<serde_json::Value>, // String or Map<String, String>
     pub date: Option<String>,
     pub downloads: Option<Vec<StoreDownload>>,
+    pub dependencies: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
