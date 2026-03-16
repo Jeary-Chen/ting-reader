@@ -112,14 +112,23 @@ cargo build --release
 ## 3. 高级功能：流式解密
 为了支持大文件播放，建议实现 `get_decryption_plan` 和 `decrypt_chunk` 方法，允许播放器按需解密文件的特定部分，而不是一次性解密整个文件。
 
+### 3.1 解密计划 (Decryption Plan) 规范
+在返回的 `DecryptionPlan` 中，`segments` 数组描述了文件的物理结构。
+- 对于 `type: "encrypted"` 的段，`length` 必须是该段在**物理文件中的真实字节长度**。后端在建立流时，会主动、完整地读取这部分物理字节并调用 `decrypt_chunk` 进行解密，然后**自动测量解密后的实际逻辑长度**。
+- 这意味着，即使解密后的数据比物理数据小（由于去除了 AES 填充等），你也不需要在 `length` 中预测解密后的长度，直接填物理长度即可。后端会通过预解密机制自动修正逻辑偏移量，从而完美支持浏览器的任意 `Range` 请求（拖拽进度条）。
+
+如果插件解密后的数据大小与原始加密段大小不同（例如因为去除了填充或解压缩），建议在 `DecryptionPlan` 中提供 `total_size` 字段（整个文件的最终逻辑大小）。如果未提供，后端将根据各段逻辑长度自动计算。
+
 ```rust
 fn get_decryption_plan(params: Value) -> Result<Value, String> {
     // 返回文件的加密段和明文段分布
     Ok(serde_json::json!({
         "segments": [
+            // offset 和 length 必须是物理文件中的真实偏移和真实长度！
             { "type": "encrypted", "offset": 1024, "length": 5000 },
             { "type": "plain", "offset": 6024, "length": -1 }
-        ]
+        ],
+        "total_size": 123456 // 可选：解密后的总大小（字节）
     }))
 }
 ```
