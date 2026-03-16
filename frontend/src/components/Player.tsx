@@ -287,14 +287,26 @@ const Player: React.FC = () => {
   const isInitialLoadRef = useRef(true);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Fetch settings for auto_preload
+  // Fetch settings for auto_preload and user preferences
   useEffect(() => {
     apiClient.get('/api/settings').then(res => {
       // API returns camelCase
       setAutoPreload(!!res.data.autoPreload);
       setAutoCache(!!res.data.autoCache);
+      
+      // Apply user's default playback speed
+      if (res.data.playbackSpeed) {
+        setPlaybackSpeed(res.data.playbackSpeed);
+      }
+      
+      // Apply volume if present in settings (check both root and settings_json)
+      // Note: Volume might be stored in settings_json as it's not a core column
+      const vol = res.data.volume ?? res.data.settingsJson?.volume;
+      if (vol !== undefined) {
+        setVolume(vol);
+      }
     }).catch(err => console.error('Failed to fetch settings', err));
-  }, []);
+  }, [setPlaybackSpeed, setVolume]);
 
   // Fetch chapters for the current book
   useEffect(() => {
