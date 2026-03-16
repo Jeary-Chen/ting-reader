@@ -703,6 +703,7 @@ impl PluginManager {
             FormatMethod::GetDecryptionPlan => "get_decryption_plan",
             FormatMethod::GetStreamUrl => "get_stream_url",
             FormatMethod::WriteMetadata => "write_metadata",
+            FormatMethod::GetDecryptedSize => "get_decrypted_size",
         };
         
         if let Some(native) = instance.as_any().downcast_ref::<NativePlugin>() {
@@ -933,6 +934,7 @@ pub enum FormatMethod {
     GetDecryptionPlan,
     GetStreamUrl,
     WriteMetadata,
+    GetDecryptedSize,
 }
 
 #[derive(Debug, Clone, Copy)]
