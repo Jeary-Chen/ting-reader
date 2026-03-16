@@ -680,7 +680,7 @@ pub async fn stream_chapter(
                      if let Ok(range) = state.audio_streamer.parse_range_header(range_str, file_size) {
                          let start = range.start as usize;
                          let end = range.end as usize;
-                         let content_length = (end - start) as u64;
+                         let _content_length = (end - start) as u64;
                          let body = data[start..end].to_vec();
                          
                          return Ok((
@@ -880,7 +880,7 @@ pub async fn stream_chapter(
             (0, logic_size)
         };
         
-        let content_length = end.saturating_sub(start);
+        let _content_length = end.saturating_sub(start);
         // Important: Use audio/mp4 for XM format streaming!
         let mime_type = "audio/mp4"; 
 
