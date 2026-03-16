@@ -584,14 +584,21 @@ pub async fn stream_chapter(
                                                 if auto_cache && lib_clone.library_type.to_lowercase() != "local" {
                                                     let cache_path = state_clone.cache_manager.get_cache_path(&next_chapter_id);
                                                     if !cache_path.exists() {
-                                                        if let Ok(_) = tokio::fs::write(&cache_path, &bytes_data).await {
-                                                            tracing::info!("Auto-cached next chapter (from buffer): {}", next_chapter_id);
-                                                            
-                                                            // Enforce limits
-                                                            let config = state_clone.config.read().await;
-                                                            let _ = state_clone.cache_manager.enforce_limits(50, config.storage.max_disk_usage).await;
+                                                        // Use temp file to ensure atomicity and prevent race conditions
+                                                        let temp_path = cache_path.with_extension("tmp");
+                                                        if let Ok(_) = tokio::fs::write(&temp_path, &bytes_data).await {
+                                                            if let Ok(_) = tokio::fs::rename(&temp_path, &cache_path).await {
+                                                                tracing::info!("Auto-cached next chapter (from buffer): {}", next_chapter_id);
+                                                                
+                                                                // Enforce limits
+                                                                let config = state_clone.config.read().await;
+                                                                let _ = state_clone.cache_manager.enforce_limits(50, config.storage.max_disk_usage).await;
+                                                            } else {
+                                                                tracing::error!("Failed to rename temp cache file for chapter: {}", next_chapter_id);
+                                                                let _ = tokio::fs::remove_file(&temp_path).await;
+                                                            }
                                                         } else {
-                                                            tracing::error!("Failed to write cache file from buffer for chapter: {}", next_chapter_id);
+                                                            tracing::error!("Failed to write temp cache file from buffer for chapter: {}", next_chapter_id);
                                                         }
                                                     }
                                                 }
