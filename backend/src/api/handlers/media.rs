@@ -885,13 +885,18 @@ pub async fn stream_chapter(
         let mime_type = "audio/mp4"; 
 
         // 6. Construct Lazy Stream Chain
+        // If we don't know the exact total size (plugin didn't provide it), 
+        // we cannot reliably support Range requests because logic_size might be wrong.
+        // Fallback to 200 OK with full stream to prevent playback termination.
+        let use_range = range_header.is_some() && plan.total_size.is_some();
+
         let (stream, _, _, _, _, _) = create_decrypted_stream(
-            &state, &chapter, &library, &plugin, range_header.map(|s| s.to_string())
+            &state, &chapter, &library, &plugin, if use_range { range_header.map(|s| s.to_string()) } else { None }
         ).await?;
 
         let body = Body::from_stream(stream);
         
-        if range_header.is_some() {
+        if use_range {
             let end_inclusive = if end > 0 { end.saturating_sub(1) } else { 0 };
             return Ok((
                 StatusCode::PARTIAL_CONTENT,
@@ -958,11 +963,11 @@ pub async fn stream_chapter(
         total_size
     };
     
-    let _content_length = end.saturating_sub(start);
+    let content_length = end.saturating_sub(start);
     
     // For local files, we need to limit the reader if a specific end was requested
-    if library.library_type == "local" && _content_length < (total_size - start) {
-        reader = Box::new(reader.take(_content_length));
+    if library.library_type == "local" && content_length < (total_size - start) {
+        reader = Box::new(reader.take(content_length));
     }
 
     // Convert AsyncRead to Stream
@@ -978,7 +983,7 @@ pub async fn stream_chapter(
             StatusCode::PARTIAL_CONTENT,
             [
                 (header::CONTENT_TYPE, mime_type),
-                // (header::CONTENT_LENGTH, content_length.to_string()),
+                (header::CONTENT_LENGTH, content_length.to_string()),
                 (header::CONTENT_RANGE, content_range),
                 (header::ACCEPT_RANGES, "bytes".to_string()),
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
@@ -991,7 +996,7 @@ pub async fn stream_chapter(
             StatusCode::OK,
             [
                 (header::CONTENT_TYPE, mime_type),
-                // (header::CONTENT_LENGTH, total_size.to_string()),
+                (header::CONTENT_LENGTH, total_size.to_string()),
                 (header::ACCEPT_RANGES, "bytes".to_string()),
                 (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
                 ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
