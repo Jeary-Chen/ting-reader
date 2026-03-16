@@ -48,6 +48,7 @@ pub unsafe extern "C" fn plugin_invoke(
     let result = match method_str {
         "detect" => detect(params_json),
         "extract_metadata" => extract_metadata(params_json),
+        "write_metadata" => write_metadata(params_json),
         "decrypt" => decrypt(params_json),
         // ... 其他方法
         _ => Err("Unknown method".to_string()),
@@ -75,6 +76,13 @@ fn detect(params: Value) -> Result<Value, String> {
 fn extract_metadata(params: Value) -> Result<Value, String> {
     // 读取元数据...
     Ok(serde_json::json!({ "title": "...", "artist": "..." }))
+}
+
+fn write_metadata(params: Value) -> Result<Value, String> {
+    let path = params["file_path"].as_str().ok_or("Missing path")?;
+    // params 包含: title, artist, album, genre, description, cover_path
+    // 更新元数据...
+    Ok(serde_json::json!({ "status": "success" }))
 }
 
 fn decrypt(params: Value) -> Result<Value, String> {
@@ -113,5 +121,27 @@ fn get_decryption_plan(params: Value) -> Result<Value, String> {
             { "type": "plain", "offset": 6024, "length": -1 }
         ]
     }))
+}
+```
+
+## 4. 转码支持 (可选)
+如果你的插件不需要 FFmpeg 转码（即可以直接输出 PCM/WAV/AAC 流），或者需要明确告知宿主程序不支持某些转码操作，请实现 `get_stream_url` 方法。
+
+对于不需要转码支持的插件（例如自身负责解码的 Native 插件），应返回空对象以避免后端日志报错：
+
+```rust
+fn get_stream_url(_params: Value) -> Result<Value, String> {
+    // 返回空对象表示不提供特殊的转码命令，后端将回退到默认处理逻辑（如 Standard Stream）
+    Ok(serde_json::json!({}))
+}
+```
+
+并在 `plugin_invoke` 中注册该方法：
+
+```rust
+match method_str {
+    // ...
+    "get_stream_url" => get_stream_url(params_json),
+    // ...
 }
 ```
