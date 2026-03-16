@@ -885,32 +885,27 @@ pub async fn stream_chapter(
         let mime_type = "audio/mp4"; 
 
         // 6. Construct Lazy Stream Chain
-        // If we don't know the exact total size (plugin didn't provide it), 
-        // we cannot reliably support Range requests because logic_size might be wrong.
-        // Fallback to 200 OK with full stream to prevent playback termination.
-        let use_range = range_header.is_some() && plan.total_size.is_some();
+    let (stream, _, _, _, _, _) = create_decrypted_stream(
+        &state, &chapter, &library, &plugin, range_header.map(|s| s.to_string())
+    ).await?;
 
-        let (stream, _, _, _, _, _) = create_decrypted_stream(
-            &state, &chapter, &library, &plugin, if use_range { range_header.map(|s| s.to_string()) } else { None }
-        ).await?;
-
-        let body = Body::from_stream(stream);
-        
-        if use_range {
-            let end_inclusive = if end > 0 { end.saturating_sub(1) } else { 0 };
-            return Ok((
-                StatusCode::PARTIAL_CONTENT,
-                [
-                    (header::CONTENT_TYPE, mime_type.to_string()),
-                    // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
-                    (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end_inclusive, logic_size)),
-                    (header::ACCEPT_RANGES, "bytes".to_string()),
-                    (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
-                    ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
-                ],
-                if is_head_request { Body::empty() } else { body },
-            ).into_response());
-        } else {
+    let body = Body::from_stream(stream);
+    
+    if range_header.is_some() {
+        let end_inclusive = if end > 0 { end.saturating_sub(1) } else { 0 };
+        return Ok((
+            StatusCode::PARTIAL_CONTENT,
+            [
+                (header::CONTENT_TYPE, mime_type.to_string()),
+                // (header::CONTENT_LENGTH, content_length.to_string()), // Removed to allow chunked transfer encoding for decrypted streams
+                (header::CONTENT_RANGE, format!("bytes {}-{}/{}", start, end_inclusive, logic_size)),
+                (header::ACCEPT_RANGES, "bytes".to_string()),
+                (header::ACCESS_CONTROL_ALLOW_ORIGIN, "*".to_string()),
+                ("Cross-Origin-Resource-Policy".parse().unwrap(), "cross-origin".to_string()),
+            ],
+            if is_head_request { Body::empty() } else { body },
+        ).into_response());
+    } else {
              return Ok((
                 StatusCode::OK,
                 [
@@ -1244,5 +1239,50 @@ async fn create_decrypted_stream(
 
     let stream = futures::stream::iter(stream_chain).flatten();
     
-    Ok((Box::pin(stream), mime_type, content_length, start, end, logic_size))
+    // Wrap with padding to ensure Content-Length is satisfied
+    // This is crucial for browsers (Chrome/Edge) to support seeking
+    // even if the decrypted size is slightly smaller than calculated logic_size
+    let padded_stream = PaddedStream {
+        inner: Box::pin(stream),
+        remaining_pad: content_length,
+    };
+    
+    Ok((Box::pin(padded_stream), mime_type, content_length, start, end, logic_size))
+}
+
+struct PaddedStream {
+    inner: futures::stream::BoxStream<'static, std::io::Result<bytes::Bytes>>,
+    remaining_pad: u64,
+}
+
+impl futures::Stream for PaddedStream {
+    type Item = std::io::Result<bytes::Bytes>;
+
+    fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        match self.inner.as_mut().poll_next(cx) {
+            std::task::Poll::Ready(Some(Ok(bytes))) => {
+                let len = bytes.len() as u64;
+                if len > 0 {
+                    if self.remaining_pad >= len {
+                        self.remaining_pad -= len;
+                    } else {
+                        self.remaining_pad = 0;
+                    }
+                }
+                std::task::Poll::Ready(Some(Ok(bytes)))
+            }
+            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Some(Err(e))),
+            std::task::Poll::Ready(None) => {
+                if self.remaining_pad > 0 {
+                    // Pad with zeros
+                    let chunk_size = std::cmp::min(self.remaining_pad, 8192);
+                    self.remaining_pad -= chunk_size;
+                    std::task::Poll::Ready(Some(Ok(bytes::Bytes::from(vec![0u8; chunk_size as usize]))))
+                } else {
+                    std::task::Poll::Ready(None)
+                }
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
 }
