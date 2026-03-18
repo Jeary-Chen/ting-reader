@@ -22,10 +22,10 @@ pub mod webdav;
 
 /// Supported audio file extensions
 // Removed hardcoded encrypted extensions. Plugins should declare their supported extensions.
-pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "m4a", "m4b", "flac", "ogg", "wav", "opus", "wma", "aac"];
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "m4a", "m4b", "flac", "ogg", "wav", "opus", "wma", "aac", "strm"];
 
 /// Standard audio extensions that can be handled by the default audio streamer
-pub const STANDARD_EXTENSIONS: &[&str] = &["mp3", "m4a", "m4b", "flac", "ogg", "wav", "opus", "wma", "aac"];
+pub const STANDARD_EXTENSIONS: &[&str] = &["mp3", "m4a", "m4b", "flac", "ogg", "wav", "opus", "wma", "aac", "strm"];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MetadataSource {
@@ -265,6 +265,13 @@ impl LibraryScanner {
         // Check if it is a standard audio file
         let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         let is_standard = STANDARD_EXTENSIONS.contains(&ext.as_str());
+
+        // Handle .strm files explicitly
+        if ext == "strm" {
+            // Use filename as title, duration 0
+            let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            return (String::new(), t, None, None, None, 0);
+        }
 
         // Try Audio (Skip for non-standard/encrypted files as standard reader fails)
         if is_standard {

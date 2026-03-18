@@ -46,14 +46,84 @@ impl SeriesRepository {
         }).await
     }
 
+    /// Find or create series atomically (globally across all libraries)
+    pub async fn find_or_create_by_title(&self, new_series: Series) -> Result<Series> {
+        let search_title = new_series.title.trim().to_lowercase();
+        self.db.transaction(move |tx| {
+            let existing = tx.query_row(
+                "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
+                 FROM series WHERE LOWER(TRIM(title)) = ?",
+                rusqlite::params![&search_title],
+                |row| {
+                    Ok(Series {
+                        id: row.get(0)?,
+                        library_id: row.get(1)?,
+                        title: row.get(2)?,
+                        author: row.get(3)?,
+                        narrator: row.get(4)?,
+                        cover_url: row.get(5)?,
+                        description: row.get(6)?,
+                        created_at: row.get(7)?,
+                        updated_at: row.get(8)?,
+                    })
+                }
+            ).optional().map_err(TingError::DatabaseError)?;
+
+            if let Some(s) = existing {
+                Ok(s)
+            } else {
+                tx.execute(
+                    "INSERT INTO series (id, library_id, title, author, narrator, cover_url, description) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    rusqlite::params![
+                        &new_series.id,
+                        &new_series.library_id,
+                        &new_series.title,
+                        &new_series.author,
+                        &new_series.narrator,
+                        &new_series.cover_url,
+                        &new_series.description,
+                    ],
+                ).map_err(TingError::DatabaseError)?;
+                Ok(new_series)
+            }
+        }).await
+    }
+
+    /// Find series by title globally (across all libraries)
+    pub async fn find_by_title(&self, title: &str) -> Result<Option<Series>> {
+        let title = title.trim().to_lowercase();
+        self.db.execute(move |conn| {
+            conn.query_row(
+                "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
+                 FROM series WHERE LOWER(TRIM(title)) = ?",
+                rusqlite::params![&title],
+                |row| {
+                    Ok(Series {
+                        id: row.get(0)?,
+                        library_id: row.get(1)?,
+                        title: row.get(2)?,
+                        author: row.get(3)?,
+                        narrator: row.get(4)?,
+                        cover_url: row.get(5)?,
+                        description: row.get(6)?,
+                        created_at: row.get(7)?,
+                        updated_at: row.get(8)?,
+                    })
+                }
+            ).optional()
+            .map_err(TingError::DatabaseError)
+        }).await
+    }
+
     /// Find series by title and library
     pub async fn find_by_title_and_library(&self, title: &str, library_id: &str) -> Result<Option<Series>> {
-        let title = title.to_string();
+        let title = title.trim().to_lowercase();
         let library_id = library_id.to_string();
         self.db.execute(move |conn| {
             conn.query_row(
                 "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
-                 FROM series WHERE title = ? AND library_id = ?",
+                 FROM series WHERE LOWER(TRIM(title)) = ? AND library_id = ?",
                 rusqlite::params![&title, &library_id],
                 |row| {
                     Ok(Series {

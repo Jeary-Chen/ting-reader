@@ -310,6 +310,28 @@ pub async fn stream_chapter(
     let library = state.library_repo.find_by_id(&book.library_id).await?
         .ok_or_else(|| TingError::NotFound(format!("Library {} not found", book.library_id)))?;
 
+    // Handle .strm files (URL Redirect)
+    let ext = std::path::Path::new(&chapter.path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+        
+    if ext == "strm" {
+        // Read the URL from the file
+        let url = std::fs::read_to_string(&chapter.path).unwrap_or_default().trim().to_string();
+        if url.is_empty() || !url.starts_with("http") {
+            return Err(TingError::InvalidRequest("Invalid strm file content".to_string()));
+        }
+        
+        // Return 302 Redirect
+        return Ok((
+            StatusCode::FOUND,
+            [(header::LOCATION, url)],
+            Body::empty()
+        ).into_response());
+    }
+
     // Handle Transcoding Request
     if let Some(format) = &params.transcode {
         tracing::info!("Transcoding requested: {} -> {}", chapter.path, format);

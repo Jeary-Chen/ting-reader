@@ -1,5 +1,6 @@
 use crate::api::models::{
     LibraryResponse, CreateLibraryRequest, UpdateLibraryRequest, LibraryScanResponse, FolderInfo,
+    TestWebDavRequest, TestWebDavResponse,
 };
 use crate::core::error::{Result, TingError};
 use axum::{
@@ -147,6 +148,20 @@ pub async fn create_library(
     if let Err(e) = state.task_queue.submit(task).await {
         tracing::error!(library_id = %library.id, error = %e, "Failed to queue initial scan task");
     }
+    
+    // Start watching the library if it's local
+    if library.library_type == "local" {
+        let scraper_config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        if !scraper_config.disable_watcher {
+            if let Err(e) = state.library_watcher.watch_library(&library.id, &library_path).await {
+                tracing::warn!("Failed to start watching new library {}: {}", library.id, e);
+            }
+        }
+    }
 
     Ok((
         StatusCode::CREATED,
@@ -219,6 +234,28 @@ pub async fn update_library(
     }
 
     state.library_repo.update(&library).await?;
+    
+    // Update watcher
+    state.library_watcher.stop_watching(&library_id).await;
+    if library.library_type == "local" {
+        let scraper_config: crate::db::models::ScraperConfig = library.scraper_config
+            .as_ref()
+            .and_then(|json| serde_json::from_str(json).ok())
+            .unwrap_or_default();
+            
+        if !scraper_config.disable_watcher {
+            let config = state.config.read().await;
+            let storage_root = config.storage.local_storage_root.clone();
+            drop(config);
+            
+            let full_path = storage_root.join(&library.url);
+            let library_path = full_path.to_string_lossy().to_string();
+            
+            if let Err(e) = state.library_watcher.watch_library(&library.id, &library_path).await {
+                tracing::warn!("Failed to update watcher for library {}: {}", library.id, e);
+            }
+        }
+    }
 
     Ok(Json(LibraryResponse::from(library)))
 }
@@ -272,10 +309,13 @@ pub async fn delete_library(
                      tracing::info!("Deleted orphan cover cache: {}", cover_path);
                  }
             }
-        }
+   }
     }
+
+    state.library_watcher.stop_watching(&library_id).await;
     
     Ok(Json(serde_json::json!({
+        "success": true,
         "message": "Library deleted successfully"
     })))
 }
@@ -414,4 +454,65 @@ pub async fn get_storage_folders(
     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
     Ok(Json(folders))
+}
+
+/// Handler for POST /api/libraries/test-connection - Test WebDAV connection
+pub async fn test_webdav_connection(
+    State(_state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+    Json(req): Json<TestWebDavRequest>,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied("Admin access required".to_string()));
+    }
+
+    if !req.url.starts_with("http://") && !req.url.starts_with("https://") {
+        return Ok(Json(TestWebDavResponse {
+            success: false,
+            message: "WebDAV URL must start with http:// or https://".to_string(),
+        }));
+    }
+
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build() {
+            Ok(c) => c,
+            Err(e) => return Err(TingError::IoError(std::io::Error::new(std::io::ErrorKind::Other, e))),
+        };
+
+    let mut request = client.request(reqwest::Method::from_bytes(b"PROPFIND").unwrap(), &req.url)
+        .header("Depth", "0");
+
+    if let Some(username) = req.username {
+        if !username.is_empty() {
+             request = request.basic_auth(username, req.password);
+        }
+    }
+
+    match request.send().await {
+        Ok(res) => {
+            if res.status().is_success() || res.status().as_u16() == 207 {
+                Ok(Json(TestWebDavResponse {
+                    success: true,
+                    message: "连接成功".to_string(),
+                }))
+            } else if res.status().as_u16() == 401 {
+                Ok(Json(TestWebDavResponse {
+                    success: false,
+                    message: "连接失败: 认证失败 (401 Unauthorized)".to_string(),
+                }))
+            } else {
+                Ok(Json(TestWebDavResponse {
+                    success: false,
+                    message: format!("连接失败: HTTP {}", res.status()),
+                }))
+            }
+        },
+        Err(e) => {
+            Ok(Json(TestWebDavResponse {
+                success: false,
+                message: format!("连接失败: {}", e),
+            }))
+        }
+    }
 }

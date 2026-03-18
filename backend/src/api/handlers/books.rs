@@ -349,6 +349,26 @@ pub async fn update_book(
                 metadata_json.chapters = abs_chapters;
             }
             
+            // Sync series from DB
+            let series_list = state.series_repo.find_series_by_book(&updated_book.id).await.unwrap_or_default();
+            let mut series_titles = Vec::new();
+            for series in series_list {
+                let formatted_title = if let Ok(books) = state.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == updated_book.id) {
+                        format!("{} #{}", series.title, order)
+                    } else {
+                        series.title.clone()
+                    }
+                } else {
+                    series.title.clone()
+                };
+                
+                if !series_titles.contains(&formatted_title) {
+                    series_titles.push(formatted_title);
+                }
+            }
+            metadata_json.series = series_titles;
+            
             // Subtitle is now in metadata.json but not in Book struct, so we preserve what was read.
             // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
             
@@ -675,6 +695,26 @@ pub async fn update_chapter(
                 metadata_json.chapters = abs_chapters;
             }
             
+            // Sync series from DB
+            let series_list = state.series_repo.find_series_by_book(&book.id).await.unwrap_or_default();
+            let mut series_titles = Vec::new();
+            for series in series_list {
+                let formatted_title = if let Ok(books) = state.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book.id) {
+                        format!("{} #{}", series.title, order)
+                    } else {
+                        series.title.clone()
+                    }
+                } else {
+                    series.title.clone()
+                };
+                
+                if !series_titles.contains(&formatted_title) {
+                    series_titles.push(formatted_title);
+                }
+            }
+            metadata_json.series = series_titles;
+            
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
                 tracing::warn!("Failed to write metadata.json for chapter update {}: {}", updated_chapter.title.as_deref().unwrap_or("?"), e);
             }
@@ -874,6 +914,22 @@ pub async fn batch_update_chapters(
                 }
                 metadata_json.chapters = abs_chapters;
             }
+            
+            // Sync series from DB
+            let series_list = state.series_repo.find_series_by_book(&book.id).await.unwrap_or_default();
+            let mut series_titles = Vec::new();
+            for series in series_list {
+                if let Ok(books) = state.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book.id) {
+                        series_titles.push(format!("{} #{}", series.title, order));
+                    } else {
+                        series_titles.push(series.title);
+                    }
+                } else {
+                    series_titles.push(series.title);
+                }
+            }
+            metadata_json.series = series_titles;
             
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(&target_dir, &metadata_json) {
                 tracing::warn!("Failed to write metadata.json for batch update {}: {}", book.title.as_deref().unwrap_or("?"), e);
@@ -1262,6 +1318,22 @@ pub async fn apply_scrape_result(
                 }
                 metadata_json.chapters = abs_chapters;
             }
+            
+            // Sync series from DB
+            let series_list = state.series_repo.find_series_by_book(&book.id).await.unwrap_or_default();
+            let mut series_titles = Vec::new();
+            for series in series_list {
+                if let Ok(books) = state.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book.id) {
+                        series_titles.push(format!("{} #{}", series.title, order));
+                    } else {
+                        series_titles.push(series.title);
+                    }
+                } else {
+                    series_titles.push(series.title);
+                }
+            }
+            metadata_json.series = series_titles;
             
             // Apply scraped extended fields if available
             if !detail.subtitle.is_none() { metadata_json.subtitle = detail.subtitle.clone(); }

@@ -447,7 +447,7 @@ impl ScraperService {
             ));
         }
 
-        // Clean query: remove suffix after first "丨" or "|" or "-" if present
+        // Clean query: remove suffix after first "丨" or "|" if present
         let clean_query = query
             .split('丨')
             .next()

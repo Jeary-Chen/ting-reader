@@ -102,6 +102,21 @@ pub struct FolderInfo {
     pub is_directory: bool,
 }
 
+/// Request for testing WebDAV connection
+#[derive(Debug, Deserialize)]
+pub struct TestWebDavRequest {
+    pub url: String,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+/// Response for testing WebDAV connection
+#[derive(Debug, Serialize)]
+pub struct TestWebDavResponse {
+    pub success: bool,
+    pub message: String,
+}
+
 // Cache management models
 
 /// Information about a cached chapter

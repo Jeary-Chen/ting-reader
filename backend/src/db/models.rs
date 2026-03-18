@@ -181,30 +181,30 @@ pub struct Library {
 pub struct ScraperConfig {
     /// Default list of scraper sources in order of priority
     #[serde(default)]
-    #[serde(rename = "defaultSources")]
+    #[serde(rename = "defaultSources", alias = "default_sources")]
     pub default_sources: Vec<String>,
     /// Specific sources for author
-    #[serde(rename = "authorSources")]
+    #[serde(rename = "authorSources", alias = "author_sources")]
     pub author_sources: Option<Vec<String>>,
     /// Specific sources for narrator
-    #[serde(rename = "narratorSources")]
+    #[serde(rename = "narratorSources", alias = "narrator_sources")]
     pub narrator_sources: Option<Vec<String>>,
     /// Specific sources for cover image
-    #[serde(rename = "coverSources")]
+    #[serde(rename = "coverSources", alias = "cover_sources")]
     pub cover_sources: Option<Vec<String>>,
     /// Specific sources for introduction/description
-    #[serde(rename = "introSources")]
+    #[serde(rename = "introSources", alias = "intro_sources")]
     pub intro_sources: Option<Vec<String>>,
     /// Specific sources for tags
-    #[serde(rename = "tagsSources")]
+    #[serde(rename = "tagsSources", alias = "tags_sources")]
     pub tags_sources: Option<Vec<String>>,
     /// Whether to write metadata to NFO files
     #[serde(default)]
-    #[serde(rename = "nfoWritingEnabled")]
+    #[serde(rename = "nfoWritingEnabled", alias = "nfo_writing_enabled")]
     pub nfo_writing_enabled: bool,
     /// Whether to write metadata to metadata.json files
     #[serde(default)]
-    #[serde(rename = "metadataWritingEnabled")]
+    #[serde(rename = "metadataWritingEnabled", alias = "metadata_writing_enabled")]
     pub metadata_writing_enabled: bool,
     /// Whether to force using file/folder name as title (ignoring priority)
     /// This field was previously "prefer_audio_title" with inverted logic
@@ -214,8 +214,20 @@ pub struct ScraperConfig {
     /// Priority order for metadata sources
     /// Values: "local_metadata" (nfo/json), "audio_metadata" (id3 tags), "scraper"
     #[serde(default = "default_metadata_priority")]
-    #[serde(rename = "metadataPriority")]
+    #[serde(rename = "metadataPriority", alias = "metadata_priority")]
     pub metadata_priority: Vec<String>,
+    /// Whether to extract cover image from audio files
+    #[serde(default = "default_extract_audio_cover")]
+    #[serde(rename = "extractAudioCover", alias = "extract_audio_cover")]
+    pub extract_audio_cover: bool,
+    /// Whether to disable the directory watcher for this library
+    #[serde(default)]
+    #[serde(rename = "disableWatcher", alias = "disable_watcher")]
+    pub disable_watcher: bool,
+}
+
+fn default_extract_audio_cover() -> bool {
+    true
 }
 
 fn default_metadata_priority() -> Vec<String> {

@@ -22,6 +22,7 @@ pub mod decryption_cache;
 pub mod nfo_manager;
 pub mod crypto;
 pub mod library_scanner;
+pub mod library_watcher;
 pub mod color;
 pub mod storage;
 pub mod merge_service;

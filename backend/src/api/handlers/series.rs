@@ -78,7 +78,7 @@ pub async fn create_series(
     let series = Series {
         id: series_id.clone(),
         library_id: req.library_id,
-        title: req.title,
+        title: req.title.trim().to_string(),
         author,
         narrator,
         cover_url,
@@ -90,16 +90,30 @@ pub async fn create_series(
     state.series_repo.create(&series).await?;
 
     // Add books
-    for (idx, book_id) in req.book_ids.iter().enumerate() {
+    let mut books_to_add = Vec::new();
+    for book_id in &req.book_ids {
+        if let Some(book) = state.book_repo.find_by_id(book_id).await? {
+            books_to_add.push(book);
+        }
+    }
+
+    // Sort naturally by title for new series creation
+    books_to_add.sort_by(|a, b| {
+        let t1 = a.title.as_deref().unwrap_or("");
+        let t2 = b.title.as_deref().unwrap_or("");
+        natord::compare(t1, t2)
+    });
+
+    for (idx, book) in books_to_add.iter().enumerate() {
         state.series_repo.add_book(SeriesBook {
             series_id: series_id.clone(),
-            book_id: book_id.clone(),
-            book_order: idx as i32,
+            book_id: book.id.clone(),
+            book_order: (idx + 1) as i32,
         }).await?;
         
         // Update metadata.json
-        if let Err(e) = update_book_metadata_series(&state, book_id).await {
-            tracing::warn!("Failed to update metadata.json for book {}: {}", book_id, e);
+        if let Err(e) = update_book_metadata_series(&state, &book.id).await {
+            tracing::warn!("Failed to update metadata.json for book {}: {}", book.id, e);
         }
     }
 
@@ -123,7 +137,7 @@ pub async fn update_series(
     let updated_series = Series {
         id: existing_series.id,
         library_id: existing_series.library_id,
-        title: req.title.clone().unwrap_or(existing_series.title),
+        title: req.title.as_ref().map(|t| t.trim().to_string()).unwrap_or(existing_series.title),
         author: if req.author.is_some() { req.author } else { existing_series.author },
         narrator: if req.narrator.is_some() { req.narrator } else { existing_series.narrator },
         cover_url: if req.cover_url.is_some() { req.cover_url } else { existing_series.cover_url },
@@ -158,7 +172,7 @@ pub async fn update_series(
             state.series_repo.add_book(SeriesBook {
                 series_id: id.clone(),
                 book_id: book_id.clone(),
-                book_order: idx as i32,
+                book_order: (idx + 1) as i32,
             }).await?;
             affected_books.insert(book_id.clone());
         }
@@ -223,7 +237,24 @@ async fn update_book_metadata_series(state: &AppState, book_id: &str) -> Result<
         if let Ok(Some(mut metadata)) = crate::core::metadata_writer::read_metadata_json(path) {
             // Fetch all series for this book
             let series_list = state.series_repo.find_series_by_book(book_id).await?;
-            let series_titles: Vec<String> = series_list.into_iter().map(|s| s.title).collect();
+            let mut series_titles = Vec::new();
+            
+            for series in series_list {
+                // Find order of this book in this series
+                let formatted_title = if let Ok(books) = state.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book_id) {
+                        format!("{} #{}", series.title, order)
+                    } else {
+                        series.title.clone()
+                    }
+                } else {
+                    series.title.clone()
+                };
+                
+                if !series_titles.contains(&formatted_title) {
+                    series_titles.push(formatted_title);
+                }
+            }
             
             // Update series
             metadata.series = series_titles;

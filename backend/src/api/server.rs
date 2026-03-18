@@ -156,6 +156,21 @@ impl ApiServer {
                 .map_err(|e| anyhow::anyhow!("Failed to create cache manager: {}", e))?
         );
         
+        // Create library watcher
+        let library_watcher = Arc::new(crate::core::library_watcher::LibraryWatcher::new(
+            library_repo.clone(),
+            task_queue.clone(),
+            config.storage.local_storage_root.clone(),
+        ));
+        
+        // Start watching all local libraries
+        let watcher_clone = library_watcher.clone();
+        tokio::spawn(async move {
+            if let Err(e) = watcher_clone.start_all().await {
+                tracing::warn!("Failed to start library watcher: {}", e);
+            }
+        });
+        
         // Create application state
         let app_state = AppState {
             book_repo,
@@ -181,6 +196,7 @@ impl ApiServer {
             merge_service,
             nfo_manager,
             active_preload_tasks: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            library_watcher,
         };
         
         // Create public routes (no authentication required)

@@ -206,6 +206,13 @@ impl LibraryScanner {
         manual_corrected_patterns: &[(String, String)],
         existing_info: Option<(String, i32, Option<String>)>,
     ) -> Result<(String, ScanStatus)> {
+        // Log scraper config for debugging
+        debug!("Processing book dir: {:?}, nfo_enabled: {}, json_enabled: {}", 
+            dir, 
+            scraper_config.nfo_writing_enabled, 
+            scraper_config.metadata_writing_enabled
+        );
+
         // 0. Check New Chapter Protection (Manual Correction)
         for (book_id, pattern) in manual_corrected_patterns {
             if !pattern.is_empty() {
@@ -235,6 +242,7 @@ impl LibraryScanner {
         }
 
         // 2. Optimization: Skip metadata update if files haven't changed
+        // But do not skip if manual_corrected is false and we want to try scraping
         let max_mtime = files.iter()
             .filter_map(|p| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()))
             .max();
@@ -242,15 +250,81 @@ impl LibraryScanner {
         
         let mut skip_metadata_update = false;
         if let (Some(last_scan), Some(max_mt)) = (last_scanned, max_mtime_utc) {
+            // Only skip metadata update if the files haven't changed AND the book is already in the database
             if max_mt <= last_scan && existing_book_id.is_some() {
                 skip_metadata_update = true;
             }
         }
 
-        if skip_metadata_update && existing_book_id.is_some() {
+        // Even if files haven't changed, if we are configured to write nfo/json, we might want to ensure they exist
+        // But for pure scanning speed, we currently skip. 
+        // To fix the issue where scrape results aren't applied or written if files haven't changed:
+        // We will NOT skip metadata update if it's NOT manual corrected, to allow new scraper results to apply.
+        if skip_metadata_update && existing_book_id.is_some() && is_manual_corrected {
              let book_id = existing_book_id.unwrap();
              // Just process chapters (which also has skip logic)
              let has_changes = self.process_chapters(&book_id, files, last_scanned, task_id, scraper_config.use_filename_as_title, None).await?;
+             
+             // Check if we need to restore missing NFO/JSON files or update due to chapter changes
+             if scraper_config.nfo_writing_enabled {
+                 let nfo_path = dir.join("book.nfo");
+                 if has_changes || !nfo_path.exists() {
+                     if let Ok(Some(book)) = self.book_repo.find_by_id(&book_id).await {
+                         let mut metadata = BookMetadata::new(book.title.clone().unwrap_or_default(), "ting-reader".to_string(), book.id.clone(), 0);
+                         metadata.author = book.author.clone();
+                         metadata.narrator = book.narrator.clone();
+                         metadata.intro = book.description.clone();
+                         metadata.cover_url = book.cover_url.clone();
+                         if let Some(tags_str) = &book.tags { metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(); }
+                         let _ = self.nfo_manager.write_book_nfo_to_dir(dir, &metadata);
+                     }
+                 }
+             }
+             
+             if scraper_config.metadata_writing_enabled {
+                 let json_path = dir.join("metadata.json");
+                 if has_changes || !json_path.exists() {
+                     if let Ok(Some(book)) = self.book_repo.find_by_id(&book_id).await {
+                         // Write full metadata.json
+                         let chapters = self.chapter_repo.find_by_book(&book_id).await.unwrap_or_default();
+                         let mut sorted_chapters = chapters;
+                         sorted_chapters.sort_by(|a, b| a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0)));
+                         let mut abs_chapters = Vec::new();
+                         let mut current_time = 0.0;
+                         for (idx, ch) in sorted_chapters.iter().enumerate() {
+                             let duration = ch.duration.unwrap_or(0) as f64;
+                             abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
+                                 id: idx as u32,
+                                 start: current_time,
+                                 end: current_time + duration,
+                                 title: ch.title.clone().unwrap_or_default(),
+                             });
+                             current_time += duration;
+                         }
+                         let extended_meta = crate::core::metadata_writer::ExtendedMetadata::default();
+                         let series_list = self.series_repo.find_series_by_book(&book_id).await.unwrap_or_default();
+                         let mut series_titles = Vec::new();
+                         for series in series_list {
+                             let formatted_title = if let Ok(books) = self.series_repo.find_books_by_series(&series.id).await {
+                                 if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book_id) {
+                                     format!("{} #{}", series.title, order)
+                                 } else {
+                                     series.title.clone()
+                                 }
+                             } else {
+                                 series.title.clone()
+                             };
+                             
+                             if !series_titles.contains(&formatted_title) {
+                                 series_titles.push(formatted_title);
+                             }
+                         }
+                         let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(&book, abs_chapters, extended_meta, series_titles);
+                         let _ = crate::core::metadata_writer::write_metadata_json(dir, &metadata_json);
+                     }
+                 }
+             }
+             
              return Ok((book_id, if has_changes { ScanStatus::Updated } else { ScanStatus::Skipped }));
         }
 
@@ -351,43 +425,90 @@ impl LibraryScanner {
 
         // 5.1 Process Series
         if !json_series.is_empty() {
-            for series_title in json_series {
-                if series_title.trim().is_empty() { continue; }
+            for series_title_raw in json_series {
+                let series_title_raw = series_title_raw.trim();
+                if series_title_raw.is_empty() { continue; }
                 
-                // Find or create series
-                let series = if let Some(s) = self.series_repo.find_by_title_and_library(&series_title, library_id).await? {
-                    s
-                } else {
-                    let new_series = crate::db::models::Series {
-                        id: Uuid::new_v4().to_string(),
-                        library_id: library_id.to_string(),
-                        title: series_title.clone(),
-                        author: author.clone(),
-                        narrator: narrator.clone(),
-                        cover_url: cover_url.clone(),
-                        description: None,
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                        updated_at: chrono::Utc::now().to_rfc3339(),
-                    };
-                    self.series_repo.create(&new_series).await?;
-                    new_series
+                // Parse series title and optional sequence number
+                let mut series_title = series_title_raw.to_string();
+                let mut explicit_order = None;
+                
+                if let Some(idx) = series_title_raw.rfind(" #") {
+                    let (name_part, num_part) = series_title_raw.split_at(idx);
+                    let num_str = num_part[2..].trim();
+                    if let Ok(order) = num_str.parse::<i32>() {
+                        series_title = name_part.trim().to_string();
+                        explicit_order = Some(order);
+                    }
+                }
+                
+                // Find or create series atomically (globally across all libraries to handle concurrent syncs and multiple libraries)
+                let new_series = crate::db::models::Series {
+                    id: Uuid::new_v4().to_string(),
+                    library_id: library_id.to_string(),
+                    title: series_title.clone(),
+                    author: author.clone(), // Initial author from first found book
+                    narrator: narrator.clone(),
+                    cover_url: cover_url.clone(),
+                    description: None,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
                 };
+                let series = self.series_repo.find_or_create_by_title(new_series).await?;
                 
                 // Link book to series if not already linked
                 let books = self.series_repo.find_books_by_series(&series.id).await?;
-                if !books.iter().any(|(b, _)| b.id == book_id) {
-                     let order = books.len() as i32 + 1;
+                if let Some((_, current_order)) = books.iter().find(|(b, _)| b.id == book_id) {
+                     // Already linked, update order if explicit order changed
+                     if let Some(o) = explicit_order {
+                         if *current_order != o {
+                             self.series_repo.add_book(crate::db::models::SeriesBook {
+                                 series_id: series.id.clone(),
+                                 book_id: book_id.clone(),
+                                 book_order: o,
+                             }).await?;
+                         }
+                     }
+                } else {
+                     // Not linked, insert it
+                     let order = if let Some(o) = explicit_order {
+                         o
+                     } else {
+                         books.len() as i32 + 1
+                     };
+                     
                      self.series_repo.add_book(crate::db::models::SeriesBook {
-                         series_id: series.id,
+                         series_id: series.id.clone(),
                          book_id: book_id.clone(),
                          book_order: order,
                      }).await?;
+
+                     // If no explicit order, resort all books in series by natural order of title
+                     if explicit_order.is_none() {
+                         let mut all_books = self.series_repo.find_books_by_series(&series.id).await?;
+                         all_books.sort_by(|a, b| {
+                             let t1 = a.0.title.as_deref().unwrap_or("");
+                             let t2 = b.0.title.as_deref().unwrap_or("");
+                             natord::compare(t1, t2)
+                         });
+                         
+                         let new_orders: Vec<(String, i32)> = all_books.into_iter()
+                             .enumerate()
+                             .map(|(i, (b, _))| (b.id, (i + 1) as i32))
+                             .collect();
+                             
+                         self.series_repo.update_book_orders(&series.id, new_orders).await?;
+                     }
+                     
+                     // DO NOT update series metadata based on subsequent books to avoid instability
+                     // Series metadata should only be set on creation or manual update
                 }
             }
         }
 
         // 6. Write NFO/Metadata
         if scraper_config.nfo_writing_enabled {
+             debug!("Writing NFO for book: {}", book_id);
              if let Ok(Some(book)) = self.book_repo.find_by_id(&book_id).await {
                 let mut metadata = BookMetadata::new(book.title.clone().unwrap_or_default(), "ting-reader".to_string(), book.id.clone(), 0);
                 metadata.author = book.author.clone();
@@ -397,11 +518,14 @@ impl LibraryScanner {
                 if let Some(tags_str) = &book.tags { metadata.tags.items = tags_str.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(); }
                 if let Err(e) = self.nfo_manager.write_book_nfo_to_dir(Path::new(&book.path), &metadata) {
                     warn!("Failed to write NFO: {}", e);
+                } else {
+                    info!("Successfully wrote NFO to: {}", book.path);
                 }
             }
         }
         
         if scraper_config.metadata_writing_enabled {
+            debug!("Writing metadata.json for book: {}", book_id);
             let chapters = self.chapter_repo.find_by_book(&book_id).await?;
             let mut sorted_chapters = chapters;
             sorted_chapters.sort_by(|a, b| a.chapter_index.unwrap_or(0).cmp(&b.chapter_index.unwrap_or(0)));
@@ -424,11 +548,29 @@ impl LibraryScanner {
             
             // Get series for this book
             let series_list = self.series_repo.find_series_by_book(&book_id).await.unwrap_or_default();
-            let series_titles: Vec<String> = series_list.into_iter().map(|s| s.title).collect();
+            let mut series_titles = Vec::new();
+            for series in series_list {
+                let formatted_title = if let Ok(books) = self.series_repo.find_books_by_series(&series.id).await {
+                    if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book_id) {
+                        format!("{} #{}", series.title, order)
+                    } else {
+                        series.title.clone()
+                    }
+                } else {
+                    series.title.clone()
+                };
+                
+                // Prevent duplicates
+                if !series_titles.contains(&formatted_title) {
+                    series_titles.push(formatted_title);
+                }
+            }
             
             let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(&book, abs_chapters, extended_meta, series_titles);
             if let Err(e) = crate::core::metadata_writer::write_metadata_json(dir, &metadata_json) {
                 warn!("Failed to write metadata.json: {}", e);
+            } else {
+                info!("Successfully wrote metadata.json to: {:?}", dir);
             }
         }
 
@@ -454,6 +596,11 @@ impl LibraryScanner {
              let parts: Vec<&str> = dir_name.split(" - ").collect();
              if parts.len() >= 2 {
                  final_meta.author = Some(parts[0].trim().to_string());
+                 // Also update title if we are assuming Author - Title pattern
+                 if final_meta.title.is_some() && final_meta.title.as_deref() == Some(dir_name) {
+                     let (cleaned_title_part, _) = self.text_cleaner.clean_chapter_title(parts[1], None);
+                     final_meta.title = Some(cleaned_title_part);
+                 }
              }
         }
 
@@ -476,6 +623,11 @@ impl LibraryScanner {
         for source_type in priority_list.iter().rev() {
             match source_type.as_str() {
                 "local_metadata" => {
+                    // Try to find local cover image first, so it gets merged
+                    if let Some(path) = self.find_cover_image(dir) {
+                        final_meta.cover_url = Some(path);
+                    }
+                    
                     if let Some(meta) = self.extract_from_nfo(dir) {
                         if scraper_config.use_filename_as_title {
                             let mut m = meta.clone();
@@ -502,7 +654,7 @@ impl LibraryScanner {
                     }
                 },
                 "audio_metadata" => {
-                    if let Some(meta) = self.extract_from_audio(dir, files).await {
+                    if let Some(meta) = self.extract_from_audio(dir, files, scraper_config.extract_audio_cover).await {
                         if scraper_config.use_filename_as_title {
                             let mut m = meta.clone();
                             m.title = None;
@@ -547,7 +699,7 @@ impl LibraryScanner {
         // I should ensure `extract_from_audio` sets `cover_url` if found in tag.
         // And if `local_metadata` is high priority but `cover.jpg` is missing, we might want to extract it?
         // Yes.
-        if final_meta.cover_url.is_none() && !files.is_empty() {
+        if scraper_config.extract_audio_cover && final_meta.cover_url.is_none() && !files.is_empty() {
              let first_file = &files[0];
              if let Some(ext) = first_file.extension() {
                  let ext_str = ext.to_string_lossy().to_lowercase();
@@ -613,7 +765,7 @@ impl LibraryScanner {
         }
     }
 
-    async fn extract_from_audio(&self, _dir: &Path, files: &[PathBuf]) -> Option<ScannedMetadata> {
+    async fn extract_from_audio(&self, _dir: &Path, files: &[PathBuf], extract_cover: bool) -> Option<ScannedMetadata> {
         if files.is_empty() { return None; }
         let file_path = &files[0];
         let mut m = ScannedMetadata::default();
@@ -677,8 +829,10 @@ impl LibraryScanner {
                      if let Some(n) = result.get("narrator").and_then(|v| v.as_str()) {
                          if !n.trim().is_empty() { m.narrator = Some(n.to_string()); }
                      }
-                     if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
-                         if !c.trim().is_empty() { m.cover_url = Some(c.to_string()); }
+                     if extract_cover {
+                         if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
+                             if !c.trim().is_empty() { m.cover_url = Some(c.to_string()); }
+                         }
                      }
                      if let Some(d) = result.get("description").and_then(|v| v.as_str()) {
                          if !d.trim().is_empty() { m.description = Some(d.to_string()); }
@@ -811,6 +965,9 @@ impl LibraryScanner {
 
         let mut main_counter = 0;
         let mut extra_counter = 0;
+        
+        // Track processed chapter IDs to find deleted ones
+        let mut processed_chapter_ids = HashSet::new();
 
         for (index, file_path) in files.iter().enumerate() {
             if index % 5 == 0 {
@@ -873,15 +1030,7 @@ impl LibraryScanner {
                     };
                     
                     // Final Index (Regex overrides counter)
-                    let target_idx = regex_idx.unwrap_or_else(|| {
-                         // If no regex rule, try to extract chapter number using TextCleaner heuristics
-                         if chapter_regex.is_none() {
-                             if let Some(idx) = self.text_cleaner.extract_chapter_number(&filename_str) {
-                                 return idx;
-                             }
-                         }
-                         idx_from_counter
-                    });
+            let target_idx = regex_idx.unwrap_or(idx_from_counter);
 
                     // Check if we need to update Title or Index
                     // Cases to update even if not modified:
@@ -934,6 +1083,7 @@ impl LibraryScanner {
                          self.chapter_repo.update(&updated_ch).await?;
                          has_changes = true;
                     }
+                    processed_chapter_ids.insert(ch.id.clone());
                     continue;
                 }
             }
@@ -1013,15 +1163,7 @@ impl LibraryScanner {
             };
             
             // Final Index
-            let chapter_idx = regex_idx.unwrap_or_else(|| {
-                 // If no regex rule, try to extract chapter number using TextCleaner heuristics
-                 if chapter_regex.is_none() {
-                     if let Some(idx) = self.text_cleaner.extract_chapter_number(&filename_str) {
-                         return idx;
-                     }
-                 }
-                 counter_idx
-            });
+            let chapter_idx = regex_idx.unwrap_or(counter_idx);
 
             if let Some(mut ch) = existing_chapter {
                 // Update Existing
@@ -1039,10 +1181,12 @@ impl LibraryScanner {
                 
                 self.chapter_repo.update(&ch).await?;
                 has_changes = true;
+                processed_chapter_ids.insert(ch.id.clone());
             } else {
                 // Create New
+                let chapter_id = Uuid::new_v4().to_string();
                 let chapter = Chapter {
-                    id: Uuid::new_v4().to_string(),
+                    id: chapter_id.clone(),
                     book_id: book_id.to_string(),
                     title: Some(final_title),
                     path: file_path.to_string_lossy().to_string(),
@@ -1055,11 +1199,30 @@ impl LibraryScanner {
                 };
                 
                  match self.chapter_repo.create(&chapter).await {
-                     Ok(_) => { has_changes = true; },
+                     Ok(_) => { 
+                         has_changes = true; 
+                         processed_chapter_ids.insert(chapter_id);
+                     },
                      Err(e) => warn!("Failed to create chapter: {}", e),
                  }
             }
         }
+        
+        // Handle deleted chapters
+        for (path, ch) in chapter_map {
+            if !processed_chapter_ids.contains(&ch.id) {
+                // The chapter file is missing, remove from DB
+                if !path.exists() {
+                    info!("Removing missing chapter from DB: {:?}", path);
+                    if let Err(e) = self.chapter_repo.delete(&ch.id).await {
+                        warn!("Failed to delete missing chapter {}: {}", ch.id, e);
+                    } else {
+                        has_changes = true;
+                    }
+                }
+            }
+        }
+        
         Ok(has_changes)
     }
 

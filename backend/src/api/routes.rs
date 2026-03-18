@@ -25,6 +25,7 @@ use crate::api::handlers::{
     list_users, create_user, update_user, delete_user,
     // Library management
     list_libraries, create_library, update_library, delete_library, scan_library, get_storage_folders,
+    test_webdav_connection,
     // Series management
     list_series, get_series, create_series, update_series, delete_series,
     // Cache management
@@ -76,6 +77,7 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/libraries", get(list_libraries).post(create_library))
         .route("/api/libraries/:id", patch(update_library).delete(delete_library))
         .route("/api/libraries/:id/scan", post(scan_library))
+        .route("/api/libraries/test-connection", post(test_webdav_connection))
         .route("/api/storage/folders", get(get_storage_folders))
         // Series management endpoints
         .route("/api/v1/series", get(list_series).post(create_series))

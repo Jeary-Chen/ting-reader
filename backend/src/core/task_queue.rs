@@ -806,7 +806,25 @@ impl TaskQueue {
         }
     }
 
-    /// Execute a single task
+    pub async fn enqueue_scan_library(&self, library_id: &str, library_path: &str) -> Result<String> {
+        let task_payload = TaskPayload::Custom {
+            task_type: "library_scan".to_string(),
+            data: serde_json::json!({
+                "library_id": library_id,
+                "library_path": library_path,
+            }),
+        };
+        
+        let task = Task::new(
+            format!("library_scan_{}", library_id),
+            Priority::Normal,
+            task_payload,
+        );
+
+        self.submit(task).await
+    }
+
+    /// Execute a task
     async fn execute_task(&self, mut task: Task) {
         let task_id = task.id.clone();
         

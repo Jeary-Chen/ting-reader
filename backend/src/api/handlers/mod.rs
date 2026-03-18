@@ -31,6 +31,7 @@ use crate::plugin::manager::PluginManager;
 use crate::plugin::config::PluginConfigManager;
 use crate::core::config::Config;
 use crate::core::nfo_manager::NfoManager;
+use crate::core::library_watcher::LibraryWatcher;
 
 /// Shared application state for handlers
 #[derive(Clone)]
@@ -58,4 +59,5 @@ pub struct AppState {
     pub merge_service: Arc<MergeService>,
     pub nfo_manager: Arc<NfoManager>,
     pub active_preload_tasks: Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::task::JoinHandle<()>>>>,
+    pub library_watcher: Arc<LibraryWatcher>,
 }
