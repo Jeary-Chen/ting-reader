@@ -20,7 +20,14 @@ impl ProgressRepository {
         self.db.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, user_id, book_id, chapter_id, position, duration, updated_at \
-                 FROM progress WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?"
+                 FROM progress \
+                 WHERE id IN ( \
+                   SELECT id FROM progress \
+                   WHERE user_id = ? \
+                   GROUP BY book_id \
+                   HAVING MAX(updated_at) \
+                 ) \
+                 ORDER BY updated_at DESC LIMIT ?"
             ).map_err(TingError::DatabaseError)?;
             
             let progress = stmt.query_map(rusqlite::params![&user_id, limit], |row| {
@@ -97,7 +104,8 @@ impl ProgressRepository {
         self.db.execute(move |conn| {
             conn.query_row(
                 "SELECT id, user_id, book_id, chapter_id, position, duration, updated_at \
-                 FROM progress WHERE user_id = ? AND book_id = ?",
+                 FROM progress WHERE user_id = ? AND book_id = ? \
+                 ORDER BY updated_at DESC LIMIT 1",
                 rusqlite::params![&user_id, &book_id],
                 |row| {
                     Ok(Progress {
@@ -119,23 +127,53 @@ impl ProgressRepository {
     pub async fn upsert(&self, progress: &Progress) -> Result<()> {
         let progress = progress.clone();
         self.db.execute(move |conn| {
-            conn.execute(
-                "INSERT INTO progress (id, user_id, book_id, chapter_id, position, duration, updated_at) \
-                 VALUES (?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')) \
-                 ON CONFLICT(user_id, book_id) DO UPDATE SET \
-                 chapter_id = excluded.chapter_id, \
-                 position = excluded.position, \
-                 duration = excluded.duration, \
-                 updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')",
-                rusqlite::params![
-                    &progress.id,
-                    &progress.user_id,
-                    &progress.book_id,
-                    &progress.chapter_id,
-                    progress.position,
-                    progress.duration,
-                ],
-            ).map_err(TingError::DatabaseError)?;
+            // Handle NULL chapter_id carefully since SQLite UNIQUE constraint treats NULLs as distinct
+            if progress.chapter_id.is_none() {
+                // If chapter_id is NULL, we just insert or update based on user_id and book_id
+                // This is a fallback case, normally chapter_id should be provided
+                let existing_id: Option<String> = conn.query_row(
+                    "SELECT id FROM progress WHERE user_id = ? AND book_id = ? AND chapter_id IS NULL",
+                    rusqlite::params![&progress.user_id, &progress.book_id],
+                    |row| row.get(0)
+                ).optional().unwrap_or(None);
+                
+                if let Some(id) = existing_id {
+                    conn.execute(
+                        "UPDATE progress SET position = ?, duration = ?, updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                        rusqlite::params![progress.position, progress.duration, id],
+                    ).map_err(TingError::DatabaseError)?;
+                } else {
+                    conn.execute(
+                        "INSERT INTO progress (id, user_id, book_id, chapter_id, position, duration, updated_at) \
+                         VALUES (?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                        rusqlite::params![
+                            &progress.id,
+                            &progress.user_id,
+                            &progress.book_id,
+                            &progress.chapter_id,
+                            progress.position,
+                            progress.duration,
+                        ],
+                    ).map_err(TingError::DatabaseError)?;
+                }
+            } else {
+                conn.execute(
+                    "INSERT INTO progress (id, user_id, book_id, chapter_id, position, duration, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')) \
+                     ON CONFLICT(user_id, book_id, chapter_id) DO UPDATE SET \
+                     position = excluded.position, \
+                     duration = excluded.duration, \
+                     updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                    rusqlite::params![
+                        &progress.id,
+                        &progress.user_id,
+                        &progress.book_id,
+                        &progress.chapter_id,
+                        progress.position,
+                        progress.duration,
+                    ],
+                ).map_err(TingError::DatabaseError)?;
+            }
             Ok(())
         }).await
     }

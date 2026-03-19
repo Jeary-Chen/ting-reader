@@ -110,7 +110,7 @@ CREATE TABLE IF NOT EXISTS progress (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
     FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE SET NULL,
-    UNIQUE(user_id, book_id)
+    UNIQUE(user_id, book_id, chapter_id)
 );
 
 -- Favorites table
@@ -270,6 +270,31 @@ const MIGRATION_V10: &str = r#"
 ALTER TABLE books ADD COLUMN genre TEXT;
 "#;
 
+/// Eleventh schema migration (version 11)
+const MIGRATION_V11: &str = r#"
+-- Fix progress table to track progress per chapter instead of per book
+CREATE TABLE IF NOT EXISTS progress_new (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    book_id TEXT NOT NULL,
+    chapter_id TEXT,
+    position REAL DEFAULT 0,
+    duration REAL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (book_id) REFERENCES books(id) ON DELETE CASCADE,
+    FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE SET NULL,
+    UNIQUE(user_id, book_id, chapter_id)
+);
+
+INSERT INTO progress_new SELECT * FROM progress;
+DROP TABLE progress;
+ALTER TABLE progress_new RENAME TO progress;
+
+CREATE INDEX IF NOT EXISTS idx_progress_user_id ON progress(user_id);
+CREATE INDEX IF NOT EXISTS idx_progress_updated_at ON progress(user_id, updated_at);
+"#;
+
 /// Run all pending database migrations
 ///
 /// This function applies database schema migrations in order.
@@ -369,6 +394,11 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     if current_version < 10 {
         info!("Applying migration v10: Genre field");
         apply_migration(conn, 10, MIGRATION_V10)?;
+    }
+
+    if current_version < 11 {
+        info!("Applying migration v11: Fix progress constraint");
+        apply_migration(conn, 11, MIGRATION_V11)?;
     }
 
     info!("Database migrations completed successfully");
