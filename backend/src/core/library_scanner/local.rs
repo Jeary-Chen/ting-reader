@@ -708,6 +708,13 @@ impl LibraryScanner {
                      if let Some(path) = self.extract_and_save_cover(first_file, dir) {
                          final_meta.cover_url = Some(path);
                      }
+                 } else {
+                     // Try extracting cover from non-standard files (like .xm) via plugin
+                     if let Some(meta) = self.extract_from_audio(dir, files, true).await {
+                         if meta.cover_url.is_some() {
+                             final_meta.cover_url = meta.cover_url;
+                         }
+                     }
                  }
              }
         }

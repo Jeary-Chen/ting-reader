@@ -1148,8 +1148,8 @@ impl LibraryScanner {
                     }
 
                     // 2. Fallback to standard extraction (might fail for partial files, but handles other formats/plugins)
-                    // Only run if we missed key metadata
-                    if album.is_empty() || title.is_empty() {
+                    // Only run if we missed key metadata or need to extract cover
+                    if album.is_empty() || title.is_empty() || (extract_cover && cover_url.is_none()) {
                          let (a, t, au, n, c, d) = self.extract_chapter_metadata(&temp_path).await;
                          if album.is_empty() { album = a; }
                          if title.is_empty() { title = t; }
