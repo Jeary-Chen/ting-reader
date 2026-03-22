@@ -839,6 +839,12 @@ impl LibraryScanner {
                  if let Some(g) = meta.genre {
                      if !g.trim().is_empty() { m.genre = Some(g); }
                  }
+                 // In v1.2.0, standard files (like .m4a, .mp3) ONLY extracted cover in the fallback step
+                 // OR they extracted it here if we specifically added it. 
+                 // Wait, symphonia's audio_streamer DOES NOT extract cover. 
+                 // The old code ONLY extracted cover in the fallback step (which was restricted to mp3).
+                 // So in v1.2.0 m4a cover extraction was completely broken or relied on `extract_and_save_cover`.
+                 // Let's use `extract_and_save_cover` here for ALL standard files, not just mp3.
                  if extract_cover {
                      if let Some(path) = self.extract_and_save_cover(file_path, _dir) {
                          m.cover_url = Some(path);
@@ -877,7 +883,7 @@ impl LibraryScanner {
                      if let Some(n) = result.get("narrator").and_then(|v| v.as_str()) {
                          if !n.trim().is_empty() { m.narrator = Some(n.to_string()); }
                      }
-                     if extract_cover {
+                     if extract_cover && m.cover_url.is_none() {
                          if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
                              if !c.trim().is_empty() { m.cover_url = Some(c.to_string()); }
                          }
@@ -888,7 +894,11 @@ impl LibraryScanner {
                      if let Some(g) = result.get("genre").and_then(|v| v.as_str()) {
                          if !g.trim().is_empty() { m.genre = Some(g.to_string()); }
                      }
-                     if found { break; }
+                     
+                     // If we found basic metadata (found=true) AND (either we don't need a cover, or we found a cover)
+                     if found && (!extract_cover || m.cover_url.is_some()) {
+                         break; 
+                     }
                  }
              }
         }
@@ -923,6 +933,11 @@ impl LibraryScanner {
     }
 
     fn extract_and_save_cover(&self, audio_path: &Path, book_dir: &Path) -> Option<String> {
+        // We use id3 library here, which mainly supports MP3 (ID3v2 tags).
+        // For M4A, id3 library might fail. We should check if we can extract M4A covers too.
+        // The id3 crate only supports ID3v1 and ID3v2 tags, not MP4/M4A metadata.
+        // Wait! In v1.2.0, the `native-audio-support` plugin was used for M4A.
+        // Let's first try id3 tag.
         if let Ok(tag) = id3::Tag::read_from_path(audio_path) {
             // Prefer CoverFront, otherwise take the first picture
             let picture = tag.pictures()
@@ -943,22 +958,12 @@ impl LibraryScanner {
                 let cover_path = book_dir.join(&cover_filename);
                 
                 // Save to file
-                // Force overwrite if needed? Or check existence?
-                // If we are here, find_cover_image failed, so likely it doesn't exist.
                 if let Err(e) = std::fs::write(&cover_path, &picture.data) {
                     warn!("Failed to save extracted cover to {:?}: {}", cover_path, e);
                     return None;
                 }
                 
                 info!("Extracted cover from ID3 tag to {:?}", cover_path);
-                
-                // Return just the filename, find_cover_image will resolve it later or frontend uses relative
-                // But wait, Book struct stores cover_url.
-                // find_cover_image returns absolute path string.
-                // We should return absolute path string here to match.
-                // But wait, for local files, frontend might expect relative path if served statically?
-                // Looking at find_cover_image: it returns `path.to_string_lossy().to_string()` which is absolute path.
-                // So we should return absolute path.
                 return Some(cover_path.to_string_lossy().replace('\\', "/"));
             }
         }
