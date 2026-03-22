@@ -685,7 +685,12 @@ impl LibraryScanner {
         // For now, if scraper provided cover_url, we try to calculate color.
         if !manual_corrected {
             if let Some(ref url) = book.cover_url {
-                if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(url, &self.http_client).await {
+                let cover_path = if url.starts_with("//") {
+                    format!("https:{}", url)
+                } else {
+                    url.clone()
+                };
+                if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(&cover_path, &self.http_client).await {
                     book.theme_color = Some(color);
                 }
             }

@@ -68,9 +68,14 @@ pub async fn calculate_theme_color(url_or_path: &str) -> Result<Option<String>> 
     }
 
     // 1. Get image bytes
-    let bytes = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+    let bytes = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") || url_or_path.starts_with("//") {
+        let fetch_url = if url_or_path.starts_with("//") {
+            format!("https:{}", url_or_path)
+        } else {
+            url_or_path.to_string()
+        };
         // Fetch from URL
-        match reqwest::get(url_or_path).await {
+        match reqwest::get(&fetch_url).await {
             Ok(response) => {
                 match response.bytes().await {
                     Ok(b) => b.to_vec(),
@@ -114,9 +119,14 @@ pub async fn calculate_theme_color_with_client(url_or_path: &str, client: &reqwe
     }
 
     // 1. Get image bytes
-    let bytes = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") {
+    let bytes = if url_or_path.starts_with("http://") || url_or_path.starts_with("https://") || url_or_path.starts_with("//") {
+        let fetch_url = if url_or_path.starts_with("//") {
+            format!("https:{}", url_or_path)
+        } else {
+            url_or_path.to_string()
+        };
         // Fetch from URL using provided client
-        match client.get(url_or_path).send().await {
+        match client.get(&fetch_url).send().await {
             Ok(response) => {
                 match response.bytes().await {
                     Ok(b) => b.to_vec(),

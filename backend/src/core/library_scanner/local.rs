@@ -375,11 +375,33 @@ impl LibraryScanner {
         // Theme Color
         let mut theme_color = None;
         if let Some(ref url) = cover_url {
-            let cover_path = if url.starts_with("http") { url.clone() } else {
+            let cover_path = if url.starts_with("http") || url.starts_with("//") { 
+                url.clone() 
+            } else {
                 let p = Path::new(url);
-                if p.exists() { url.clone() } else { dir.join(url).to_string_lossy().to_string() }
+                if p.exists() { 
+                    url.clone()
+                } else { 
+                    dir.join(url).to_string_lossy().to_string() 
+                }
             };
-            if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(&cover_path, &self.http_client).await {
+            
+            // For local paths, we need to handle Windows UNC paths carefully
+            let normalized_path = if !cover_path.starts_with("http") && !cover_path.starts_with("//") {
+                let p = Path::new(&cover_path);
+                // First try to canonicalize to resolve relative paths
+                let mut path_str = p.canonicalize().unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().to_string();
+                
+                // Then strip Windows UNC prefix if present, and normalize slashes
+                if path_str.starts_with("\\\\?\\") || path_str.starts_with("//?/") {
+                    path_str = path_str[4..].to_string();
+                }
+                path_str.replace('\\', "/")
+            } else {
+                cover_path
+            };
+            
+            if let Ok(Some(color)) = crate::core::color::calculate_theme_color_with_client(&normalized_path, &self.http_client).await {
                 theme_color = Some(color);
             }
         }
@@ -702,18 +724,15 @@ impl LibraryScanner {
         // because if "audio_metadata" was high priority, it would have set cover_url from plugin/id3.
         if scraper_config.extract_audio_cover && final_meta.cover_url.is_none() && !files.is_empty() {
              let first_file = &files[0];
-             if let Some(ext) = first_file.extension() {
-                 let ext_str = ext.to_string_lossy().to_lowercase();
-                 if ext_str == "mp3" {
-                     if let Some(path) = self.extract_and_save_cover(first_file, dir) {
-                         final_meta.cover_url = Some(path);
-                     }
-                 } else {
-                     // Try extracting cover from non-standard files (like .xm) via plugin
-                     if let Some(meta) = self.extract_from_audio(dir, files, true).await {
-                         if meta.cover_url.is_some() {
-                             final_meta.cover_url = meta.cover_url;
-                         }
+             // We've already tried extracting cover in extract_from_audio above for both standard and non-standard.
+             // This is a final fallback just in case the file wasn't picked up by the priority system.
+             if let Some(path) = self.extract_and_save_cover(first_file, dir) {
+                 final_meta.cover_url = Some(path);
+             } else {
+                 // Try extracting cover from non-standard files (like .xm) via plugin
+                 if let Some(meta) = self.extract_from_audio(dir, files, true).await {
+                     if meta.cover_url.is_some() {
+                         final_meta.cover_url = meta.cover_url;
                      }
                  }
              }
@@ -820,11 +839,17 @@ impl LibraryScanner {
                  if let Some(g) = meta.genre {
                      if !g.trim().is_empty() { m.genre = Some(g); }
                  }
+                 if extract_cover {
+                     if let Some(path) = self.extract_and_save_cover(file_path, _dir) {
+                         m.cover_url = Some(path);
+                         found = true;
+                     }
+                 }
              }
         }
 
-        // Try plugins if title empty or not standard
-        if m.title.is_none() || !is_standard {
+        // Try plugins if title empty or not standard, OR if we need cover but didn't find one
+        if m.title.is_none() || !is_standard || (extract_cover && m.cover_url.is_none()) {
              let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
              for plugin in plugins {
                  let supports_ext = plugin.supported_extensions.as_ref()
