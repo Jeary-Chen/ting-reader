@@ -77,7 +77,7 @@ const SettingsPage: React.FC = () => {
               }, 2000);
           }
       } catch (error) {
-          console.error('Check backend update failed', error);
+          console.error('检查后端更新失败', error);
           alert('检查服务端更新失败，请稍后重试');
       } finally {
           setCheckingBackendUpdate(false);
@@ -114,7 +114,7 @@ const SettingsPage: React.FC = () => {
         }
       }
     } catch (err) {
-      console.error('Copy failed:', err);
+      console.error('复制失败:', err);
       alert('复制失败，请手动复制');
     }
   };
@@ -150,7 +150,7 @@ const SettingsPage: React.FC = () => {
         applyTheme(fetchedSettings.theme);
       }
     } catch (err) {
-      console.error('Failed to fetch settings', err);
+      console.error('获取设置失败', err);
     } finally {
       setLoading(false);
     }

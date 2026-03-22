@@ -142,6 +142,19 @@ export default defineConfig({
         drop_debugger: true,
       },
     },
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom', 'react-router-dom', 'zustand'],
+          ui: ['lucide-react'],
+        }
+      }
+    }
+  },
+  server: {
+    port: 3000,
+    host: true,
   },
   optimizeDeps: {
     include: ['react-window']

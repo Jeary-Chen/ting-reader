@@ -44,7 +44,7 @@ const AdminUsers: React.FC = () => {
       const response = await apiClient.get('/api/libraries');
       setLibraries(response.data);
     } catch (err) {
-      console.error('Failed to fetch libraries', err);
+      console.error('获取库失败', err);
     }
   };
 
@@ -53,7 +53,7 @@ const AdminUsers: React.FC = () => {
       const response = await apiClient.get('/api/users');
       setUsers(response.data);
     } catch (err) {
-      console.error('Failed to fetch users', err);
+      console.error('获取用户失败', err);
     } finally {
       // setLoading(false);
     }
@@ -67,7 +67,7 @@ const AdminUsers: React.FC = () => {
           const res = await apiClient.get('/api/books', { params: { search: bookSearchQuery } });
           setBookSearchResults(res.data.slice(0, 10)); // Limit to 10
         } catch (err) {
-          console.error('Search books failed', err);
+          console.error('搜索书籍失败', err);
         } finally {
           setIsSearchingBooks(false);
         }

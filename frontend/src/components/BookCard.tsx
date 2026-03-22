@@ -4,7 +4,7 @@ import { Play } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 import { getCoverUrl } from '../utils/image';
-import { toSolidColor } from '../utils/color';
+import { toSolidColor, isLight } from '../utils/color';
 import ExpandableTitle from './ExpandableTitle';
 
 interface BookCardProps {
@@ -15,6 +15,8 @@ interface BookCardProps {
 }
 
 const BookCard: React.FC<BookCardProps> = ({ book, onClick, disableLink, coverShape = 'rect' }) => {
+  const effectiveThemeColor = book.themeColor && !isLight(book.themeColor) ? book.themeColor : undefined;
+
   const content = (
     <>
       <div className={`relative ${coverShape === 'square' ? 'aspect-square' : 'aspect-[3/4]'} overflow-hidden rounded-md shadow-md bg-white dark:bg-slate-800`}>
@@ -30,8 +32,8 @@ const BookCard: React.FC<BookCardProps> = ({ book, onClick, disableLink, coverSh
         />
         <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
           <div 
-            className="w-10 h-10 rounded-full bg-primary-600 text-white flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform"
-            style={book.themeColor ? { backgroundColor: toSolidColor(book.themeColor) } : {}}
+            className={`w-10 h-10 rounded-full text-white flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-transform ${!effectiveThemeColor ? 'bg-primary-600' : ''}`}
+            style={effectiveThemeColor ? { backgroundColor: toSolidColor(effectiveThemeColor) } : {}}
           >
             <Play size={20} fill="currentColor" />
           </div>

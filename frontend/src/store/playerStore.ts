@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { Book, Chapter } from '../types';
+import { isLight } from '../utils/color';
 
 interface PlayerState {
   currentBook: Book | null;
@@ -77,7 +78,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           currentTime: chapter.progressPosition || 0
         };
 
-        if (book.themeColor) {
+        if (book.themeColor && !isLight(book.themeColor)) {
           newState.themeColor = book.themeColor;
         } else {
           newState.themeColor = '#F2EDE4'; // Reset to default
@@ -127,7 +128,7 @@ export const usePlayerStore = create<PlayerState>((set, get) => ({
           currentTime: resumePosition ?? (chapter.progressPosition || 0)
         };
         
-        if (book.themeColor) {
+        if (book.themeColor && !isLight(book.themeColor)) {
           newState.themeColor = book.themeColor;
         } else {
           newState.themeColor = '#F2EDE4'; // Reset to default

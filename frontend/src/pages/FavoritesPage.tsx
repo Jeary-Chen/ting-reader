@@ -18,7 +18,7 @@ const FavoritesPage: React.FC = () => {
         const response = await apiClient.get('/api/favorites');
         setBooks(response.data);
       } catch (err) {
-        console.error('Failed to fetch favorites', err);
+        console.error('获取收藏失败', err);
       } finally {
         setLoading(false);
       }
@@ -35,7 +35,7 @@ const FavoritesPage: React.FC = () => {
           setCoverShape(settings.bookshelfCoverShape);
         }
       } catch (err) {
-        console.error('Failed to load settings', err);
+        console.error('加载设置失败', err);
       }
     };
     loadSettings();

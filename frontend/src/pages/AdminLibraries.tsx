@@ -392,7 +392,7 @@ const AdminLibraries: React.FC = () => {
         setScraperSources(response.data.sources);
       }
     } catch (err) {
-      console.error('Failed to fetch scraper sources', err);
+      console.error('获取刮削源失败', err);
     }
   };
 
@@ -407,7 +407,7 @@ const AdminLibraries: React.FC = () => {
       const response = await apiClient.get(`/api/storage/folders?subPath=${encodeURIComponent(subPath)}`);
       setAvailableFolders(response.data);
     } catch (err) {
-      console.error('Failed to fetch folders', err);
+      console.error('获取文件夹失败', err);
     }
   };
 
@@ -416,7 +416,7 @@ const AdminLibraries: React.FC = () => {
       const response = await apiClient.get('/api/libraries');
       setLibraries(response.data);
     } catch (err) {
-      console.error('Failed to fetch libraries', err);
+      console.error('获取库失败', err);
     } finally {
       setLoading(false);
     }

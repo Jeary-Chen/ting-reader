@@ -57,9 +57,11 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   const playedPercent = (Number.isFinite(duration) && duration > 0) ? (displayTime / duration) * 100 : 0;
   const bufferedPercent = (Number.isFinite(duration) && duration > 0) ? (bufferedTime / duration) * 100 : 0;
   
-  // Safety check for themeColor
-  const barColor = themeColor ? toSolidColor(themeColor) : undefined;
-  const shadowColor = themeColor ? setAlpha(themeColor, 0.4) : undefined;
+  // Filter out light colors
+  const effectiveThemeColor = themeColor && !isLight(themeColor) ? themeColor : undefined;
+
+  const barColor = effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined;
+  const shadowColor = effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.4) : undefined;
   
   return (
     <div className={`relative group/progress ${isMini ? 'flex-1 h-3 sm:h-2' : 'w-full h-4'} flex items-center select-none touch-none`}>
@@ -74,7 +76,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
         />
         {/* Played Bar */}
         <div 
-          className="absolute inset-y-0 left-0 z-10" 
+          className={`absolute inset-y-0 left-0 z-10 ${!barColor ? 'bg-primary-600' : ''}`}
           style={{ 
             width: `${playedPercent}%`,
             backgroundColor: barColor,
@@ -197,6 +199,8 @@ const Player: React.FC = () => {
   const [editSkipIntro, setEditSkipIntro] = useState(0);
   const [editSkipOutro, setEditSkipOutro] = useState(0);
 
+  const effectiveThemeColor = themeColor && !isLight(themeColor) ? themeColor : undefined;
+
   // Use stored theme color from book to avoid flash
   useEffect(() => {
     // Prefer camelCase if available, otherwise snake_case
@@ -218,7 +222,7 @@ const Player: React.FC = () => {
             } : null
           }));
         })
-        .catch(e => console.warn('Failed to extract color from cover in Player', e));
+        .catch(e => console.warn('在播放器中从封面提取颜色失败', e));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentBook?.id, currentBook?.themeColor]);
@@ -250,7 +254,7 @@ const Player: React.FC = () => {
       }));
       setShowSettings(false);
     } catch (err) {
-      console.error('Failed to save settings', err);
+      console.error('保存设置失败', err);
     }
   };
 
@@ -309,7 +313,7 @@ const Player: React.FC = () => {
       if (vol !== undefined) {
         setVolume(vol);
       }
-    }).catch(err => console.error('Failed to fetch settings', err));
+    }).catch(err => console.error('获取设置失败', err));
   }, [setPlaybackSpeed, setVolume]);
 
   // Fetch chapters for the current book
@@ -318,7 +322,7 @@ const Player: React.FC = () => {
       apiClient.get(`/api/books/${currentBook.id}/chapters`).then(res => {
         setChapters(res.data);
         setCurrentGroupIndex(0); // Reset group index when book changes
-      }).catch(err => console.error('Failed to fetch chapters', err));
+      }).catch(err => console.error('获取章节失败', err));
     }
   }, [currentBook?.id]);
 
@@ -369,10 +373,10 @@ const Player: React.FC = () => {
         playPromise.catch(err => {
           // Ignore AbortError which happens when pausing/switching quickly
           if (err.name === 'AbortError' || err.code === 20) {
-            console.log('Playback promise aborted (normal)');
+            console.log('播放承诺已中止 (正常)');
             return;
           }
-          console.error('Playback failed', err);
+          console.error('播放失败', err);
           // Don't set user-visible error yet, let onError handler try to recover first
           // setError('播放失败，可能是文件格式不支持或网络错误');
         });
@@ -403,7 +407,7 @@ const Player: React.FC = () => {
           }
           
           if (preloadAudioRef.current.src !== nextSrc) {
-            console.log('Preloading next chapter:', chapters[currentIndex + 1].title);
+            console.log('正在预加载下一章:', chapters[currentIndex + 1].title);
             preloadAudioRef.current.src = nextSrc;
             preloadAudioRef.current.load();
           }
@@ -411,13 +415,13 @@ const Player: React.FC = () => {
 
         // 2. Auto Cache (Server-side WebDAV)
         if (autoCache) {
-           console.log('Triggering server-side cache for:', chapters[currentIndex + 1].title);
+           console.log('触发服务器端缓存:', chapters[currentIndex + 1].title);
            apiClient.post(`/api/cache/${nextChapterId}`).catch(err => {
-              console.error('Failed to trigger server cache', err);
+              console.error('触发服务器端缓存失败', err);
            });
         }
       }
-    }).catch(err => console.error('Preload failed', err));
+    }).catch(err => console.error('预加载失败', err));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChapter?.id, autoPreload, autoCache, currentBook?.id]);
 
@@ -556,7 +560,7 @@ const Player: React.FC = () => {
           bookId: currentBook.id,
           chapterId: currentChapter.id,
           position: Math.floor(currentTimeRef.current)
-        }).catch(err => console.error('Failed to sync progress', err));
+        }).catch(err => console.error('同步进度失败', err));
       };
 
       saveProgress();
@@ -590,11 +594,11 @@ const Player: React.FC = () => {
         if (resumePosition > 0) {
           // If progress is very close to the end (e.g., within 2 seconds or > 99%), start from the beginning
           if (browserDuration > 0 && (browserDuration - resumePosition < 2 || resumePosition / browserDuration > 0.99)) {
-            console.log(`Chapter ${currentChapter?.title} was already finished, starting from beginning`);
+            console.log(`Chapter ${currentChapter?.title} 已完成，从头开始`);
             audioRef.current.currentTime = 0;
             setCurrentTime(0);
           } else {
-            console.log(`Resuming chapter ${currentChapter?.title} at ${resumePosition}s`);
+            console.log(`继续章节 ${currentChapter?.title} at ${resumePosition}s`);
             audioRef.current.currentTime = resumePosition;
           }
         }
@@ -607,9 +611,9 @@ const Player: React.FC = () => {
       if (currentChapter && Number.isFinite(browserDuration) && browserDuration > 0) {
         const diff = Math.abs(browserDuration - (currentChapter.duration || 0));
         if (diff > 2) {
-          console.log(`Syncing accurate duration for ${currentChapter.title}: ${browserDuration}s`);
+          console.log(`同步准确的持续时间: ${currentChapter.title}: ${browserDuration}s`);
           apiClient.patch(`/api/chapters/${currentChapter.id}`, { duration: browserDuration })
-            .catch(err => console.error('Failed to sync duration', err));
+            .catch(err => console.error('同步持续时间失败', err));
         }
       }
     }
@@ -689,7 +693,7 @@ const Player: React.FC = () => {
 
     // Check if fullscreen is allowed
     if (!document.fullscreenEnabled) {
-      console.warn('Fullscreen is not enabled in this context');
+      console.warn('在此上下文中未启用全屏');
       return;
     }
 
@@ -702,7 +706,7 @@ const Player: React.FC = () => {
         setIsExpanded(false);
       }
     } catch (err) {
-      console.error('Error toggling fullscreen:', err);
+      console.error('切换全屏时出错:', err);
       // Do NOT fallback to isExpanded=true if fullscreen fails
       // This prevents the UI from breaking inside a small iframe
     }
@@ -714,7 +718,7 @@ const Player: React.FC = () => {
       try {
         await document.exitFullscreen();
       } catch (err) {
-        console.error('Error exiting fullscreen:', err);
+        console.error('退出全屏时出错:', err);
       }
     }
     setIsExpanded(false);
@@ -749,7 +753,7 @@ const Player: React.FC = () => {
         bookId: currentBook.id,
         chapterId: currentChapter.id,
         position: Math.floor(duration)
-      }).catch(err => console.error('Failed to sync final progress', err));
+      }).catch(err => console.error('同步最终进度失败', err));
     }
     nextChapter();
   };
@@ -783,7 +787,7 @@ const Player: React.FC = () => {
         onPause={() => setIsPlaying(false)}
         onError={(e) => {
           const audio = audioRef.current;
-          console.log('Audio Error Event Triggered', { 
+          console.log('触发音频错误事件', { 
             error: audio?.error, 
             code: audio?.error?.code, 
             message: audio?.error?.message,
@@ -797,29 +801,29 @@ const Player: React.FC = () => {
             // Code 1 is MEDIA_ERR_ABORTED
             
             if (audio.error.code === 1) {
-              console.log('Playback aborted (user action)');
+              console.log('播放已中止 (用户操作)');
               return;
             }
 
             // Auto retry on network (2), decode error (3) or source not supported (4)
             // We include network error (2) in retry logic just in case, but transcode mainly fixes 3 & 4
             if (retryCount < 3) {
-                 console.log(`Playback error ${audio.error.code}, retrying with transcode (${retryCount + 1}/3)...`);
+                 console.log(`Playback error ${audio.error.code}, 使用转码重试 (${retryCount + 1}/3)...`);
                  setShouldTranscode(true);
                  setRetryCount(prev => prev + 1);
                  return;
             }
-            console.error('Audio element error', audio.error);
+            console.error('音频元素错误', audio.error);
           } else {
             // Even if audio.error is null, if we have an error event and haven't retried max times, try transcoding
             // This handles edge cases where browser doesn't populate error object properly
             if (retryCount < 3) {
-                console.log('Unknown audio error, attempting transcode retry...');
+                console.log('未知的音频错误，尝试转码重试...');
                 setShouldTranscode(true);
                 setRetryCount(prev => prev + 1);
                 return;
             }
-            console.error('Audio element error (unknown)', e);
+            console.error('音频元素错误 (未知)', e);
           }
           setError('音频加载出错，请尝试重新扫描库或稍后再试');
         }}
@@ -843,7 +847,7 @@ const Player: React.FC = () => {
               <div 
                 className="w-14 h-14 sm:w-16 sm:h-16 rounded-xl overflow-hidden shadow-2xl cursor-pointer hover:scale-105 transition-transform border-2 border-white/50 dark:border-slate-700/50"
                 style={{ 
-                  borderColor: themeColor ? setAlpha(themeColor, 0.3) : undefined
+                  borderColor: effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.3) : undefined
                 }}
               >
                 <img 
@@ -867,8 +871,8 @@ const Player: React.FC = () => {
               transition-all duration-300
             `}
             style={{ 
-              backgroundColor: isWidgetMode ? undefined : (themeColor ? setAlpha(themeColor, 0.05) : undefined),
-              borderColor: isWidgetMode ? undefined : (themeColor ? setAlpha(themeColor, 0.2) : undefined)
+              backgroundColor: isWidgetMode ? undefined : (effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.05) : undefined),
+              borderColor: isWidgetMode ? undefined : (effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.2) : undefined)
             }}
           >
             {/* Info */}
@@ -917,23 +921,23 @@ const Player: React.FC = () => {
                 <button 
                   onClick={prevChapter} 
                   className="text-slate-400 hover:scale-110 transition-all"
-                  style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                  style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 >
                   <SkipBack size={20} fill="currentColor" />
                 </button>
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
                   className="text-slate-400 hover:scale-110 transition-all"
-                  style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                  style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 >
                   <RotateCcw size={18} />
                 </button>
                 <button 
                   onClick={togglePlay}
-                  className="w-10 h-10 rounded-full text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all"
+                  className={`w-10 h-10 rounded-full text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all ${!effectiveThemeColor ? 'bg-primary-600' : ''}`}
                   style={{ 
-                    backgroundColor: themeColor ? toSolidColor(themeColor) : undefined,
-                    boxShadow: themeColor ? `0 10px 15px -3px ${setAlpha(themeColor, 0.3)}` : undefined
+                    backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined,
+                    boxShadow: effectiveThemeColor ? `0 10px 15px -3px ${setAlpha(effectiveThemeColor, 0.3)}` : undefined
                   }}
                 >
                   {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
@@ -941,14 +945,14 @@ const Player: React.FC = () => {
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime += 30; }}
                   className="text-slate-400 hover:scale-110 transition-all"
-                  style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                  style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 >
                   <RotateCw size={18} />
                 </button>
                 <button 
                   onClick={nextChapter} 
                   className="text-slate-400 hover:scale-110 transition-all"
-                  style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                  style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 >
                   <SkipForward size={20} fill="currentColor" />
                 </button>
@@ -992,25 +996,25 @@ const Player: React.FC = () => {
                 {isWidgetMode && (
                   <div className="flex items-center gap-1">
                     <button 
-                      onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
-                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
-                      style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
-                    >
-                      <RotateCcw size={16} />
-                    </button>
-                    <button 
-                      onClick={prevChapter}
-                      className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
-                      style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
-                    >
+                    onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
+                    className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                    style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
+                  >
+                    <RotateCcw size={16} />
+                  </button>
+                  <button 
+                    onClick={prevChapter}
+                    className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
+                    style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
+                  >
                       <SkipBack size={16} fill="currentColor" />
                     </button>
                   </div>
                 )}
                 <button 
                   onClick={togglePlay}
-                  className="w-10 h-10 max-[380px]:w-8 max-[380px]:h-8 rounded-full text-white flex items-center justify-center shadow-md hover:scale-105 transition-transform"
-                  style={{ backgroundColor: themeColor ? toSolidColor(themeColor) : undefined }}
+                  className={`w-10 h-10 max-[380px]:w-8 max-[380px]:h-8 rounded-full text-white flex items-center justify-center shadow-md hover:scale-105 transition-transform ${!effectiveThemeColor ? 'bg-primary-600' : ''}`}
+                  style={{ backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined }}
                 >
                   {isPlaying ? <Pause size={20} className="max-[380px]:w-4 max-[380px]:h-4" fill="currentColor" /> : <Play size={20} className="ml-1 max-[380px]:w-4 max-[380px]:h-4" fill="currentColor" />}
                 </button>
@@ -1020,14 +1024,14 @@ const Player: React.FC = () => {
                     <button 
                       onClick={nextChapter}
                       className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
-                      style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                      style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                     >
                       <SkipForward size={16} fill="currentColor" />
                     </button>
                     <button 
                       onClick={() => { if (audioRef.current) audioRef.current.currentTime += 30; }}
                       className="p-1.5 text-slate-400 transition-colors hover:text-primary-500"
-                      style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                      style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                     >
                       <RotateCw size={16} />
                     </button>
@@ -1037,7 +1041,7 @@ const Player: React.FC = () => {
                   <button 
                     onClick={() => setIsCollapsed(true)}
                     className="p-2 text-slate-400 transition-colors"
-                    style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                    style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                     title="收起播放器"
                   >
                     <ChevronLeft size={24} />
@@ -1056,7 +1060,7 @@ const Player: React.FC = () => {
                     setShowVolumeControl(!showVolumeControl);
                   }}
                   className="text-slate-400 transition-colors p-1 hover:scale-110 flex items-center gap-1"
-                  style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                  style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                   title="音量"
                 >
                   {isMuted || volume === 0 ? (
@@ -1109,8 +1113,8 @@ const Player: React.FC = () => {
                 onClick={() => setPlaybackSpeed(playbackSpeed === 2 ? 1 : playbackSpeed + 0.25)} 
                 className="text-[10px] font-bold px-2 py-1 rounded transition-colors"
                 style={{ 
-                  backgroundColor: themeColor ? setAlpha(themeColor, 0.1) : undefined,
-                  color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.8)) : undefined
+                  backgroundColor: effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.1) : undefined,
+                  color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.8)) : undefined
                 }}
               >
                 {playbackSpeed}x
@@ -1118,7 +1122,7 @@ const Player: React.FC = () => {
               <button 
                 onClick={() => setIsCollapsed(true)} 
                 className="text-slate-400 transition-colors p-1 hover:scale-110"
-                style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 title="收起播放器"
               >
                 <ChevronLeft size={20} />
@@ -1126,7 +1130,7 @@ const Player: React.FC = () => {
               <button 
                 onClick={() => setIsExpanded(true)} 
                 className="text-slate-400 transition-colors p-1 hover:scale-110"
-                style={{ color: themeColor ? (isLight(themeColor) ? '#475569' : setAlpha(themeColor, 0.6)) : undefined }}
+                style={{ color: effectiveThemeColor ? (isLight(effectiveThemeColor) ? '#475569' : setAlpha(effectiveThemeColor, 0.6)) : undefined }}
                 title="展开播放器"
               >
                 <Maximize2 size={20} />
@@ -1140,8 +1144,8 @@ const Player: React.FC = () => {
       {/* Expanded Player View */}
       {isExpanded && (
         <div 
-          className="absolute inset-0 flex flex-col p-4 sm:p-8 md:p-12 overflow-y-auto animate-in slide-in-from-bottom duration-500 pb-40 xl:pb-12"
-          style={{ backgroundColor: isWidgetMode ? (themeColor ? toSolidColor(themeColor) : '#1e293b') : (themeColor || '#F2EDE4') }}
+          className="absolute inset-0 flex flex-col p-4 sm:p-8 md:p-12 overflow-y-auto animate-in slide-in-from-bottom duration-500 pb-40 xl:pb-12 bg-white dark:bg-slate-950"
+          style={{ backgroundColor: isWidgetMode ? (effectiveThemeColor ? toSolidColor(effectiveThemeColor) : '#1e293b') : (effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.05) : undefined) }}
         >
           {/* Header */}
           <div className="flex items-center justify-between w-full max-w-4xl mx-auto mb-4 sm:mb-8 bg-white/60 dark:bg-slate-900/60 backdrop-blur-md p-2 sm:p-3 rounded-2xl shadow-sm border border-slate-200/30 dark:border-slate-800/30">
@@ -1314,7 +1318,7 @@ const Player: React.FC = () => {
               <div className="flex items-center justify-center gap-4 sm:gap-10 md:gap-14">
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
-                  className="text-[#4A3728] dark:text-slate-400 p-1.5 sm:p-2 hover:scale-110 transition-transform"
+                  className="text-slate-600 dark:text-slate-400 p-1.5 sm:p-2 hover:scale-110 transition-transform"
                 >
                   <div className="relative">
                     <RotateCcw size={24} className="sm:w-8 sm:h-8" />
@@ -1323,28 +1327,28 @@ const Player: React.FC = () => {
                 </button>
                 <button 
                   onClick={prevChapter}
-                  className="text-[#0F172A] dark:text-white p-1.5 sm:p-2 hover:scale-110 transition-transform"
+                  className="text-slate-900 dark:text-white p-1.5 sm:p-2 hover:scale-110 transition-transform"
                 >
                   <SkipBack size={28} className="sm:w-9 sm:h-9" fill="currentColor" />
                 </button>
                 
                 <button 
                   onClick={togglePlay}
-                  className="w-16 h-16 sm:w-24 sm:h-24 rounded-full bg-[#2D1B10] dark:bg-primary-600 text-white flex items-center justify-center shadow-2xl transform hover:scale-105 active:scale-95 transition-all"
-                  style={themeColor ? { backgroundColor: toSolidColor(themeColor) } : {}}
+                  className={`w-16 h-16 sm:w-24 sm:h-24 rounded-full text-white flex items-center justify-center shadow-2xl transform hover:scale-105 active:scale-95 transition-all ${!effectiveThemeColor ? 'bg-primary-600' : ''}`}
+                  style={effectiveThemeColor ? { backgroundColor: toSolidColor(effectiveThemeColor) } : {}}
                 >
                   {isPlaying ? <Pause size={32} className="sm:w-12 sm:h-12" fill="currentColor" /> : <Play size={32} className="sm:w-12 sm:h-12 ml-1 sm:ml-2" fill="currentColor" />}
                 </button>
 
                 <button 
                   onClick={nextChapter}
-                  className="text-[#0F172A] dark:text-white p-1.5 sm:p-2 hover:scale-110 transition-transform"
+                  className="text-slate-900 dark:text-white p-1.5 sm:p-2 hover:scale-110 transition-transform"
                 >
                   <SkipForward size={28} className="sm:w-9 sm:h-9" fill="currentColor" />
                 </button>
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime += 15; }}
-                  className="text-[#4A3728] dark:text-slate-400 p-1.5 sm:p-2 hover:scale-110 transition-transform"
+                  className="text-slate-600 dark:text-slate-400 p-1.5 sm:p-2 hover:scale-110 transition-transform"
                 >
                   <div className="relative">
                     <RotateCw size={24} className="sm:w-8 sm:h-8" />
@@ -1354,7 +1358,7 @@ const Player: React.FC = () => {
               </div>
 
               {/* Bottom Row Controls */}
-              <div className="flex justify-between items-center max-w-2xl mx-auto w-full px-2 sm:px-4 text-[#4A3728] dark:text-slate-400">
+              <div className="flex justify-between items-center max-w-2xl mx-auto w-full px-2 sm:px-4 text-slate-600 dark:text-slate-400">
                 <button 
                   onClick={() => setPlaybackSpeed(playbackSpeed >= 2 ? 0.5 : playbackSpeed + 0.25)}
                   className="flex flex-col items-center gap-1 sm:gap-1.5 transition-all active:scale-95 group relative"
@@ -1466,7 +1470,7 @@ const Player: React.FC = () => {
               <div className="relative w-full max-w-sm bg-white dark:bg-slate-900 rounded-[32px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="p-6 sm:p-8">
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-bold dark:text-white text-[#4A3728]">播放设置</h3>
+                    <h3 className="text-xl font-bold text-slate-900 dark:text-white">播放设置</h3>
                     <button onClick={() => setShowSettings(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full">
                       <X size={20} className="text-slate-400" />
                     </button>
@@ -1570,16 +1574,16 @@ const Player: React.FC = () => {
                 </div>
 
                 {groups.length > 1 && (
-                  <div className="relative group/nav border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50">
+                  <div className="relative group/nav border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 flex items-center">
                     <button 
                       onClick={() => scrollGroups('left')}
-                      className="absolute left-0 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/80 dark:bg-slate-800/80 backdrop-blur shadow-md rounded-r-xl opacity-0 group-hover/nav:opacity-100 transition-opacity hidden sm:block"
+                      className="absolute -left-4 sm:-left-7 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 backdrop-blur shadow-md rounded-full opacity-0 group-hover/nav:opacity-100 transition-opacity hidden sm:block border border-slate-100 dark:border-slate-700"
                     >
                       <ChevronLeft size={20} className="text-slate-600 dark:text-slate-400" />
                     </button>
                     <div 
                       ref={scrollRef}
-                      className="flex gap-2 p-4 overflow-x-auto no-scrollbar scroll-smooth snap-x"
+                      className="flex gap-2 p-4 overflow-x-auto no-scrollbar scroll-smooth snap-x mx-1 w-full"
                     >
                       {groups.map((group, index) => (
                         <button
@@ -1588,12 +1592,12 @@ const Player: React.FC = () => {
                           onClick={() => setCurrentGroupIndex(index)}
                           className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border shrink-0 snap-start ${
                             currentGroupIndex === index
-                              ? 'text-white shadow-lg shadow-primary-500/30'
+                              ? `text-white shadow-lg shadow-primary-500/30 ${!effectiveThemeColor ? 'bg-primary-600 border-primary-600' : ''}`
                               : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700'
                           }`}
                           style={currentGroupIndex === index ? { 
-                            backgroundColor: themeColor ? toSolidColor(themeColor) : undefined,
-                            borderColor: themeColor ? toSolidColor(themeColor) : undefined
+                            backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined,
+                            borderColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined
                           } : {}}
                         >
                           第 {group.start}-{group.end} 章
@@ -1602,7 +1606,7 @@ const Player: React.FC = () => {
                     </div>
                     <button 
                       onClick={() => scrollGroups('right')}
-                      className="absolute right-0 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/80 dark:bg-slate-800/80 backdrop-blur shadow-md rounded-l-xl opacity-0 group-hover/nav:opacity-100 transition-opacity hidden sm:block"
+                      className="absolute -right-4 sm:-right-7 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 backdrop-blur shadow-md rounded-full opacity-0 group-hover/nav:opacity-100 transition-opacity hidden sm:block border border-slate-100 dark:border-slate-700"
                     >
                       <ChevronLeft size={20} className="rotate-180 text-slate-600 dark:text-slate-400" />
                     </button>
@@ -1628,23 +1632,23 @@ const Player: React.FC = () => {
                             : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-primary-200 dark:hover:border-primary-800'
                         }`}
                         style={isCurrent ? { 
-                          backgroundColor: themeColor ? setAlpha(themeColor, 0.1) : undefined,
-                          borderColor: themeColor ? setAlpha(themeColor, 0.3) : undefined,
+                          backgroundColor: effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.1) : undefined,
+                          borderColor: effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.3) : undefined,
                         } : {}}
                       >
                         <div className="flex items-center gap-4 min-w-0">
                           <div 
                             className={`w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center font-bold text-base sm:text-lg shrink-0 ${
-                              isCurrent ? 'text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                              isCurrent ? `text-white ${!effectiveThemeColor ? 'bg-primary-600' : ''}` : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
                             }`}
-                            style={isCurrent ? { backgroundColor: themeColor ? toSolidColor(themeColor) : undefined } : {}}
+                            style={isCurrent ? { backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined } : {}}
                           >
                             {chapter.chapterIndex || (actualIndex + 1)}
                           </div>
                           <div className="min-w-0">
                             <p 
                               className={`text-sm sm:text-base font-bold truncate ${isCurrent ? '' : 'text-slate-900 dark:text-white'}`}
-                              style={isCurrent ? { color: themeColor ? toSolidColor(themeColor) : undefined } : {}}
+                              style={isCurrent ? { color: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined } : {}}
                             >
                               {chapter.title}
                             </p>
@@ -1669,9 +1673,9 @@ const Player: React.FC = () => {
                         </div>
                         {isCurrent && isPlaying && (
                           <div className="flex gap-1 items-end h-5">
-                            <div className="w-1 animate-music-bar-1 rounded-full" style={{ backgroundColor: themeColor ? toSolidColor(themeColor) : undefined }}></div>
-                            <div className="w-1 animate-music-bar-2 rounded-full" style={{ backgroundColor: themeColor ? toSolidColor(themeColor) : undefined }}></div>
-                            <div className="w-1 animate-music-bar-3 rounded-full" style={{ backgroundColor: themeColor ? toSolidColor(themeColor) : undefined }}></div>
+                            <div className={`w-1 animate-music-bar-1 rounded-full ${!effectiveThemeColor ? 'bg-primary-600' : ''}`} style={{ backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined }}></div>
+                            <div className={`w-1 animate-music-bar-2 rounded-full ${!effectiveThemeColor ? 'bg-primary-600' : ''}`} style={{ backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined }}></div>
+                            <div className={`w-1 animate-music-bar-3 rounded-full ${!effectiveThemeColor ? 'bg-primary-600' : ''}`} style={{ backgroundColor: effectiveThemeColor ? toSolidColor(effectiveThemeColor) : undefined }}></div>
                           </div>
                         )}
                       </div>

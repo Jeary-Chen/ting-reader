@@ -83,7 +83,7 @@ const ChapterManagerModal: React.FC<Props> = ({ bookId, initialChapters, onClose
       onSave();
       onClose();
     } catch (err) {
-      console.error('Failed to save chapters', err);
+      console.error('保存章节失败', err);
       alert('保存失败');
     } finally {
       setSaving(false);
@@ -114,7 +114,7 @@ const ChapterManagerModal: React.FC<Props> = ({ bookId, initialChapters, onClose
       onSave(); // Reload parent
       onClose(); // Close modal
     } catch (err) {
-      console.error('Failed to move chapters', err);
+      console.error('移动章节失败', err);
       alert('移动章节失败');
     } finally {
       setMoving(false);

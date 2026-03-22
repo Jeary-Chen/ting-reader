@@ -37,7 +37,7 @@ export const formatDate = (dateString: string | null | undefined): string => {
     }
 
     if (isNaN(date.getTime())) {
-       console.warn(`Failed to parse date: ${dateString} (cleaned: ${cleanDate})`);
+       console.warn(`解析日期失败: ${dateString} (cleaned: ${cleanDate})`);
        return '未知时间';
     }
     

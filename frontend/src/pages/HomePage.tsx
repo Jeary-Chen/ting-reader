@@ -32,7 +32,7 @@ const HomePage: React.FC = () => {
         setStats(statsRes.data);
         setRecentPlays(recentRes.data || []);
       } catch (err) {
-        console.error('Failed to fetch home data', err);
+        console.error('获取主页数据失败', err);
       } finally {
         setLoading(false);
       }

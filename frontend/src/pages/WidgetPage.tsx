@@ -39,7 +39,7 @@ const WidgetPage: React.FC = () => {
         };
         setAuth(user, token);
       } catch (e) {
-        console.error('Invalid token in widget', e);
+        console.error('小组件中的令牌无效', e);
         setToken(token); // Fallback
       }
     }
@@ -61,7 +61,7 @@ const WidgetPage: React.FC = () => {
           }
           style.innerHTML = css;
         }
-      }).catch(err => console.error('Failed to load widget settings', err));
+      }).catch(err => console.error('加载小组件设置失败', err));
     }
   }, [isAuthenticated]);
 
@@ -74,7 +74,7 @@ const WidgetPage: React.FC = () => {
         const res = await apiClient.get('/api/books', { params: { search: searchQuery } });
         setBooks(res.data);
       } catch (err) {
-        console.error('Failed to fetch books', err);
+        console.error('获取书籍失败', err);
       } finally {
         setLoading(false);
       }
@@ -109,7 +109,7 @@ const WidgetPage: React.FC = () => {
           playChapter(book, chapters, targetChapter);
           setShowBookList(false);
         } catch (err) {
-          console.error('Failed to load book for widget', err);
+          console.error('为小组件加载书籍失败', err);
         }
       };
       loadBook();
@@ -128,7 +128,7 @@ const WidgetPage: React.FC = () => {
       setAuth(user, token);
       // Login successful, state updates will trigger re-renders
     } catch (err: unknown) {
-      console.error('Login failed', err);
+      console.error('登录失败', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || (err as any)?.response?.data?.message || '登录失败';
       setLoginError(msg);

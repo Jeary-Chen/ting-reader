@@ -83,7 +83,7 @@ const BookshelfPage: React.FC = () => {
           setCoverShape(settings.bookshelfCoverShape);
         }
       } catch (err) {
-        console.error('Failed to load settings', err);
+        console.error('加载设置失败', err);
       } finally {
         setSettingsLoaded(true);
       }
@@ -129,7 +129,7 @@ const BookshelfPage: React.FC = () => {
       if (selectedLibraryId) {
         const exists = libs.find((l: Library) => l.id === selectedLibraryId);
         if (!exists) {
-          console.warn(`Selected library ${selectedLibraryId} not found, resetting to default.`);
+          console.warn(`Selected library ${selectedLibraryId} 未找到，重置为默认值。`);
           effectiveLibraryId = '';
           setSelectedLibraryId('');
           // Update settings to clear the invalid ID
@@ -145,7 +145,7 @@ const BookshelfPage: React.FC = () => {
       setBooks(booksRes.data);
       setSeries(seriesRes.data);
     } catch (err) {
-      console.error('Failed to fetch data', err);
+      console.error('获取数据失败', err);
     } finally {
       setLoading(false);
     }

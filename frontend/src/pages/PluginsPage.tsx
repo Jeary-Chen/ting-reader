@@ -87,7 +87,7 @@ const PluginsPage: React.FC = () => {
       const response = await apiClient.get('/api/v1/plugins');
       setPlugins(response.data);
     } catch (err) {
-      console.error('Failed to fetch plugins', err);
+      console.error('获取插件失败', err);
     } finally {
       setLoading(false);
     }
@@ -99,7 +99,7 @@ const PluginsPage: React.FC = () => {
       const response = await apiClient.get('/api/v1/store/plugins');
       setStorePlugins(response.data);
     } catch (err) {
-      console.error('Failed to fetch store plugins', err);
+      console.error('获取商店插件失败', err);
     } finally {
       setStoreLoading(false);
     }
@@ -133,10 +133,10 @@ const PluginsPage: React.FC = () => {
       fetchPlugins();
       alert('Plugin installed successfully!');
     } catch (err: unknown) {
-      console.error('Failed to install plugin', err);
+      console.error('安装插件失败', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
-      alert(`Failed to install plugin: ${msg}`);
+      alert(`安装插件失败: ${msg}`);
     } finally {
       setUploading(false);
       if (fileInputRef.current) {
@@ -163,7 +163,7 @@ const PluginsPage: React.FC = () => {
               try {
                 await apiClient.post('/api/v1/store/install', { pluginId: depId });
               } catch (err: unknown) {
-                 console.error(`Failed to install dependency ${depId}`, err);
+                 console.error(`安装依赖失败 ${depId}`, err);
                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                  const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
                  alert(`无法安装依赖插件 ${depId}: ${msg}`);
@@ -185,10 +185,10 @@ const PluginsPage: React.FC = () => {
       fetchPlugins();
       alert('Plugin installed successfully!');
     } catch (err: unknown) {
-      console.error('Failed to install plugin from store', err);
+      console.error('从商店安装插件失败', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
-      alert(`Failed to install plugin: ${msg}`);
+      alert(`安装插件失败: ${msg}`);
     } finally {
       setInstallingId(null);
     }
@@ -200,10 +200,10 @@ const PluginsPage: React.FC = () => {
       fetchPlugins();
       alert('Plugin reloaded successfully!');
     } catch (err: unknown) {
-      console.error('Failed to reload plugin', err);
+      console.error('重新加载插件失败', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
-      alert(`Failed to reload plugin: ${msg}`);
+      alert(`重新加载插件失败: ${msg}`);
     }
   };
 
@@ -215,10 +215,10 @@ const PluginsPage: React.FC = () => {
       fetchPlugins();
       alert('Plugin uninstalled successfully!');
     } catch (err: unknown) {
-      console.error('Failed to uninstall plugin', err);
+      console.error('卸载插件失败', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || (err as Error)?.message || 'Unknown error';
-      alert(`Failed to uninstall plugin: ${msg}`);
+      alert(`卸载插件失败: ${msg}`);
     }
   };
 

@@ -49,7 +49,7 @@ export const useTheme = () => {
         applyTheme(response.data.theme);
       }
     } catch (err) {
-      console.error('Failed to refresh theme from server', err);
+      console.error('从服务器刷新主题失败', err);
     }
   };
 

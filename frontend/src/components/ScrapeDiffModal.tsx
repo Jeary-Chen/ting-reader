@@ -66,7 +66,7 @@ const ScrapeDiffModal: React.FC<Props> = ({ bookId, onClose, onSave }) => {
       });
       setSelectedChanges(initialSelected);
     } catch (err) {
-      console.error('Failed to fetch scrape diff', err);
+      console.error('获取刮削差异失败', err);
       // alert('获取元数据失败');
     } finally {
       setLoading(false);
@@ -142,7 +142,7 @@ const ScrapeDiffModal: React.FC<Props> = ({ bookId, onClose, onSave }) => {
       onSave();
       onClose();
     } catch (err) {
-      console.error('Failed to apply scrape result', err);
+      console.error('应用刮削结果失败', err);
       alert('应用失败');
     } finally {
       setSaving(false);

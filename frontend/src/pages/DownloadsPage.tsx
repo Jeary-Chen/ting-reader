@@ -19,7 +19,7 @@ const DownloadsPage: React.FC = () => {
       // Backend returns { caches: [], total: 0, totalSize: 0 }
       setCachedFiles(res.data.caches || []);
     } catch (err) {
-      console.error('Failed to fetch cache:', err);
+      console.error('获取缓存失败:', err);
     } finally {
       setLoading(false);
     }
@@ -32,7 +32,7 @@ const DownloadsPage: React.FC = () => {
       await apiClient.delete('/api/cache');
       setCachedFiles([]);
     } catch (err) {
-      console.error('Failed to clear cache:', err);
+      console.error('清除缓存失败:', err);
     }
   };
 
@@ -43,7 +43,7 @@ const DownloadsPage: React.FC = () => {
       await apiClient.delete(`/api/cache/${id}`);
       setCachedFiles(prev => prev.filter(f => f.chapterId !== id));
     } catch (err) {
-      console.error('Failed to delete cache:', err);
+      console.error('删除缓存失败:', err);
     }
   };
 
@@ -96,7 +96,7 @@ const DownloadsPage: React.FC = () => {
       try {
         await apiClient.delete(`/api/cache/${file.chapterId}`);
       } catch (err) {
-        console.error(`Failed to delete cache ${file.chapterId}`, err);
+        console.error(`删除缓存失败 ${file.chapterId}`, err);
       }
     }
     

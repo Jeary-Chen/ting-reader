@@ -94,7 +94,7 @@ const SearchPage: React.FC = () => {
         setAllGenres(Array.from(genres).sort());
         
       } catch (err) {
-        console.error('Failed to fetch metadata', err);
+        console.error('获取元数据失败', err);
       }
     };
     fetchMetadata();
@@ -144,7 +144,7 @@ const SearchPage: React.FC = () => {
         
         setResults(filtered);
       } catch (err) {
-        console.error('Search failed', err);
+        console.error('搜索失败', err);
       } finally {
         setLoading(false);
       }

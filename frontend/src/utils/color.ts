@@ -12,9 +12,13 @@ export const setAlpha = (color: string | undefined, newAlpha: number | string): 
   if (!color) return '';
   
   if (color.startsWith('#')) {
-    const r = parseInt(color.slice(1, 3), 16);
-    const g = parseInt(color.slice(3, 5), 16);
-    const b = parseInt(color.slice(5, 7), 16);
+    let hex = color.slice(1);
+    if (hex.length === 3) {
+      hex = hex.split('').map(c => c + c).join('');
+    }
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${newAlpha})`;
   }
   
@@ -35,13 +39,16 @@ export const getLuminance = (color: string): number => {
   if (!color) return 0;
   let r = 0, g = 0, b = 0;
   if (color.startsWith('#')) {
-    const hex = color.replace('#', '');
+    let hex = color.replace('#', '');
+    if (hex.length === 3) {
+      hex = hex.split('').map(c => c + c).join('');
+    }
     r = parseInt(hex.substring(0, 2), 16);
     g = parseInt(hex.substring(2, 4), 16);
     b = parseInt(hex.substring(4, 6), 16);
   } else if (color.startsWith('rgb')) {
     const rgb = color.match(/\d+/g);
-    if (rgb) {
+    if (rgb && rgb.length >= 3) {
       r = parseInt(rgb[0]);
       g = parseInt(rgb[1]);
       b = parseInt(rgb[2]);

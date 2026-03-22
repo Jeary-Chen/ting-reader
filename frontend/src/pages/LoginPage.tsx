@@ -43,7 +43,7 @@ const LoginPage: React.FC = () => {
       }
       return finalUrl;
     } catch (err) {
-      console.warn('URL resolution failed, using original', err);
+      console.warn('URL 解析失败，使用原始 URL', err);
       return finalUrl;
     } finally {
       // setResolving(false);
@@ -74,7 +74,7 @@ const LoginPage: React.FC = () => {
       setAuth(user, token);
       navigate('/');
     } catch (err: unknown) {
-      console.error('Login error:', err);
+      console.error('登录错误:', err);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (err as any)?.response?.data?.error || '登录失败，请检查用户名和密码';
       setError(msg);

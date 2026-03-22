@@ -48,7 +48,7 @@ const Layout: React.FC = () => {
         await apiClient.get('/api/me');
         setIsConnecting(false);
       } catch (err: unknown) {
-        console.error('Connection validation failed', err);
+        console.error('连接验证失败', err);
         // Don't auto-logout immediately, give user a chance to see error or retry
         setConnectionError('连接服务器失败或登录已过期');
         setIsConnecting(false);
@@ -72,7 +72,7 @@ const Layout: React.FC = () => {
         if (speed) {
           setPlaybackSpeed(speed);
         }
-      }).catch(err => console.error('Failed to sync user settings', err));
+      }).catch(err => console.error('同步用户设置失败', err));
     }
   }, [user, setPlaybackSpeed, isConnecting, connectionError]);
 
@@ -92,7 +92,7 @@ const Layout: React.FC = () => {
     { icon: <Database size={20} />, label: '库管理', path: '/admin/libraries' },
     { icon: <Download size={20} />, label: '缓存管理', path: '/downloads' },
     { icon: <Puzzle size={20} />, label: '插件管理', path: '/admin/plugins' },
-    { icon: <Terminal size={20} />, label: '任务日志', path: '/admin/tasks' },
+    { icon: <Terminal size={20} />, label: '系统日志', path: '/admin/logs' },
     { icon: <Users size={20} />, label: '用户管理', path: '/admin/users' },
   ];
 

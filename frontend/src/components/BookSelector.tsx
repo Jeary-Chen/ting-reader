@@ -28,7 +28,7 @@ const BookSelector: React.FC<Props> = ({ onSelect, onClose, excludeIds }) => {
         }
         setBooks(list);
       } catch (err) {
-        console.error('Failed to fetch books', err);
+        console.error('获取书籍失败', err);
       } finally {
         setLoading(false);
       }

@@ -70,7 +70,7 @@ apiClient.interceptors.response.use(
 
       // If we have a serverUrl and it's different or we want to re-verify
       if (serverUrl) {
-        console.log('Network error, attempting to re-resolve server URL from:', serverUrl);
+        console.log('网络错误，尝试重新解析服务器 URL:', serverUrl);
         originalRequest._retry = true;
         
         try {
@@ -80,7 +80,7 @@ apiClient.interceptors.response.use(
            const newActiveUrl = (result && result.finalUrl) ? result.finalUrl : serverUrl;
            
            if (newActiveUrl) {
-             console.log('Resolved new active URL:', newActiveUrl);
+             console.log('解析了新的活动 URL:', newActiveUrl);
              setActiveUrl(newActiveUrl);
              
              // Update request baseURL and retry
@@ -89,7 +89,7 @@ apiClient.interceptors.response.use(
              return apiClient(originalRequest);
            }
         } catch (resolveErr) {
-          console.error('Failed to re-resolve server URL', resolveErr);
+          console.error('重新解析服务器 URL 失败', resolveErr);
         }
       }
     }

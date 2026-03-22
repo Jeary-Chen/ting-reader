@@ -42,7 +42,7 @@ const SeriesDetailPage: React.FC = () => {
       setDescription(res.data.description || '');
       setCoverUrl(res.data.coverUrl || '');
     } catch (err) {
-      console.error('Failed to fetch series', err);
+      console.error('获取系列失败', err);
     } finally {
       setLoading(false);
     }
@@ -64,7 +64,7 @@ const SeriesDetailPage: React.FC = () => {
           setCoverShape(settings.bookshelfCoverShape);
         }
       } catch (err) {
-        console.error('Failed to load settings', err);
+        console.error('加载设置失败', err);
       }
     };
     loadSettings();
@@ -129,7 +129,7 @@ const SeriesDetailPage: React.FC = () => {
       setIsEditing(false);
       fetchSeries();
     } catch (err) {
-      console.error('Failed to update series', err);
+      console.error('更新系列失败', err);
       alert('更新系列失败');
     }
   };
@@ -140,7 +140,7 @@ const SeriesDetailPage: React.FC = () => {
       await apiClient.delete(`/api/v1/series/${id}`);
       navigate('/bookshelf');
     } catch (err) {
-      console.error('Failed to delete series', err);
+      console.error('删除系列失败', err);
     }
   };
 
