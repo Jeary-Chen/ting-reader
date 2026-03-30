@@ -65,7 +65,7 @@ const ProgressBar: React.FC<ProgressBarProps> = ({
   const shadowColor = effectiveThemeColor ? setAlpha(effectiveThemeColor, 0.4) : undefined;
   
   return (
-    <div className={`relative group/progress ${isMini ? 'flex-1 h-3 sm:h-2' : 'w-full h-4'} flex items-center select-none touch-none`}>
+    <div className={`relative group/progress ${isMini ? 'flex-1 w-full h-3 sm:h-2' : 'w-full h-4'} flex items-center select-none touch-none`}>
       {/* Track Background */}
       <div 
         className={`absolute left-0 right-0 top-1/2 -translate-y-1/2 ${isMini ? 'h-1' : 'h-1.5'} bg-slate-300 dark:bg-slate-900 rounded-full overflow-hidden`}
@@ -211,8 +211,11 @@ const Player: React.FC = () => {
   }, []);
 
   const effectiveThemeColor = themeColor && !isTooLight(themeColor) ? themeColor : undefined;
-  // Disable theme color for mini player elements in dark mode, as requested
-  const miniPlayerThemeColor = isDark ? undefined : effectiveThemeColor;
+  // Always use the theme color for the mini player progress bar, even in dark mode
+  const miniPlayerThemeColor = effectiveThemeColor;
+  // Determine if we should use dark mode text colors (white/gray) for controls
+  // In dark mode, we always want bright white/gray for contrast
+  const useDarkControls = isDark;
 
   // Use stored theme color from book to avoid flash
   useEffect(() => {
@@ -922,7 +925,7 @@ const Player: React.FC = () => {
             className={`
               h-full ${isWidgetMode ? 'max-w-none rounded-none border-none shadow-none' : 'max-w-7xl mx-auto rounded-2xl sm:rounded-3xl shadow-2xl shadow-black/10 border border-slate-200/50 dark:border-slate-800/50'}
               bg-white/95 dark:bg-slate-900/95 backdrop-blur-md 
-              flex items-center justify-between ${isWidgetMode ? 'px-3 max-[380px]:flex-col max-[380px]:justify-center max-[380px]:gap-1.5 max-[380px]:py-2' : 'px-3 sm:px-6'} pointer-events-auto
+              flex items-center justify-between gap-3 sm:gap-4 ${isWidgetMode ? 'px-3 max-[380px]:flex-col max-[380px]:justify-center max-[380px]:gap-1.5 max-[380px]:py-2' : 'px-3 sm:px-6'} pointer-events-auto
               transition-all duration-300
             `}
             style={{ 
@@ -931,7 +934,7 @@ const Player: React.FC = () => {
             }}
           >
             {/* Info */}
-            <div className={`flex items-center gap-2 sm:gap-3 min-w-0 ${isWidgetMode ? 'max-[380px]:w-full max-[380px]:max-w-none' : ''} max-w-[100px] max-[380px]:max-w-[140px] sm:max-w-[200px] md:max-w-[240px] lg:max-w-[320px] md:flex-none flex-1`}>
+            <div className={`flex items-center gap-2 sm:gap-3 min-w-0 ${isWidgetMode ? 'max-[380px]:w-full max-[380px]:max-w-none' : ''} max-[500px]:max-w-[48px] max-[380px]:max-w-[40px] sm:max-w-[200px] md:max-w-[240px] lg:max-w-[320px] md:flex-none flex-1`}>
               <div 
                 className="w-12 h-12 max-[380px]:w-10 max-[380px]:h-10 sm:w-16 sm:h-16 rounded-lg sm:rounded-xl overflow-hidden shadow-md cursor-pointer shrink-0"
                 onClick={toggleFullscreen}
@@ -946,7 +949,7 @@ const Player: React.FC = () => {
                   }}
                 />
               </div>
-              <div className="min-w-0 flex-1">
+              <div className="min-w-0 flex-1 hidden min-[500px]:block md:block max-[380px]:hidden">
                 <h4 className="font-bold dark:text-white truncate text-sm max-[380px]:text-xs">{currentBook?.title}</h4>
                 <p className="text-slate-500 truncate text-xs max-[380px]:text-[10px]">{currentChapter.title}</p>
               </div>
@@ -962,7 +965,7 @@ const Player: React.FC = () => {
                    currentTime={currentTime}
                    duration={duration}
                    bufferedTime={bufferedTime}
-                  themeColor={isDark ? undefined : themeColor}
+                  themeColor={miniPlayerThemeColor}
                   onSeek={handleSeek}
                    onSeekStart={handleSeekStart}
                    onSeekEnd={handleSeekEnd}
@@ -976,14 +979,14 @@ const Player: React.FC = () => {
                 <button 
                   onClick={prevChapter} 
                   className="text-slate-400 dark:text-slate-300 hover:scale-110 transition-all"
-                  style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                  style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 >
                   <SkipBack size={20} fill="currentColor" />
                 </button>
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
                   className="text-slate-400 dark:text-slate-300 hover:scale-110 transition-all"
-                  style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                  style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 >
                   <RotateCcw size={18} />
                 </button>
@@ -1001,14 +1004,14 @@ const Player: React.FC = () => {
                 <button 
                   onClick={() => { if (audioRef.current) audioRef.current.currentTime += 30; }}
                   className="text-slate-400 dark:text-slate-300 hover:scale-110 transition-all"
-                  style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                  style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 >
                   <RotateCw size={18} />
                 </button>
                 <button 
                   onClick={nextChapter} 
                   className="text-slate-400 dark:text-slate-300 hover:scale-110 transition-all"
-                  style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                  style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 >
                   <SkipForward size={20} fill="currentColor" />
                 </button>
@@ -1023,7 +1026,7 @@ const Player: React.FC = () => {
                   currentTime={currentTime}
                   duration={duration}
                   bufferedTime={bufferedTime}
-                  themeColor={isDark ? undefined : themeColor}
+                  themeColor={miniPlayerThemeColor}
                   onSeek={handleSeek}
                   onSeekStart={handleSeekStart}
                   onSeekEnd={handleSeekEnd}
@@ -1034,7 +1037,7 @@ const Player: React.FC = () => {
 
             {/* Mobile Controls - Only visible on small screens */}
             <div className={`flex md:hidden items-center gap-2 sm:gap-3 flex-1 min-w-0 justify-end ${isWidgetMode ? 'max-[380px]:w-full max-[380px]:justify-center max-[380px]:gap-6 max-[380px]:flex-none' : ''}`}>
-              <div className="flex-1 min-w-0 h-1.5 py-4 block max-[380px]:hidden">
+              <div className={`flex-1 min-w-0 h-1.5 py-4 flex items-center w-full ${isWidgetMode ? 'max-[380px]:hidden' : ''}`}>
                 <ProgressBar 
                   isMini={true} 
                   isSeeking={isSeeking}
@@ -1042,7 +1045,7 @@ const Player: React.FC = () => {
                   currentTime={currentTime}
                   duration={duration}
                   bufferedTime={bufferedTime}
-                  themeColor={isDark ? undefined : themeColor}
+                  themeColor={miniPlayerThemeColor}
                   onSeek={handleSeek}
                   onSeekStart={handleSeekStart}
                   onSeekEnd={handleSeekEnd}
@@ -1053,15 +1056,16 @@ const Player: React.FC = () => {
                   <div className="flex items-center gap-1">
                     <button 
                     onClick={() => { if (audioRef.current) audioRef.current.currentTime -= 15; }}
-                    className="p-1.5 text-slate-400 dark:text-slate-300 transition-colors hover:text-primary-500"
-                    style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                    className={`p-1.5 transition-colors hover:text-primary-500 ${useDarkControls ? 'text-slate-200' : 'text-slate-400 dark:text-slate-300'}`}
+                    style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                   >
                     <RotateCcw size={16} />
                   </button>
                   <button 
                     onClick={prevChapter}
-                    className="p-1.5 text-slate-400 dark:text-slate-300 transition-colors hover:text-primary-500"
-                    style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                    className={`p-1.5 transition-colors hover:text-primary-500 ${useDarkControls ? 'text-slate-200' : 'text-slate-400 dark:text-slate-300'}`}
+                    style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+
                   >
                       <SkipBack size={16} fill="currentColor" />
                     </button>
@@ -1082,15 +1086,15 @@ const Player: React.FC = () => {
                     {/* Always show Next button */}
                     <button 
                       onClick={nextChapter}
-                      className="p-1.5 text-slate-400 dark:text-slate-300 transition-colors hover:text-primary-500"
-                      style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                      className={`p-1.5 transition-colors hover:text-primary-500 ${useDarkControls ? 'text-slate-200' : 'text-slate-400 dark:text-slate-300'}`}
+                      style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                     >
                       <SkipForward size={16} fill="currentColor" />
                     </button>
                     <button 
                       onClick={() => { if (audioRef.current) audioRef.current.currentTime += 30; }}
-                      className="p-1.5 text-slate-400 dark:text-slate-300 transition-colors hover:text-primary-500"
-                      style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                      className={`p-1.5 transition-colors hover:text-primary-500 ${useDarkControls ? 'text-slate-200' : 'text-slate-400 dark:text-slate-300'}`}
+                      style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                     >
                       <RotateCw size={16} />
                     </button>
@@ -1099,8 +1103,8 @@ const Player: React.FC = () => {
                 {!isWidgetMode && (
                   <button 
                     onClick={() => setIsCollapsed(true)}
-                    className="p-2 text-slate-400 dark:text-slate-300 transition-colors"
-                    style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                    className={`p-2 transition-colors ${useDarkControls ? 'text-slate-200 hover:text-white' : 'text-slate-400 dark:text-slate-300'}`}
+                    style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                     title="收起播放器"
                   >
                     <ChevronLeft size={24} />
@@ -1118,8 +1122,8 @@ const Player: React.FC = () => {
                     e.stopPropagation();
                     setShowVolumeControl(!showVolumeControl);
                   }}
-                  className="text-slate-400 dark:text-slate-300 transition-colors p-1 hover:scale-110 flex items-center gap-1"
-                  style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                  className={`transition-colors p-1 hover:scale-110 flex items-center gap-1 ${useDarkControls ? 'text-slate-200 hover:text-white' : 'text-slate-400 dark:text-slate-300'}`}
+                  style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                   title="音量"
                 >
                   {isMuted || volume === 0 ? (
@@ -1170,26 +1174,26 @@ const Player: React.FC = () => {
 
               <button 
                 onClick={() => setPlaybackSpeed(playbackSpeed === 2 ? 1 : playbackSpeed + 0.25)} 
-                className="text-[10px] font-bold px-2 py-1 rounded transition-colors dark:text-slate-300"
+                className={`text-[10px] font-bold px-2 py-1 rounded transition-colors ${useDarkControls ? 'text-slate-200 hover:text-white' : 'dark:text-slate-300'}`}
                 style={{ 
-                  backgroundColor: miniPlayerThemeColor ? setAlpha(miniPlayerThemeColor, 0.1) : undefined,
-                  color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.8)) : undefined
+                  backgroundColor: (miniPlayerThemeColor && !useDarkControls) ? setAlpha(miniPlayerThemeColor, 0.1) : undefined,
+                  color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.8)) : undefined
                 }}
               >
                 {playbackSpeed}x
               </button>
               <button 
                 onClick={() => setIsCollapsed(true)} 
-                className="text-slate-400 dark:text-slate-300 transition-colors p-1 hover:scale-110"
-                style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                className={`transition-colors p-1 hover:scale-110 ${useDarkControls ? 'text-slate-200 hover:text-white' : 'text-slate-400 dark:text-slate-300'}`}
+                style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 title="收起播放器"
               >
                 <ChevronLeft size={20} />
               </button>
               <button 
                 onClick={() => setIsExpanded(true)} 
-                className="text-slate-400 dark:text-slate-300 transition-colors p-1 hover:scale-110"
-                style={{ color: miniPlayerThemeColor ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
+                className={`transition-colors p-1 hover:scale-110 ${useDarkControls ? 'text-slate-200 hover:text-white' : 'text-slate-400 dark:text-slate-300'}`}
+                style={{ color: (miniPlayerThemeColor && !useDarkControls) ? (isLight(miniPlayerThemeColor) ? '#475569' : setAlpha(miniPlayerThemeColor, 0.6)) : undefined }}
                 title="展开播放器"
               >
                 <Maximize2 size={20} />
