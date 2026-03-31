@@ -237,7 +237,7 @@ pub async fn clear_all_caches(
 #[serde(rename_all = "camelCase")]
 pub struct ProxyCoverQuery {
     pub path: String,
-    pub library_id: String,
+    pub library_id: Option<String>,
     pub book_id: Option<String>,
 }
 
