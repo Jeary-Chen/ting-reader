@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import apiClient from '../api/client';
 import type { ScrapeDiff, ChapterChange } from '../types';
 import { X, Save, AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
+import { getCoverUrl } from '../utils/image';
 
 interface Props {
   bookId: string;
@@ -213,7 +214,7 @@ const ScrapeDiffModal: React.FC<Props> = ({ bookId, onClose, onSave }) => {
                 <div className="w-32 h-48 rounded-xl overflow-hidden shadow-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 relative group">
                   {diff.scraped.cover_url ? (
                       <img 
-                        src={diff.scraped.cover_url} 
+                        src={getCoverUrl(diff.scraped.cover_url)} 
                         className="w-full h-full object-cover" 
                         alt="Cover"
                         referrerPolicy="no-referrer"
