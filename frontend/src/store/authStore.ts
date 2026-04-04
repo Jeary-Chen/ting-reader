@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { User } from '../types';
+import { safeStorage } from '../utils/storage';
 
 interface AuthState {
   user: User | null;
@@ -16,35 +17,36 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: JSON.parse(localStorage.getItem('user') || 'null'),
-  token: localStorage.getItem('auth_token'),
-  serverUrl: localStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
-  activeUrl: localStorage.getItem('active_url') || localStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
-  isAuthenticated: !!localStorage.getItem('auth_token'),
+  user: JSON.parse(safeStorage.getItem('user') || 'null'),
+  token: safeStorage.getItem('auth_token'),
+  serverUrl: safeStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
+  activeUrl: safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
+  isAuthenticated: !!safeStorage.getItem('auth_token'),
   setAuth: (user, token) => {
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('user', JSON.stringify(user));
+    safeStorage.setItem('auth_token', token);
+    safeStorage.setItem('user', JSON.stringify(user));
     set({ user, token, isAuthenticated: true });
   },
   setUser: (user) => {
-    localStorage.setItem('user', JSON.stringify(user));
+    safeStorage.setItem('user', JSON.stringify(user));
     set({ user });
   },
   setToken: (token) => {
-    localStorage.setItem('auth_token', token);
+    safeStorage.setItem('auth_token', token);
     set({ token, isAuthenticated: true });
   },
   setServerUrl: (url) => {
-    localStorage.setItem('server_url', url);
+    safeStorage.setItem('server_url', url);
     set({ serverUrl: url });
   },
   setActiveUrl: (url) => {
-    localStorage.setItem('active_url', url);
+    safeStorage.setItem('active_url', url);
     set({ activeUrl: url });
   },
   logout: () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('user');
+    safeStorage.removeItem('auth_token');
+    safeStorage.removeItem('user');
     set({ user: null, token: null, isAuthenticated: false });
   },
 }));
+

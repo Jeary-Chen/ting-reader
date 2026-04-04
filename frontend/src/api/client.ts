@@ -2,9 +2,10 @@ import axios from 'axios';
 import camelcaseKeys from 'camelcase-keys';
 import snakecaseKeys from 'snakecase-keys';
 import { useAuthStore } from '../store/authStore';
+import { safeStorage } from '../utils/storage';
 
 // Initial base URL
-const API_BASE_URL = localStorage.getItem('active_url') || localStorage.getItem('server_url') || (import.meta.env.PROD ? '' : 'http://localhost:3000');
+const API_BASE_URL = safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || (import.meta.env.PROD ? '' : 'http://localhost:3000');
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,

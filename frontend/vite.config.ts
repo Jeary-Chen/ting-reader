@@ -1,11 +1,14 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-
+import legacy from '@vitejs/plugin-legacy'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    legacy({
+      targets: ['defaults', 'not IE 11', 'chrome >= 49', 'safari >= 10'],
+    }),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'pwa-64.png', 'pwa-128.png', 'pwa-192.png', 'pwa-256.png', 'pwa-512.png', 'pwa-*-maskable.png'],
@@ -132,7 +135,6 @@ export default defineConfig({
   ],
   base: '/',
   build: {
-    target: 'es2015',
     outDir: 'dist',
     minify: 'terser',
     sourcemap: false,
@@ -153,7 +155,7 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
+    port: 5173,
     host: true,
   },
   optimizeDeps: {
