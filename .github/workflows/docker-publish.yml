@@ -59,6 +59,8 @@ jobs:
 
   docker:
     needs: prepare
+    # 只在需要构建时运行：workflow_dispatch 或者 release 不存在
+    if: github.event_name == 'workflow_dispatch' || needs.prepare.outputs.release_exists != 'true'
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -83,14 +85,6 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: dqsq2e2/ting-reader
-          tags: |
-            type=raw,value=beta
 
       - name: Build and push by digest
         id: build
@@ -142,27 +136,33 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Create manifest list and push (Beta)
-        if: github.event_name == 'workflow_dispatch' && needs.prepare.outputs.release_exists == 'true'
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create \
-            --tag dqsq2e2/ting-reader:beta \
-            $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
-
-      - name: Create manifest list and push (Release)
-        if: needs.prepare.outputs.release_exists != 'true'
+      - name: Create manifest list and push
         working-directory: /tmp/digests
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          docker buildx imagetools create \
-            --tag dqsq2e2/ting-reader:latest \
-            --tag dqsq2e2/ting-reader:$VERSION \
-            $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
+          
+          # 如果是手动触发且 release 已存在，构建 beta
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ needs.prepare.outputs.release_exists }}" = "true" ]; then
+            echo "Building beta image..."
+            docker buildx imagetools create \
+              --tag dqsq2e2/ting-reader:beta \
+              $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
+          else
+            # 否则构建正式版本
+            echo "Building release images for version $VERSION..."
+            docker buildx imagetools create \
+              --tag dqsq2e2/ting-reader:latest \
+              --tag dqsq2e2/ting-reader:$VERSION \
+              $(printf 'dqsq2e2/ting-reader@sha256:%s ' *)
+          fi
 
       - name: Inspect image
         run: |
-          docker buildx imagetools inspect dqsq2e2/ting-reader:${{ needs.prepare.outputs.release_exists == 'true' && 'beta' || needs.prepare.outputs.version }}
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ needs.prepare.outputs.release_exists }}" = "true" ]; then
+            docker buildx imagetools inspect dqsq2e2/ting-reader:beta
+          else
+            docker buildx imagetools inspect dqsq2e2/ting-reader:${{ needs.prepare.outputs.version }}
+          fi
 
   release:
     needs: [prepare, merge]
