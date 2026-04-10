@@ -314,7 +314,8 @@ const Player: React.FC = () => {
 
   const tryTranscodeFallback = () => {
     if (shouldTranscode || retryCount >= 3) return;
-    setError('检测到浏览器兼容性问题，正在切换兼容音频流...');
+    // Silently retry with transcoding, no need to show error message
+    // setError('检测到浏览器兼容性问题，正在切换兼容音频流...');
     setShouldTranscode(true);
     setRetryCount(prev => prev + 1);
     isInitialLoadRef.current = true;
