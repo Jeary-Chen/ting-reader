@@ -409,7 +409,7 @@ impl LibraryScanner {
         // 4. Create/Update Book
         let book_id = existing_book_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         
-        let book = crate::db::models::Book {
+        let mut book = crate::db::models::Book {
             id: book_id.clone(),
             library_id: library_id.to_string(),
             title: Some(title.clone()),
@@ -432,6 +432,10 @@ impl LibraryScanner {
 
         let status = if let Ok(Some(existing)) = self.book_repo.find_by_id(&book_id).await {
             if existing.manual_corrected == 0 {
+                // Preserve chapter_regex from existing book if not set in metadata
+                if book.chapter_regex.is_none() && existing.chapter_regex.is_some() {
+                    book.chapter_regex = existing.chapter_regex;
+                }
                 self.book_repo.update(&book).await?;
                 ScanStatus::Updated
             } else {

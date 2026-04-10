@@ -123,20 +123,58 @@ impl LibraryScanner {
 
             // Incremental Check: Skip if book exists and no files modified since last scan
             if let (Some((id, _, _)), Some(last_scan_time)) = (&existing_info, last_scanned) {
+                // Check if file count changed (new files added or removed)
+                let current_file_count = file_urls.len();
+                let existing_chapter_count = self.chapter_repo.find_by_book(id).await
+                    .map(|chapters| chapters.len())
+                    .unwrap_or(0);
+                
                 // Determine latest modification time in this directory
                 let max_mtime = file_entries.iter()
                     .filter_map(|(_, mtime)| *mtime)
                     .max();
                 
-                if let Some(latest) = max_mtime {
-                    if latest <= last_scan_time {
-                        // Book exists and is up to date
-                        scan_result.total_books += 1;
-                        scan_result.books_skipped += 1;
-                        found_book_ids.insert(id.clone());
-                        debug!(book_id = %id, url = %dir_url, "Skipping up-to-date WebDAV book");
-                        continue;
+                let mtime_count = file_entries.iter().filter(|(_, mtime)| mtime.is_some()).count();
+                
+                info!(
+                    book_id = %id, 
+                    url = %dir_url, 
+                    max_mtime = ?max_mtime, 
+                    last_scan_time = %last_scan_time,
+                    total_files = file_entries.len(),
+                    files_with_mtime = mtime_count,
+                    current_file_count = current_file_count,
+                    existing_chapter_count = existing_chapter_count,
+                    "Checking if WebDAV book needs update"
+                );
+                
+                // Skip only if:
+                // 1. File count hasn't changed AND
+                // 2. No files have been modified since last scan
+                if current_file_count == existing_chapter_count {
+                    if let Some(latest) = max_mtime {
+                        if latest <= last_scan_time {
+                            // Book exists and is up to date
+                            scan_result.total_books += 1;
+                            scan_result.books_skipped += 1;
+                            found_book_ids.insert(id.clone());
+                            info!(book_id = %id, url = %dir_url, "Skipping up-to-date WebDAV book");
+                            continue;
+                        } else {
+                            info!(book_id = %id, url = %dir_url, "WebDAV book has newer files, will update");
+                        }
+                    } else {
+                        // No modification times available, force update
+                        info!(book_id = %id, url = %dir_url, "No modification times available, will process book");
                     }
+                } else {
+                    info!(
+                        book_id = %id, 
+                        url = %dir_url, 
+                        "File count changed ({} -> {}), will process book", 
+                        existing_chapter_count,
+                        current_file_count
+                    );
                 }
             }
 
@@ -275,11 +313,23 @@ impl LibraryScanner {
                                     queue.push_back(item_url);
                                 }
                             } else {
-                                // Parse last modified
+                                // Parse last modified - try multiple formats
                                 let dt = if let Some(lm) = last_mod {
+                                    // Try RFC 2822 first (e.g., "Mon, 15 Aug 2005 15:52:01 +0000")
                                     chrono::DateTime::parse_from_rfc2822(&lm)
                                         .map(|dt| dt.with_timezone(&chrono::Utc))
                                         .ok()
+                                        .or_else(|| {
+                                            // Try RFC 3339 / ISO 8601 (e.g., "2005-08-15T15:52:01Z")
+                                            chrono::DateTime::parse_from_rfc3339(&lm)
+                                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                                .ok()
+                                        })
+                                        .or_else(|| {
+                                            // Log parsing failure for debugging
+                                            debug!("Failed to parse WebDAV last modified time: {}", lm);
+                                            None
+                                        })
                                 } else {
                                     None
                                 };
@@ -611,6 +661,7 @@ impl LibraryScanner {
                 book.tags = existing_book.tags;
                 book.cover_url = existing_book.cover_url;
                 book.theme_color = existing_book.theme_color;
+                book.chapter_regex = existing_book.chapter_regex;
             }
         }
 
@@ -701,13 +752,23 @@ impl LibraryScanner {
         // Check if existing book (by ID check above)
         if existing_info.is_some() {
              if !manual_corrected {
+                 // Preserve chapter_regex from existing book if not set in metadata
+                 if book.chapter_regex.is_none() {
+                     if let Ok(Some(existing)) = self.book_repo.find_by_id(&book_id).await {
+                         book.chapter_regex = existing.chapter_regex;
+                     }
+                 }
                  self.book_repo.update(&book).await?;
                  status = ScanStatus::Updated;
              } else {
                  status = ScanStatus::Skipped;
              }
-        } else if let Ok(Some(_)) = self.book_repo.find_by_id(&book_id).await {
+        } else if let Ok(Some(existing)) = self.book_repo.find_by_id(&book_id).await {
              if !manual_corrected {
+                 // Preserve chapter_regex from existing book if not set in metadata
+                 if book.chapter_regex.is_none() {
+                     book.chapter_regex = existing.chapter_regex;
+                 }
                  self.book_repo.update(&book).await?;
                  status = ScanStatus::Updated;
              } else {
