@@ -21,6 +21,7 @@ pub struct Book {
     pub hash: String,
     pub tags: Option<String>,
     pub genre: Option<String>,
+    pub year: Option<i32>,
     pub created_at: String,
     // V5 Migration
     #[serde(default)]

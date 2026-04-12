@@ -268,7 +268,7 @@ impl SeriesRepository {
         self.db.execute(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT b.id, b.library_id, b.title, b.author, b.narrator, b.cover_url, b.theme_color, \
-                 b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.created_at, \
+                 b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.year, b.created_at, \
                  b.manual_corrected, b.match_pattern, b.chapter_regex, sb.book_order \
                  FROM books b \
                  JOIN series_books sb ON b.id = sb.book_id \
@@ -292,12 +292,13 @@ impl SeriesRepository {
                     hash: row.get(11)?,
                     tags: row.get(12)?,
                     genre: row.get(13)?,
-                    created_at: row.get(14)?,
-                    manual_corrected: row.get(15).unwrap_or(0),
-                    match_pattern: row.get(16).unwrap_or(None),
-                    chapter_regex: row.get(17).unwrap_or(None),
+                    year: row.get(14)?,
+                    created_at: row.get(15)?,
+                    manual_corrected: row.get(16).unwrap_or(0),
+                    match_pattern: row.get(17).unwrap_or(None),
+                    chapter_regex: row.get(18).unwrap_or(None),
                 };
-                let order: i32 = row.get(18)?;
+                let order: i32 = row.get(19)?;
                 Ok((book, order))
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -318,7 +319,7 @@ impl SeriesRepository {
         let user_id = user_id.to_string();
         self.db.execute(move |conn| {
             let mut query = "SELECT b.id, b.library_id, b.title, b.author, b.narrator, b.cover_url, b.theme_color, \
-                             b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.created_at, \
+                             b.description, b.skip_intro, b.skip_outro, b.path, b.hash, b.tags, b.genre, b.year, b.created_at, \
                              b.manual_corrected, b.match_pattern, b.chapter_regex, sb.book_order \
                              FROM books b \
                              JOIN series_books sb ON b.id = sb.book_id \
@@ -355,12 +356,13 @@ impl SeriesRepository {
                     hash: row.get(11)?,
                     tags: row.get(12)?,
                     genre: row.get(13)?,
-                    created_at: row.get(14)?,
-                    manual_corrected: row.get(15).unwrap_or(0),
-                    match_pattern: row.get(16).unwrap_or(None),
-                    chapter_regex: row.get(17).unwrap_or(None),
+                    year: row.get(14)?,
+                    created_at: row.get(15)?,
+                    manual_corrected: row.get(16).unwrap_or(0),
+                    match_pattern: row.get(17).unwrap_or(None),
+                    chapter_regex: row.get(18).unwrap_or(None),
                 };
-                let order: i32 = row.get(18)?;
+                let order: i32 = row.get(19)?;
                 Ok((book, order))
             }).map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()

@@ -295,6 +295,13 @@ CREATE INDEX IF NOT EXISTS idx_progress_user_id ON progress(user_id);
 CREATE INDEX IF NOT EXISTS idx_progress_updated_at ON progress(user_id, updated_at);
 "#;
 
+/// Twelfth schema migration (version 12)
+const MIGRATION_V12: &str = r#"
+-- Add year field to books
+ALTER TABLE books ADD COLUMN year INTEGER;
+CREATE INDEX IF NOT EXISTS idx_books_year ON books(year);
+"#;
+
 /// Run all pending database migrations
 ///
 /// This function applies database schema migrations in order.
@@ -399,6 +406,11 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     if current_version < 11 {
         info!("Applying migration v11: Fix progress constraint");
         apply_migration(conn, 11, MIGRATION_V11)?;
+    }
+
+    if current_version < 12 {
+        info!("Applying migration v12: Add year field");
+        apply_migration(conn, 12, MIGRATION_V12)?;
     }
 
     info!("数据库迁移成功完成");

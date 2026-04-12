@@ -133,6 +133,7 @@ pub struct UpdateBookRequest {
     pub theme_color: Option<String>,
     pub description: Option<String>,
     pub genre: Option<String>,
+    pub year: Option<i32>,
     pub skip_intro: Option<i32>,
     pub skip_outro: Option<i32>,
     pub path: Option<String>,
@@ -161,6 +162,7 @@ pub struct BookResponse {
     pub hash: String,
     pub tags: Option<String>,
     pub genre: Option<String>,
+    pub year: Option<i32>,
     pub created_at: String,
     pub library_type: Option<String>,
     pub is_favorite: bool,
@@ -186,6 +188,7 @@ impl From<Book> for BookResponse {
             hash: book.hash,
             tags: book.tags,
             genre: book.genre,
+            year: book.year,
             created_at: book.created_at,
             library_type: None, // To be filled by handler
             is_favorite: false, // To be filled by handler

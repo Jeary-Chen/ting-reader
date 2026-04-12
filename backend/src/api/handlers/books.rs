@@ -109,6 +109,7 @@ pub async fn create_book(
         hash: req.hash,
         tags: req.tags,
         genre: None,
+        year: None,
         created_at,
         manual_corrected: 0,
         match_pattern: None,
@@ -247,6 +248,7 @@ pub async fn update_book(
         hash: req.hash.unwrap_or(existing_book.hash),
         tags: req.tags.or(existing_book.tags),
         genre: req.genre.or(existing_book.genre),
+        year: req.year.or(existing_book.year),
         created_at: existing_book.created_at,
         manual_corrected: existing_book.manual_corrected,
         match_pattern: existing_book.match_pattern,
@@ -324,6 +326,7 @@ pub async fn update_book(
             metadata_json.description = updated_book.description.clone();
             metadata_json.genres = updated_book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             metadata_json.tags = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.published_year = updated_book.year.map(|y| y.to_string());
             
             // Sync chapters from DB
             let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
@@ -525,6 +528,7 @@ pub async fn scrape_book(
             metadata_json.description = updated_book.description.clone();
             metadata_json.genres = updated_book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             metadata_json.tags = updated_book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.published_year = updated_book.year.map(|y| y.to_string());
             
             // Subtitle is now in metadata.json but not in Book struct, so we preserve what was read.
             // If request had extended fields (not supported in UpdateBookRequest yet), we would update them here.
@@ -1300,6 +1304,7 @@ pub async fn apply_scrape_result(
             metadata_json.description = book.description.clone();
             metadata_json.genres = book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
             metadata_json.tags = book.tags.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default();
+            metadata_json.published_year = book.year.map(|y| y.to_string());
             
             // Sync chapters from DB
             let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());

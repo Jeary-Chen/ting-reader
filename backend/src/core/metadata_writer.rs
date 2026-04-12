@@ -60,6 +60,11 @@ impl AudiobookshelfMetadata {
         let tags_vec: Vec<String> = book.tags.clone()
             .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect())
             .unwrap_or_default();
+        
+        // Use book.year if available, otherwise fall back to extended.published_year
+        let published_year = book.year
+            .map(|y| y.to_string())
+            .or(extended.published_year);
             
         Self {
             tags: tags_vec,
@@ -70,7 +75,7 @@ impl AudiobookshelfMetadata {
             narrators: book.narrator.clone().map(|s| vec![s]).unwrap_or_default(),
             series,
             genres: book.genre.clone().map(|s| s.split(',').map(|t| t.trim().to_string()).collect()).unwrap_or_default(),
-            published_year: extended.published_year,
+            published_year,
             published_date: extended.published_date,
             publisher: extended.publisher,
             description: book.description.clone(),

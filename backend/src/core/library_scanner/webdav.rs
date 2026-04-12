@@ -645,6 +645,7 @@ impl LibraryScanner {
             skip_outro: 0,
             tags: None,
             genre: None,
+            year: published_year.as_ref().and_then(|y| y.parse::<i32>().ok()),
             manual_corrected: if manual_corrected { 1 } else { 0 },
             match_pattern: None,
             chapter_regex: None,

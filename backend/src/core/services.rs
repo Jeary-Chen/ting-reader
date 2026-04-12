@@ -95,6 +95,7 @@ impl BookService {
             hash: request.hash,
             tags: request.tags,
             genre: None,
+            year: None,
             created_at: now,
             manual_corrected: 0,
             match_pattern: None,

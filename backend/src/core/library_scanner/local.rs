@@ -425,6 +425,7 @@ impl LibraryScanner {
             skip_outro: 0,
             tags: tags.clone(),
             genre: genre.clone(),
+            year: published_year.as_ref().and_then(|y| y.parse::<i32>().ok()),
             manual_corrected: if is_manual_corrected { 1 } else { 0 },
             match_pattern: None,
             chapter_regex: None,
