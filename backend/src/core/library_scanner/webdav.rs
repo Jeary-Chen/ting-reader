@@ -545,9 +545,70 @@ impl LibraryScanner {
         let mut json_tags: Vec<String> = Vec::new();
         let mut json_series: Vec<String> = Vec::new();
         
-        // Extract metadata from WebDAV file (first file)
+        // Extract metadata from WebDAV files (try multiple files if needed)
         let (mut meta_album, mut _meta_chapter_title, mut meta_author, mut meta_narrator, mut meta_cover_url, _meta_duration) = if !file_urls.is_empty() {
-            self.extract_webdav_metadata(library, &file_urls[0], Some(&temp_book_dir), scraper_config.extract_audio_cover).await
+            // 尝试多个文件，直到找到完整的元数据（包括封面）
+            let mut album = String::new();
+            let mut title = String::new();
+            let mut author = None;
+            let mut narrator = None;
+            let mut cover_url = None;
+            let mut duration = 0;
+            
+            let max_files = std::cmp::min(file_urls.len(), 3); // 最多尝试 3 个文件
+            
+            for (index, file_url) in file_urls.iter().take(max_files).enumerate() {
+                let (a, t, au, n, c, d) = self.extract_webdav_metadata(
+                    library, 
+                    file_url, 
+                    if index == 0 { Some(&temp_book_dir) } else { None }, // 只在第一个文件时保存封面到目录
+                    scraper_config.extract_audio_cover
+                ).await;
+                
+                if index == 0 {
+                    tracing::debug!("从第一个 WebDAV 文件提取元数据");
+                } else {
+                    tracing::debug!("从第 {} 个 WebDAV 文件补充元数据", index + 1);
+                }
+                
+                // 只在第一个文件或缺失时提取基本元数据
+                if index == 0 || album.is_empty() {
+                    if !a.is_empty() { album = a; }
+                }
+                if index == 0 || title.is_empty() {
+                    if !t.is_empty() { title = t; }
+                }
+                if index == 0 || author.is_none() {
+                    if au.is_some() { author = au; }
+                }
+                if index == 0 || narrator.is_none() {
+                    if n.is_some() { narrator = n; }
+                }
+                if index == 0 {
+                    duration = d;
+                }
+                
+                // 封面：如果还没有找到，继续尝试
+                if scraper_config.extract_audio_cover && cover_url.is_none() {
+                    if c.is_some() {
+                        cover_url = c;
+                        if index > 0 {
+                            tracing::info!("从第 {} 个 WebDAV 文件中找到封面", index + 1);
+                        }
+                    }
+                }
+                
+                // 如果已经找到了所有需要的元数据，就停止
+                let has_basic_metadata = !album.is_empty() || author.is_some();
+                let has_cover_if_needed = !scraper_config.extract_audio_cover || cover_url.is_some();
+                
+                if has_basic_metadata && has_cover_if_needed {
+                    tracing::debug!("已找到完整 WebDAV 元数据，停止尝试其他文件");
+                    break;
+                }
+            }
+            
+            (album, title, author, narrator, cover_url, duration)
         } else {
              (String::new(), String::new(), None, None, None, 0)
         };
@@ -1242,82 +1303,140 @@ impl LibraryScanner {
                     }
                     
                     // Extract metadata
-                    // 1. Try explicit ID3 extraction for MP3 (robust for partial files)
                     let mut album = String::new();
                     let mut title = String::new();
                     let mut author = None;
                     let mut narrator = None;
                     let mut duration = 0;
-                    
                     let mut cover_url = None;
                     
-                    // Try reading ID3 tag directly (works better for partial files than symphonia)
-                    if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
-                        debug!("ID3 extraction successful for WebDAV temp file");
-                        if let Some(t) = tag.album() { 
-                            if !t.trim().is_empty() { album = t.to_string(); }
-                        }
-                        if let Some(t) = tag.title() { 
-                            if !t.trim().is_empty() { title = t.to_string(); }
-                        }
-                        
-                        // Author logic: Album Artist > Artist
-                        if let Some(t) = tag.album_artist() { 
-                            if !t.trim().is_empty() { author = Some(t.to_string()); }
-                        }
-                        
-                        if let Some(t) = tag.artist() {
-                             if !t.trim().is_empty() {
-                                 if author.is_none() {
-                                     author = Some(t.to_string());
-                                 } else if author.as_deref() != Some(t) {
-                                     // If we have an author (AlbumArtist) and Artist is different, treat as Narrator
-                                     narrator = Some(t.to_string());
-                                 }
-                             }
-                        }
-                        
-                        // Duration from TLEN?
-                        if let Some(d) = tag.duration() {
-                            duration = (d / 1000) as i32;
-                        }
-                    }
-
-                    // 2. Fallback to standard extraction (might fail for partial files, but handles other formats/plugins)
-                    // Only run if we missed key metadata or need to extract cover
-                    if album.is_empty() || title.is_empty() || (extract_cover && cover_url.is_none()) {
-                         let (a, t, au, n, c, _d) = self.extract_chapter_metadata(&temp_path).await;
-                         if album.is_empty() { album = a; }
-                         if title.is_empty() { title = t; }
-                         if author.is_none() { author = au; }
-                         if narrator.is_none() { narrator = n; }
-                         // Don't use duration from partial file, we'll use FFprobe instead
-                         // if duration == 0 { duration = d; }
-                         if cover_url.is_none() { cover_url = c; }
-                    }
-                    
-                    // 3. Smart duration strategy for WebDAV files
-                    // For MP3: prefer ID3, for others: compare ID3 with estimation
                     let ext = file_url.split('.').last().unwrap_or("").to_lowercase();
                     let mut use_ffprobe = false;
                     
-                    if ext == "mp3" {
-                        // MP3: use ID3 if available, otherwise FFprobe
-                        if duration == 0 {
-                            use_ffprobe = true;
+                    // 策略：优先使用格式插件处理所有格式（包括 MP3/M4A/WMA/FLAC 等）
+                    // 格式插件使用 lofty 等库，对部分文件支持更好，不会报 "end of stream" 错误
+                    
+                    // 1. 查找支持该格式的插件
+                    let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
+                    let mut plugin_handled = false;
+                    
+                    for plugin in plugins {
+                        // 检查插件是否声明支持该扩展名
+                        let supports_ext = plugin.supported_extensions.as_ref()
+                            .map(|exts| exts.iter().any(|e| e.eq_ignore_ascii_case(&ext)))
+                            .unwrap_or(false);
+                        
+                        if !supports_ext {
+                            continue;
                         }
-                    } else {
-                        // Other formats: check if ID3 duration seems reasonable
-                        if duration > 0 {
-                            // Estimate duration based on file size (if available from WebDAV)
-                            // For now, trust ID3 if present, but we could add size-based validation here
-                            tracing::debug!("使用 ID3 时长 {} 秒 for WebDAV file: {}", duration, file_url);
-                        } else {
-                            use_ffprobe = true;
+                        
+                        // 交由格式插件处理
+                        let params = serde_json::json!({
+                            "file_path": temp_path.to_string_lossy(),
+                            "extract_cover": extract_cover
+                        });
+                        
+                        if let Ok(result) = self.plugin_manager.call_format(&plugin.id, FormatMethod::ExtractMetadata, params).await {
+                            tracing::debug!("使用格式插件 {} 处理 {} 文件", plugin.name, ext);
+                            
+                            // 提取元数据
+                            if let Some(a) = result.get("album").and_then(|v| v.as_str()) {
+                                if !a.trim().is_empty() { album = a.to_string(); }
+                            }
+                            if let Some(t) = result.get("title").and_then(|v| v.as_str()) {
+                                if !t.trim().is_empty() { title = t.to_string(); }
+                            }
+                            if let Some(au) = result.get("author").and_then(|v| v.as_str()) {
+                                if !au.trim().is_empty() { author = Some(au.to_string()); }
+                            }
+                            if let Some(n) = result.get("narrator").and_then(|v| v.as_str()) {
+                                if !n.trim().is_empty() { narrator = Some(n.to_string()); }
+                            }
+                            if let Some(dur) = result.get("duration").and_then(|v| v.as_f64()) {
+                                duration = dur.round() as i32;
+                                if duration > 0 {
+                                    tracing::debug!("格式插件 {} 获取到时长: {} 秒", plugin.name, duration);
+                                }
+                            }
+                            if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
+                                if !c.trim().is_empty() { cover_url = Some(c.to_string()); }
+                            }
+                            
+                            plugin_handled = true;
+                            break;
                         }
                     }
                     
-                    // Use FFprobe when needed (fallback or validation)
+                    // 2. 如果没有插件处理，且是 MP3 文件，尝试使用 ID3 库（对部分文件支持好）
+                    if !plugin_handled && ext == "mp3" {
+                        if let Ok(tag) = id3::Tag::read_from_path(&temp_path) {
+                            debug!("使用 ID3 库处理 MP3 文件");
+                            if let Some(t) = tag.album() { 
+                                if !t.trim().is_empty() { album = t.to_string(); }
+                            }
+                            if let Some(t) = tag.title() { 
+                                if !t.trim().is_empty() { title = t.to_string(); }
+                            }
+                            
+                            // Author logic: Album Artist > Artist
+                            if let Some(t) = tag.album_artist() { 
+                                if !t.trim().is_empty() { author = Some(t.to_string()); }
+                            }
+                            
+                            if let Some(t) = tag.artist() {
+                                 if !t.trim().is_empty() {
+                                     if author.is_none() {
+                                         author = Some(t.to_string());
+                                     } else if author.as_deref() != Some(t) {
+                                         narrator = Some(t.to_string());
+                                     }
+                                 }
+                            }
+                            
+                            if let Some(d) = tag.duration() {
+                                duration = (d / 1000) as i32;
+                            }
+                        }
+                    }
+                    
+                    // 注意：不再调用 extract_chapter_metadata，因为它使用 Symphonia
+                    // 对部分文件会报 "end of stream" 错误
+                    
+                    // 3. 验证时长合理性：与文件大小估算比对
+                    if duration > 0 {
+                        // 获取文件大小（通过之前的 WebDAV 请求已经获取）
+                        // 我们可以发起一个 HEAD 请求或者使用 Range 请求获取
+                        if let Ok((_, file_size)) = storage.get_webdav_reader(library, file_url, Some((0, 1)), key).await {
+                            if file_size > 0 {
+                                // 根据文件大小和格式估算时长
+                                let estimated_duration = self.estimate_duration_by_size(file_size, &ext);
+                                
+                                if estimated_duration > 0 {
+                                    let diff_ratio = (duration as f64 - estimated_duration as f64).abs() / estimated_duration as f64;
+                                    
+                                    if diff_ratio > 0.15 {
+                                        // 差距超过15%，时长可能不准确，需要用 FFprobe 验证
+                                        tracing::warn!(
+                                            "WebDAV 文件 {} 时长差距过大 (探测: {} 秒, 估算: {} 秒, 差距: {:.1}%), 将使用 FFprobe",
+                                            file_url, duration, estimated_duration, diff_ratio * 100.0
+                                        );
+                                        use_ffprobe = true;
+                                    } else {
+                                        tracing::debug!(
+                                            "WebDAV 文件 {} 时长验证通过 (探测: {} 秒, 估算: {} 秒, 差距: {:.1}%)",
+                                            file_url, duration, estimated_duration, diff_ratio * 100.0
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // 无法从部分文件中获取时长，需要 FFprobe
+                        use_ffprobe = true;
+                        tracing::debug!("无法从部分文件获取 {} 时长，将使用 FFprobe", ext);
+                    }
+                    
+                    // 4. Use FFprobe when needed (fallback or validation)
                     if use_ffprobe {
                         if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
                             let ffprobe_path = {
@@ -1334,53 +1453,53 @@ impl LibraryScanner {
                                 }
                             };
                         
-                        if let Some(ffprobe) = ffprobe_path {
-                            // Add small delay before FFprobe to avoid overwhelming the server
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            
-                            // Build WebDAV URL with authentication
-                            let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
-                                url::Url::parse(file_url).ok()
-                            } else {
-                                None
-                            };
-                            
-                            if let Some(mut url) = webdav_url {
-                                // Add authentication to URL if present
-                                if let (Some(username), Some(password)) = (&library.username, &library.password) {
-                                    let decrypted_password = crate::core::crypto::decrypt(password, key)
-                                        .unwrap_or_else(|_| password.clone());
-                                    url.set_username(username).ok();
-                                    url.set_password(Some(&decrypted_password)).ok();
-                                }
+                            if let Some(ffprobe) = ffprobe_path {
+                                // Add small delay before FFprobe to avoid overwhelming the server
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                                 
-                                let url_str = url.to_string();
+                                // Build WebDAV URL with authentication
+                                let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
+                                    url::Url::parse(file_url).ok()
+                                } else {
+                                    None
+                                };
                                 
-                                match tokio::process::Command::new(&ffprobe)
-                                    .arg("-v").arg("error")
-                                    .arg("-show_entries").arg("format=duration")
-                                    .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
-                                    .arg(&url_str)
-                                    .output()
-                                    .await
-                                {
-                                    Ok(output) if output.status.success() => {
-                                        let duration_str = String::from_utf8_lossy(&output.stdout);
-                                        if let Ok(dur) = duration_str.trim().parse::<f64>() {
-                                            duration = dur.round() as i32;
-                                            debug!("FFprobe 获取 WebDAV 文件时长: {} 秒 ({})", duration, ext);
+                                if let Some(mut url) = webdav_url {
+                                    // Add authentication to URL if present
+                                    if let (Some(username), Some(password)) = (&library.username, &library.password) {
+                                        let decrypted_password = crate::core::crypto::decrypt(password, key)
+                                            .unwrap_or_else(|_| password.clone());
+                                        url.set_username(username).ok();
+                                        url.set_password(Some(&decrypted_password)).ok();
+                                    }
+                                    
+                                    let url_str = url.to_string();
+                                    
+                                    match tokio::process::Command::new(&ffprobe)
+                                        .arg("-v").arg("error")
+                                        .arg("-show_entries").arg("format=duration")
+                                        .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                                        .arg(&url_str)
+                                        .output()
+                                        .await
+                                    {
+                                        Ok(output) if output.status.success() => {
+                                            let duration_str = String::from_utf8_lossy(&output.stdout);
+                                            if let Ok(dur) = duration_str.trim().parse::<f64>() {
+                                                duration = dur.round() as i32;
+                                                debug!("FFprobe 获取 WebDAV 文件时长: {} 秒 ({})", duration, ext);
+                                            }
                                         }
-                                    }
-                                    Ok(output) => {
-                                        debug!("FFprobe 获取 WebDAV 时长失败: {}", String::from_utf8_lossy(&output.stderr));
-                                    }
-                                    Err(e) => {
-                                        debug!("无法运行 FFprobe: {}", e);
+                                        Ok(output) => {
+                                            debug!("FFprobe 获取 WebDAV 时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                                        }
+                                        Err(e) => {
+                                            debug!("无法运行 FFprobe: {}", e);
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
                     }
                     
                     if !extract_cover {

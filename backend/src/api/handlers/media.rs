@@ -455,47 +455,62 @@ pub async fn stream_chapter(
                 ffmpeg_dir.join("ffprobe.exe").to_string_lossy().to_string()
             };
             
-            // Get duration from URL using FFprobe
-            tracing::info!("使用 FFprobe 获取音频时长...");
-            
-            // Add delay to avoid overwhelming the server
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-            
-            let duration_output = Command::new(&ffprobe_path)
-                .arg("-v").arg("error")
-                .arg("-show_entries").arg("format=duration")
-                .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
-                .arg(&url)
-                .output()
-                .await;
-            
-            let duration_seconds = if let Ok(output) = duration_output {
-                if output.status.success() {
-                    let duration_str = String::from_utf8_lossy(&output.stdout);
-                    duration_str.trim().parse::<f64>().ok()
+            // 优先使用数据库中的时长，避免重复调用 FFprobe
+            let duration_seconds = if let Some(db_duration) = chapter.duration {
+                if db_duration > 0 {
+                    tracing::debug!("使用数据库中的时长: {} 秒", db_duration);
+                    Some(db_duration as f64)
                 } else {
-                    tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
                     None
                 }
             } else {
-                tracing::warn!("无法运行 FFprobe");
                 None
             };
             
-            if let Some(dur) = duration_seconds {
-                tracing::info!("音频时长: {:.2} 秒", dur);
+            // 只有在数据库中没有时长时才使用 FFprobe
+            let duration_seconds = if duration_seconds.is_none() {
+                tracing::info!("数据库中无时长信息，使用 FFprobe 获取音频时长...");
                 
-                // Update chapter duration in database if significantly different
-                if let Ok(Some(mut chapter_record)) = state.chapter_repo.find_by_id(&chapter_id).await {
-                    let db_duration = chapter_record.duration.unwrap_or(0);
-                    let new_duration = dur.round() as i32;
-                    if (db_duration - new_duration).abs() > 2 {
-                        tracing::info!("更新章节时长: {} -> {} 秒", db_duration, new_duration);
-                        chapter_record.duration = Some(new_duration);
-                        let _ = state.chapter_repo.update(&chapter_record).await;
+                // Add delay to avoid overwhelming the server
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                
+                let duration_output = Command::new(&ffprobe_path)
+                    .arg("-v").arg("error")
+                    .arg("-show_entries").arg("format=duration")
+                    .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                    .arg(&url)
+                    .output()
+                    .await;
+                
+                if let Ok(output) = duration_output {
+                    if output.status.success() {
+                        let duration_str = String::from_utf8_lossy(&output.stdout);
+                        let dur = duration_str.trim().parse::<f64>().ok();
+                        
+                        if let Some(d) = dur {
+                            tracing::info!("FFprobe 获取到时长: {:.2} 秒", d);
+                            
+                            // 更新数据库中的时长
+                            if let Ok(Some(mut chapter_record)) = state.chapter_repo.find_by_id(&chapter_id).await {
+                                let new_duration = d.round() as i32;
+                                tracing::info!("更新章节时长到数据库: {} 秒", new_duration);
+                                chapter_record.duration = Some(new_duration);
+                                let _ = state.chapter_repo.update(&chapter_record).await;
+                            }
+                        }
+                        
+                        dur
+                    } else {
+                        tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                        None
                     }
+                } else {
+                    tracing::warn!("无法运行 FFprobe");
+                    None
                 }
-            }
+            } else {
+                duration_seconds
+            };
             
             tracing::info!("使用 FFmpeg 直接从 URL 读取: {}", ffmpeg_path);
             

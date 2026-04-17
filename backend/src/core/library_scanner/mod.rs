@@ -309,8 +309,11 @@ impl LibraryScanner {
                     // Add small delay to avoid overwhelming the server
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     
+                    // Add User-Agent and other headers to avoid being blocked
                     match tokio::process::Command::new(&ffprobe)
                         .arg("-v").arg("error")
+                        .arg("-user_agent").arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .arg("-headers").arg("Accept: */*")
                         .arg("-show_entries").arg("format=duration")
                         .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
                         .arg(&url)
@@ -354,14 +357,80 @@ impl LibraryScanner {
             return (String::new(), t, None, None, None, duration);
         }
 
-        // Smart duration extraction strategy
-        let mut duration = 0i32;
-        let file_size = tokio::fs::metadata(path).await
-            .map(|m| m.len())
-            .unwrap_or(0);
+        // Smart metadata extraction strategy
+        // 策略：优先使用格式插件（支持更多格式，对部分文件更友好）
+        // 只有在插件不支持时才回退到 Symphonia
         
-        // Try Audio (Skip for non-standard/encrypted files as standard reader fails)
-        if is_standard {
+        let mut duration = 0i32;
+        let mut album = String::new();
+        let mut title = String::new();
+        let mut author = None;
+        let mut narrator = None;
+        let mut cover_url = None;
+        
+        // 1. 优先尝试格式插件
+        let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
+        let mut plugin_handled = false;
+        
+        for plugin in plugins {
+            // 检查插件是否声明支持该扩展名
+            let supports_ext = plugin.supported_extensions.as_ref()
+                .map(|exts| exts.iter().any(|e| e.eq_ignore_ascii_case(&ext)))
+                .unwrap_or(false);
+            
+            if !supports_ext {
+                continue;
+            }
+
+            let params = serde_json::json!({
+                "file_path": path.to_string_lossy(),
+                "extract_cover": false
+            });
+            
+            // 交由格式插件处理
+            if let Ok(result) = self.plugin_manager.call_format(
+                &plugin.id, 
+                FormatMethod::ExtractMetadata, 
+                params
+            ).await {
+                tracing::debug!("使用格式插件 {} 处理 {} 文件", plugin.name, ext);
+                
+                if let Some(t) = result.get("title").and_then(|v| v.as_str()) {
+                    if !t.trim().is_empty() { title = t.to_string(); }
+                }
+                if let Some(a) = result.get("album").and_then(|v| v.as_str()) {
+                    if !a.trim().is_empty() { album = a.to_string(); }
+                }
+                if let Some(au) = result.get("artist").and_then(|v| v.as_str()) {
+                    if !au.trim().is_empty() { author = Some(au.to_string()); }
+                }
+                if let Some(aa) = result.get("album_artist").and_then(|v| v.as_str()) {
+                    if !aa.trim().is_empty() { author = Some(aa.to_string()); }
+                }
+                if let Some(n) = result.get("narrator").and_then(|v| v.as_str()) {
+                    if !n.trim().is_empty() { narrator = Some(n.to_string()); }
+                }
+                if let Some(dur) = result.get("duration").and_then(|v| v.as_f64()) {
+                    duration = dur.round() as i32;
+                    if duration > 0 {
+                        tracing::debug!("格式插件 {} 获取到时长: {} 秒", plugin.name, duration);
+                    }
+                }
+                if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
+                    if !c.trim().is_empty() { cover_url = Some(c.to_string()); }
+                }
+                
+                plugin_handled = true;
+                break;
+            }
+        }
+        
+        // 2. 如果插件没有处理，且是标准格式，尝试 Symphonia（仅用于完整文件）
+        if !plugin_handled && is_standard {
+            let file_size = tokio::fs::metadata(path).await
+                .map(|m| m.len())
+                .unwrap_or(0);
+            
             // MP3 files: prioritize ID3 tags
             if ext == "mp3" {
                 if let Ok(id3_duration) = self.get_id3_duration(path).await {
@@ -397,21 +466,26 @@ impl LibraryScanner {
                 }
             }
             
-            if duration > 0 {
+            // 提取其他元数据（如果插件没有提供）
+            if duration > 0 && (title.is_empty() || album.is_empty()) {
                 if let Ok(meta) = self.audio_streamer.read_metadata(path) {
-                    let t = meta.title.unwrap_or_default();
-                    let album = meta.album.unwrap_or_default();
-                    let d = duration;
+                    if title.is_empty() {
+                        title = meta.title.unwrap_or_default();
+                    }
+                    if album.is_empty() {
+                        album = meta.album.unwrap_or_default();
+                    }
                  
                     // Standard metadata extraction for author/narrator
-                    let mut author = meta.album_artist;
-                    let mut narrator = None;
+                    if author.is_none() {
+                        author = meta.album_artist;
+                    }
                  
                     if let Some(a) = meta.artist {
                         if !a.trim().is_empty() {
                             if author.is_none() {
                                 author = Some(a.clone());
-                            } else if author.as_ref() != Some(&a) {
+                            } else if author.as_ref() != Some(&a) && narrator.is_none() {
                                 narrator = Some(a);
                             }
                         }
@@ -422,75 +496,16 @@ impl LibraryScanner {
                             narrator = Some(c);
                         }
                     }
-
-                    return (album, t, author, narrator, None, d);
                 }
             }
         }
         
-        // Try Plugins (Force for non-standard/encrypted files)
-        let plugins = self.plugin_manager.find_plugins_by_type(PluginType::Format).await;
-        for plugin in plugins {
-            // Check if plugin supports this extension
-            let supports_ext = plugin.supported_extensions.as_ref()
-                .map(|exts| exts.iter().any(|e| e.eq_ignore_ascii_case(&ext)))
-                .unwrap_or(false);
-            
-            if !supports_ext {
-                continue;
-            }
-
-            let params = serde_json::json!({
-                "file_path": path.to_string_lossy(),
-                "extract_cover": false
-            });
-            
-            // Try to extract metadata using plugin
-            if let Ok(result) = self.plugin_manager.call_format(
-                &plugin.id, 
-                FormatMethod::ExtractMetadata, 
-                params
-            ).await {
-                let t = result.get("title")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
-                    
-                let album = result.get("album")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
-
-                // For XM files, duration might be 0 from plugin if not decrypted
-                // But at least we get the title
-                let d = result.get("duration").and_then(|v| v.as_f64()).unwrap_or(0.0) as i32;
-                
-                let mut author = None;
-                let mut narrator = None;
-                let mut cover_url = None;
-                
-                if let Some(a) = result.get("artist").and_then(|v| v.as_str()) {
-                    if !a.trim().is_empty() {
-                        author = Some(a.to_string());
-                    }
-                }
-                
-                if let Some(n) = result.get("narrator").and_then(|v| v.as_str()) {
-                    if !n.trim().is_empty() {
-                        narrator = Some(n.to_string());
-                    }
-                }
-                
-                if let Some(c) = result.get("cover_url").and_then(|v| v.as_str()) {
-                    if !c.trim().is_empty() {
-                        cover_url = Some(c.to_string());
-                    }
-                }
-                
-                if !t.is_empty() || !album.is_empty() || d > 0 {
-                    return (album, t, author, narrator, cover_url, d);
-                }
-            }
+        // 3. 返回提取的元数据
+        if !title.is_empty() || !album.is_empty() || duration > 0 {
+            return (album, title, author, narrator, cover_url, duration);
         }
-
+        
+        // 4. 如果都失败了，返回空值
         (String::new(), String::new(), None, None, None, 0)
     }
 
