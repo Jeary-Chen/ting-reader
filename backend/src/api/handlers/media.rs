@@ -445,15 +445,12 @@ pub async fn stream_chapter(
                     "FFmpeg plugin binary not found"
                 )))?;
             
-            // Get FFprobe path (should be in the same directory as FFmpeg)
-            let ffprobe_path = {
-                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
-                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Cannot determine FFmpeg directory"
-                    )))?;
-                ffmpeg_dir.join("ffprobe.exe").to_string_lossy().to_string()
-            };
+            // Get FFprobe path from plugin system
+            let ffprobe_path = state.plugin_manager.get_ffprobe_path().await
+                .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound, 
+                    "FFprobe plugin binary not found"
+                )))?;
             
             // 优先使用数据库中的时长，避免重复调用 FFprobe
             let duration_seconds = if let Some(db_duration) = chapter.duration {
@@ -802,15 +799,12 @@ pub async fn stream_chapter(
             
             tracing::info!("使用直接 URL 转码: {}", webdav_url_str);
             
-            // Get FFprobe path
-            let ffprobe_path = {
-                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
-                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Cannot determine FFmpeg directory"
-                    )))?;
-                ffmpeg_dir.join("ffprobe.exe").to_string_lossy().to_string()
-            };
+            // Get FFprobe path from plugin system
+            let ffprobe_path = state.plugin_manager.get_ffprobe_path().await
+                .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound, 
+                    "FFprobe plugin binary not found"
+                )))?;
             
             // Get duration using FFprobe
             

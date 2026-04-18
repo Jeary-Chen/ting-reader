@@ -1438,64 +1438,48 @@ impl LibraryScanner {
                     
                     // 4. Use FFprobe when needed (fallback or validation)
                     if use_ffprobe {
-                        if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
-                            let ffprobe_path = {
-                                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
-                                if let Some(dir) = ffmpeg_dir {
-                                    let probe = dir.join("ffprobe.exe");
-                                    if probe.exists() {
-                                        Some(probe.to_string_lossy().to_string())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
+                        if let Some(ffprobe_path) = self.plugin_manager.get_ffprobe_path().await {
+                            // Add small delay before FFprobe to avoid overwhelming the server
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            
+                            // Build WebDAV URL with authentication
+                            let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
+                                url::Url::parse(file_url).ok()
+                            } else {
+                                None
                             };
-                        
-                            if let Some(ffprobe) = ffprobe_path {
-                                // Add small delay before FFprobe to avoid overwhelming the server
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            
+                            if let Some(mut url) = webdav_url {
+                                // Add authentication to URL if present
+                                if let (Some(username), Some(password)) = (&library.username, &library.password) {
+                                    let decrypted_password = crate::core::crypto::decrypt(password, key)
+                                        .unwrap_or_else(|_| password.clone());
+                                    url.set_username(username).ok();
+                                    url.set_password(Some(&decrypted_password)).ok();
+                                }
                                 
-                                // Build WebDAV URL with authentication
-                                let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
-                                    url::Url::parse(file_url).ok()
-                                } else {
-                                    None
-                                };
+                                let url_str = url.to_string();
                                 
-                                if let Some(mut url) = webdav_url {
-                                    // Add authentication to URL if present
-                                    if let (Some(username), Some(password)) = (&library.username, &library.password) {
-                                        let decrypted_password = crate::core::crypto::decrypt(password, key)
-                                            .unwrap_or_else(|_| password.clone());
-                                        url.set_username(username).ok();
-                                        url.set_password(Some(&decrypted_password)).ok();
+                                match tokio::process::Command::new(&ffprobe_path)
+                                    .arg("-v").arg("error")
+                                    .arg("-show_entries").arg("format=duration")
+                                    .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                                    .arg(&url_str)
+                                    .output()
+                                    .await
+                                {
+                                    Ok(output) if output.status.success() => {
+                                        let duration_str = String::from_utf8_lossy(&output.stdout);
+                                        if let Ok(dur) = duration_str.trim().parse::<f64>() {
+                                            duration = dur.round() as i32;
+                                            debug!("FFprobe 获取 WebDAV 文件时长: {} 秒 ({})", duration, ext);
+                                        }
                                     }
-                                    
-                                    let url_str = url.to_string();
-                                    
-                                    match tokio::process::Command::new(&ffprobe)
-                                        .arg("-v").arg("error")
-                                        .arg("-show_entries").arg("format=duration")
-                                        .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
-                                        .arg(&url_str)
-                                        .output()
-                                        .await
-                                    {
-                                        Ok(output) if output.status.success() => {
-                                            let duration_str = String::from_utf8_lossy(&output.stdout);
-                                            if let Ok(dur) = duration_str.trim().parse::<f64>() {
-                                                duration = dur.round() as i32;
-                                                debug!("FFprobe 获取 WebDAV 文件时长: {} 秒 ({})", duration, ext);
-                                            }
-                                        }
-                                        Ok(output) => {
-                                            debug!("FFprobe 获取 WebDAV 时长失败: {}", String::from_utf8_lossy(&output.stderr));
-                                        }
-                                        Err(e) => {
-                                            debug!("无法运行 FFprobe: {}", e);
-                                        }
+                                    Ok(output) => {
+                                        debug!("FFprobe 获取 WebDAV 时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                                    }
+                                    Err(e) => {
+                                        debug!("无法运行 FFprobe: {}", e);
                                     }
                                 }
                             }

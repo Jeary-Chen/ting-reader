@@ -798,6 +798,25 @@ impl PluginManager {
         None
     }
 
+    /// Helper to find and call ffmpeg-utils to get ffprobe path
+    pub async fn get_ffprobe_path(&self) -> Option<String> {
+        let registry = self.registry.read().await;
+        // Find plugin with name "FFmpeg Provider"
+        let plugin_id = registry.values()
+            .find(|e| e.metadata.name == "FFmpeg Provider")
+            .map(|e| e.metadata.instance_id());
+            
+        drop(registry); // Release lock
+        
+        if let Some(id) = plugin_id {
+            if let Ok(result) = self.call_utility(&id, UtilityMethod::GetFfprobePath, serde_json::json!({})).await {
+                return result.get("path").and_then(|v| v.as_str()).map(|s| s.to_string());
+            }
+        }
+        
+        None
+    }
+
     // Lifecycle methods
 
     async fn initialize_plugin(&self, plugin_id: &PluginId) -> Result<()> {

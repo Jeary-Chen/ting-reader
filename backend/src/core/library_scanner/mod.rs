@@ -287,68 +287,49 @@ impl LibraryScanner {
             
             let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             
-            // Try to get duration using FFprobe
-            let duration = if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
-                let ffprobe_path = {
-                    let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
-                    if let Some(dir) = ffmpeg_dir {
-                        let probe = dir.join("ffprobe.exe");
-                        if probe.exists() {
-                            Some(probe.to_string_lossy().to_string())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                };
+            // Try to get duration using FFprobe from plugin system
+            let duration = if let Some(ffprobe_path) = self.plugin_manager.get_ffprobe_path().await {
+                tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
                 
-                if let Some(ffprobe) = ffprobe_path {
-                    tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
-                    
-                    // Add small delay to avoid overwhelming the server
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                    
-                    // Add User-Agent and other headers to avoid being blocked
-                    match tokio::process::Command::new(&ffprobe)
-                        .arg("-v").arg("error")
-                        .arg("-user_agent").arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .arg("-headers").arg("Accept: */*")
-                        .arg("-show_entries").arg("format=duration")
-                        .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
-                        .arg(&url)
-                        .output()
-                        .await
-                    {
-                        Ok(output) if output.status.success() => {
-                            let duration_str = String::from_utf8_lossy(&output.stdout);
-                            match duration_str.trim().parse::<f64>() {
-                                Ok(dur) => {
-                                    let duration_secs = dur.round() as i32;
-                                    tracing::info!("strm 文件 {} 时长: {} 秒", t, duration_secs);
-                                    duration_secs
-                                }
-                                Err(_) => {
-                                    tracing::warn!("无法解析 FFprobe 输出: {}", duration_str);
-                                    0
-                                }
+                // Add small delay to avoid overwhelming the server
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                
+                // Add User-Agent and other headers to avoid being blocked
+                match tokio::process::Command::new(&ffprobe_path)
+                    .arg("-v").arg("error")
+                    .arg("-user_agent").arg("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .arg("-headers").arg("Accept: */*")
+                    .arg("-show_entries").arg("format=duration")
+                    .arg("-of").arg("default=noprint_wrappers=1:nokey=1")
+                    .arg(&url)
+                    .output()
+                    .await
+                {
+                    Ok(output) if output.status.success() => {
+                        let duration_str = String::from_utf8_lossy(&output.stdout);
+                        match duration_str.trim().parse::<f64>() {
+                            Ok(dur) => {
+                                let duration_secs = dur.round() as i32;
+                                tracing::info!("strm 文件 {} 时长: {} 秒", t, duration_secs);
+                                duration_secs
+                            }
+                            Err(_) => {
+                                tracing::warn!("无法解析 FFprobe 输出: {}", duration_str);
+                                0
                             }
                         }
-                        Ok(output) => {
-                            tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
-                            0
-                        }
-                        Err(e) => {
-                            tracing::warn!("无法运行 FFprobe: {}", e);
-                            0
-                        }
                     }
-                } else {
-                    tracing::warn!("未找到 FFprobe，strm 文件时长将设为 0");
-                    0
+                    Ok(output) => {
+                        tracing::warn!("FFprobe 获取时长失败: {}", String::from_utf8_lossy(&output.stderr));
+                        0
+                    }
+                    Err(e) => {
+                        tracing::warn!("无法运行 FFprobe: {}", e);
+                        0
+                    }
                 }
             } else {
-                tracing::warn!("未找到 FFmpeg 插件，strm 文件时长将设为 0");
+                tracing::warn!("未找到 FFprobe，strm 文件时长将设为 0");
                 0
             };
             
