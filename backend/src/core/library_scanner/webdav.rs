@@ -1438,9 +1438,31 @@ impl LibraryScanner {
                     
                     // 4. Use FFprobe when needed (fallback or validation)
                     if use_ffprobe {
-                        if let Some(ffprobe_path) = self.plugin_manager.get_ffprobe_path().await {
-                            // Add small delay before FFprobe to avoid overwhelming the server
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
+                            let ffprobe_path = {
+                                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
+                                if let Some(dir) = ffmpeg_dir {
+                                    // ⭐ 跨平台：Windows 使用 ffprobe.exe，Linux/Mac 使用 ffprobe
+                                    let ffprobe_name = if cfg!(target_os = "windows") {
+                                        "ffprobe.exe"
+                                    } else {
+                                        "ffprobe"
+                                    };
+                                    
+                                    let probe = dir.join(ffprobe_name);
+                                    if probe.exists() {
+                                        Some(probe.to_string_lossy().to_string())
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            };
+                        
+                            if let Some(ffprobe_path) = ffprobe_path {
+                                // Add small delay before FFprobe to avoid overwhelming the server
+                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                             
                             // Build WebDAV URL with authentication
                             let webdav_url = if file_url.starts_with("http://") || file_url.starts_with("https://") {
@@ -1482,6 +1504,7 @@ impl LibraryScanner {
                                         debug!("无法运行 FFprobe: {}", e);
                                     }
                                 }
+                            }
                             }
                         }
                     }

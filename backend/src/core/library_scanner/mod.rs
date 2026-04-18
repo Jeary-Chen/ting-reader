@@ -287,9 +287,31 @@ impl LibraryScanner {
             
             let t = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
             
-            // Try to get duration using FFprobe from plugin system
-            let duration = if let Some(ffprobe_path) = self.plugin_manager.get_ffprobe_path().await {
-                tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
+            // Try to get duration using FFprobe (derive from FFmpeg path)
+            let duration = if let Some(ffmpeg_path) = self.plugin_manager.get_ffmpeg_path().await {
+                let ffprobe_path = {
+                    let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent();
+                    if let Some(dir) = ffmpeg_dir {
+                        // ⭐ 跨平台：Windows 使用 ffprobe.exe，Linux/Mac 使用 ffprobe
+                        let ffprobe_name = if cfg!(target_os = "windows") {
+                            "ffprobe.exe"
+                        } else {
+                            "ffprobe"
+                        };
+                        
+                        let probe = dir.join(ffprobe_name);
+                        if probe.exists() {
+                            Some(probe.to_string_lossy().to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                };
+                
+                if let Some(ffprobe_path) = ffprobe_path {
+                    tracing::info!("使用 FFprobe 获取 strm 文件时长: {}", url);
                 
                 // Add small delay to avoid overwhelming the server
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -328,8 +350,12 @@ impl LibraryScanner {
                         0
                     }
                 }
+                } else {
+                    tracing::warn!("未找到 FFprobe，strm 文件时长将设为 0");
+                    0
+                }
             } else {
-                tracing::warn!("未找到 FFprobe，strm 文件时长将设为 0");
+                tracing::warn!("未找到 FFmpeg 插件，strm 文件时长将设为 0");
                 0
             };
             

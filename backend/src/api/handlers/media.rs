@@ -438,19 +438,29 @@ pub async fn stream_chapter(
                 _ => return Err(TingError::InvalidRequest("Unsupported transcode format".to_string())),
             };
             
-            // Get FFmpeg and FFprobe paths from plugin manager
+            // Get FFmpeg path and derive FFprobe path (same directory)
             let ffmpeg_path = state.plugin_manager.get_ffmpeg_path().await
                 .ok_or_else(|| TingError::IoError(std::io::Error::new(
                     std::io::ErrorKind::NotFound, 
                     "FFmpeg plugin binary not found"
                 )))?;
             
-            // Get FFprobe path from plugin system
-            let ffprobe_path = state.plugin_manager.get_ffprobe_path().await
-                .ok_or_else(|| TingError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::NotFound, 
-                    "FFprobe plugin binary not found"
-                )))?;
+            let ffprobe_path = {
+                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
+                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Cannot determine FFmpeg directory"
+                    )))?;
+                
+                // ⭐ 跨平台：Windows 使用 ffprobe.exe，Linux/Mac 使用 ffprobe
+                let ffprobe_name = if cfg!(target_os = "windows") {
+                    "ffprobe.exe"
+                } else {
+                    "ffprobe"
+                };
+                
+                ffmpeg_dir.join(ffprobe_name).to_string_lossy().to_string()
+            };
             
             // 优先使用数据库中的时长，避免重复调用 FFprobe
             let duration_seconds = if let Some(db_duration) = chapter.duration {
@@ -799,12 +809,29 @@ pub async fn stream_chapter(
             
             tracing::info!("使用直接 URL 转码: {}", webdav_url_str);
             
-            // Get FFprobe path from plugin system
-            let ffprobe_path = state.plugin_manager.get_ffprobe_path().await
+            // Get FFmpeg path and derive FFprobe path (same directory)
+            let ffmpeg_path = state.plugin_manager.get_ffmpeg_path().await
                 .ok_or_else(|| TingError::IoError(std::io::Error::new(
                     std::io::ErrorKind::NotFound, 
-                    "FFprobe plugin binary not found"
+                    "FFmpeg plugin binary not found"
                 )))?;
+            
+            let ffprobe_path = {
+                let ffmpeg_dir = std::path::Path::new(&ffmpeg_path).parent()
+                    .ok_or_else(|| TingError::IoError(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "Cannot determine FFmpeg directory"
+                    )))?;
+                
+                // ⭐ 跨平台：Windows 使用 ffprobe.exe，Linux/Mac 使用 ffprobe
+                let ffprobe_name = if cfg!(target_os = "windows") {
+                    "ffprobe.exe"
+                } else {
+                    "ffprobe"
+                };
+                
+                ffmpeg_dir.join(ffprobe_name).to_string_lossy().to_string()
+            };
             
             // Get duration using FFprobe
             
