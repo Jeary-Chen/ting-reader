@@ -151,6 +151,10 @@ jobs:
             echo "Building for Formal release v$VERSION..."
             OUTPUT_NAME="ting-reader-native-${{ matrix.fpk_suffix }}-${VERSION}.fpk"
           fi
+          
+          # Update manifest with version
+          sed -i "s/^version[[:space:]]*=.*/version = $VERSION/" .github/ting-reader-fpk-native/manifest
+          
           # 删除可能已存在的 arch/platform 行
           sed -i "/^arch[[:space:]]*=/d" .github/ting-reader-fpk-native/manifest
           sed -i "/^platform[[:space:]]*=/d" .github/ting-reader-fpk-native/manifest
