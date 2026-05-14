@@ -367,8 +367,7 @@ impl ApiServer {
                         let svc = service_fn(move |req: hyper::Request<Incoming>| {
                             let router = router.clone();
                             async move {
-                                let mut r = router.lock().unwrap();
-                                r.call(req).await.map_err(|e: std::convert::Infallible| match e {})
+                                router.lock().unwrap().call(req).await
                             }
                         });
                         tokio::spawn(async move {
