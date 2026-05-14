@@ -31,7 +31,7 @@ use axum::{
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(unix)]
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 #[cfg(unix)]
 use tower::Service;
 #[cfg(unix)]
