@@ -4,12 +4,7 @@ LOG_FILE="${TRIM_TEMP_LOGFILE}"
 PID_FILE="${TRIM_PKGVAR}/app.pid"
 
 export RUST_LOG=info
-export TING_SERVER__HOST=0.0.0.0
-export TING_SERVER__PORT=3000
-
-if [ -n "$wizard_port" ]; then
-    export TING_SERVER__PORT="$wizard_port"
-fi
+export TING_SERVER__SOCKET="${TRIM_APPDEST}/app.sock"
 
 IFS=':' read -r -a SHARES <<< "$TRIM_DATA_SHARE_PATHS"
 
@@ -51,7 +46,7 @@ start_process() {
     log_msg "STORAGE_DIR: $STORAGE_DIR"
     log_msg "PLUGINS_DIR: $PLUGINS_DIR"
     log_msg "TEMP_DIR: $TEMP_DIR"
-    log_msg "PORT: $TING_SERVER__PORT"
+    log_msg "SOCKET: $TING_SERVER__SOCKET"
     
     $CMD > /dev/null 2>&1 &
     

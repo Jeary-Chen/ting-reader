@@ -28,6 +28,8 @@ use axum::{
     extract::Request,
     middleware::Next,
 };
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -328,29 +330,52 @@ impl ApiServer {
     ///
     /// This method will block until the server is shut down gracefully.
     pub async fn serve(self) -> anyhow::Result<()> {
+        let router = self.router;
+
+        #[cfg(unix)]
+        if let Some(socket_path) = &self.config.socket {
+            // fnOS unified gateway mode: ONLY listen on Unix socket
+
+            // Clean up stale socket file
+            if tokio::fs::metadata(socket_path).await.is_ok() {
+                tokio::fs::remove_file(socket_path).await?;
+            }
+            // Ensure parent directory exists
+            if let Some(parent) = std::path::Path::new(socket_path).parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
+            let unix_listener = UnixListener::bind(socket_path)?;
+            info!(path = %socket_path, "Unix Socket 正在监听 (统一网关模式)");
+
+            axum::serve(unix_listener, router)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+
+            info!("HTTP server shut down gracefully");
+            return Ok(());
+        }
+
+        // TCP mode (default): bind to host:port
         let addr = format!("{}:{}", self.config.host, self.config.port);
         let socket_addr: SocketAddr = addr.parse()?;
-        
+
         info!(
             host = %self.config.host,
             port = self.config.port,
             max_connections = self.config.max_connections,
-            request_timeout = self.config.request_timeout,
             "正在启动 HTTP 服务器"
         );
-        
-        // Create TCP listener
-        let listener = tokio::net::TcpListener::bind(socket_addr).await?;
-        
+
+        let tcp_listener = tokio::net::TcpListener::bind(socket_addr).await?;
         info!(addr = %socket_addr, "HTTP 服务器正在监听");
-        
-        // Serve with graceful shutdown
-        axum::serve(listener, self.router)
+
+        axum::serve(tcp_listener, router)
             .with_graceful_shutdown(shutdown_signal())
             .await?;
-        
+
         info!("HTTP server shut down gracefully");
-        
+
         Ok(())
     }
     

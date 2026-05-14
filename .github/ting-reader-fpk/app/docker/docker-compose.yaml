@@ -2,18 +2,16 @@ services:
   ting-reader:
     image: dqsq2e2/ting-reader:${TRIM_APPVER}
     container_name: ting-reader
-    ports:
-      - "${wizard_port}:3000"
     volumes:
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/data:/app/data"
       - "${wizard_storage_path:-${TRIM_APPDEST_VOL}/@appshare/ting-reader/storage}:/app/storage"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins:/app/plugins"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/temp:/app/temp"
+      - "${TRIM_APPDEST_VOL}/@appcenter/ting-reader:/var/app/target"
     restart: unless-stopped
     environment:
       - RUST_LOG=info
-      - TING_SERVER__HOST=0.0.0.0
-      - TING_SERVER__PORT=3000
+      - TING_SERVER__SOCKET=/var/app/target/app.sock
       - TEMP_DIR=/app/temp
       - DATA_DIR=/app/data
       - STORAGE_DIR=/app/storage

@@ -273,6 +273,7 @@ pub struct CliArgs {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub socket: Option<String>,
     pub max_connections: usize,
     pub request_timeout: u64, // seconds
 }
