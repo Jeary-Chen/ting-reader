@@ -10,11 +10,12 @@
 use crate::core::Config;
 use crate::core::config::ServerConfig;
 use crate::api::middleware::{
-    trace_id_middleware, 
-    auth_middleware, 
+    trace_id_middleware,
+    auth_middleware,
     ApiKey,
     security_headers_middleware,
     SecurityHeadersConfig,
+    strip_gateway_prefix,
 };
 use crate::api::routes::build_api_routes;
 use crate::api::handlers::AppState;
@@ -293,6 +294,8 @@ impl ApiServer {
             .fallback_service(serve_dir)
             .layer(
                 ServiceBuilder::new()
+                    // Strip fnOS unified gateway prefix before routing
+                    .layer(middleware::from_fn(strip_gateway_prefix))
                     // Add security headers middleware
                     .layer(middleware::from_fn(move |mut req: Request, next: Next| {
                         let config = security_headers_config.clone();
