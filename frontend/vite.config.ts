@@ -24,8 +24,8 @@ export default defineConfig({
         theme_color: '#0284c7',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/',
-        scope: '/',
+        start_url: './',
+        scope: './',
         orientation: 'portrait-primary',
         icons: [
           {
@@ -133,7 +133,7 @@ export default defineConfig({
       }
     })
   ],
-  base: '/',
+  base: './',
   build: {
     outDir: 'dist',
     minify: 'terser',
@@ -155,7 +155,7 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
+    port: 5173,
     host: true,
   },
   optimizeDeps: {
