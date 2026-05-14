@@ -31,8 +31,6 @@ use axum::{
 #[cfg(unix)]
 use tokio::net::UnixListener;
 #[cfg(unix)]
-use std::sync::Mutex;
-#[cfg(unix)]
 use tower::Service;
 #[cfg(unix)]
 use hyper::body::Incoming;
@@ -357,7 +355,7 @@ impl ApiServer {
             let unix_listener = UnixListener::bind(socket_path)?;
             info!(path = %socket_path, "Unix Socket 正在监听 (统一网关模式)");
 
-            let router = Arc::new(Mutex::new(router));
+            let router = Arc::new(router);
 
             loop {
                 tokio::select! {
@@ -367,7 +365,8 @@ impl ApiServer {
                         let svc = service_fn(move |req: hyper::Request<Incoming>| {
                             let router = router.clone();
                             async move {
-                                router.lock().unwrap().call(req).await
+                                let mut r = (*router).clone();
+                                r.call(req).await
                             }
                         });
                         tokio::spawn(async move {
