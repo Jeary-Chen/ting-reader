@@ -10,6 +10,7 @@ reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tower = { version = "0.4", features = ["util", "timeout"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "fs", "compression-full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 
 # Async Runtime
 tokio = { version = "1", features = ["full"] }

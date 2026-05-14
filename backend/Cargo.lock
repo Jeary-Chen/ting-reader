@@ -4211,6 +4211,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures",
  "hostname",
+ "hyper-util",
  "id3",
  "image",
  "jsonschema",

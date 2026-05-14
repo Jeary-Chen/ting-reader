@@ -30,6 +30,18 @@ use axum::{
 };
 #[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
+use std::sync::{Arc, Mutex};
+#[cfg(unix)]
+use tower::Service;
+#[cfg(unix)]
+use hyper::body::Incoming;
+#[cfg(unix)]
+use hyper::server::conn::http1;
+#[cfg(unix)]
+use hyper::service::service_fn;
+#[cfg(unix)]
+use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -334,13 +346,10 @@ impl ApiServer {
 
         #[cfg(unix)]
         if let Some(socket_path) = &self.config.socket {
-            // fnOS unified gateway mode: ONLY listen on Unix socket
-
             // Clean up stale socket file
             if tokio::fs::metadata(socket_path).await.is_ok() {
                 tokio::fs::remove_file(socket_path).await?;
             }
-            // Ensure parent directory exists
             if let Some(parent) = std::path::Path::new(socket_path).parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
@@ -348,9 +357,34 @@ impl ApiServer {
             let unix_listener = UnixListener::bind(socket_path)?;
             info!(path = %socket_path, "Unix Socket 正在监听 (统一网关模式)");
 
-            axum::serve(unix_listener, router)
-                .with_graceful_shutdown(shutdown_signal())
-                .await?;
+            let router = Arc::new(Mutex::new(router));
+
+            loop {
+                tokio::select! {
+                    Ok((stream, _)) = unix_listener.accept() => {
+                        let io = TokioIo::new(stream);
+                        let router = router.clone();
+                        let svc = service_fn(move |req: hyper::Request<Incoming>| {
+                            let router = router.clone();
+                            async move {
+                                let mut r = router.lock().unwrap();
+                                r.call(req).await.map_err(|e: std::convert::Infallible| match e {})
+                            }
+                        });
+                        tokio::spawn(async move {
+                            if let Err(err) = http1::Builder::new()
+                                .serve_connection(io, svc)
+                                .await
+                            {
+                                tracing::error!("Unix socket connection error: {}", err);
+                            }
+                        });
+                    }
+                    _ = shutdown_signal() => {
+                        break;
+                    }
+                }
+            }
 
             info!("HTTP server shut down gracefully");
             return Ok(());
