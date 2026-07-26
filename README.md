@@ -275,7 +275,7 @@ ting-reader/
 
 ## 📄 开源协议
 
-本项目采用 [MIT License](LICENSE) 协议。
+本项目采用 [GNU Affero General Public License v3.0](LICENSE) 协议（SPDX：`AGPL-3.0-only`）。
 
 ## 🤝 贡献指南
 

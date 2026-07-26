@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FastAverageColor } from 'fast-average-color';
 import apiClient from '../../core/api/client';
 import { usePlayerStore } from '../../core/stores/playerStore';
@@ -113,6 +113,11 @@ export const useSleepTimer = (options: {
   const endTimeRef = useRef<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 按集数睡眠：剩余可播集数（含当前集），章节自然播完时递减，归零即停。
+  // 与按分钟定时互斥，开启一种会取消另一种。
+  const [sleepEpisodes, setSleepEpisodes] = useState<number | null>(null);
+  const sleepEpisodesRef = useRef<number | null>(null);
+
   // 倒计时：用 endTime 推导剩余秒数。
   useEffect(() => {
     if (sleepTimer === null || sleepTimer <= 0 || !isPlaying || !endTimeRef.current) return;
@@ -157,6 +162,35 @@ export const useSleepTimer = (options: {
     setSleepTimer(durationSeconds);
   };
 
+  // 集数通过 ref 同步读写，handleSleepChapterEnded 才能保持稳定引用。
+  const setEpisodeCount = (value: number | null) => {
+    sleepEpisodesRef.current = value;
+    setSleepEpisodes(value);
+  };
+
+  const startEpisodeSleepTimer = (episodes: number) => {
+    if (episodes <= 0) return;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    endTimeRef.current = null;
+    setSleepTimer(null);
+    setEpisodeCount(episodes);
+  };
+
+  // 章节播完时调用；返回 true 表示已到设定集数，调用方应停止播放。
+  const handleSleepChapterEnded = useCallback((): boolean => {
+    const remaining = sleepEpisodesRef.current;
+    if (remaining === null) return false;
+    if (remaining <= 1) {
+      setEpisodeCount(null);
+      return true;
+    }
+    setEpisodeCount(remaining - 1);
+    return false;
+  }, []);
+
   const cancelSleepTimer = () => {
     setSleepTimer(null);
     endTimeRef.current = null;
@@ -164,9 +198,18 @@ export const useSleepTimer = (options: {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
+    sleepEpisodesRef.current = null;
+    setSleepEpisodes(null);
   };
 
-  return { sleepTimer, startSleepTimer, cancelSleepTimer };
+  return {
+    sleepTimer,
+    sleepEpisodes,
+    startSleepTimer,
+    startEpisodeSleepTimer,
+    cancelSleepTimer,
+    handleSleepChapterEnded,
+  };
 };
 
 // ─── useOutsideClickClose ───────────────────────────────────────────────────

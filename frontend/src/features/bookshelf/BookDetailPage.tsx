@@ -759,6 +759,29 @@ const BookDetailPage: React.FC = () => {
     };
   }, [effectiveThemeColor]);
 
+  // Show a Flutter-style auto-hiding scrollbar on the main content area
+  // while this page is displayed: it fades in during scrolling and fades
+  // out shortly after scrolling stops.
+  useEffect(() => {
+    const container = document.getElementById('main-content');
+    if (!container) return;
+    let hideTimer: number | undefined;
+    const handleScroll = () => {
+      container.classList.add('is-scrolling');
+      window.clearTimeout(hideTimer);
+      hideTimer = window.setTimeout(() => {
+        container.classList.remove('is-scrolling');
+      }, 800);
+    };
+    container.classList.add('auto-hide-scrollbar');
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.clearTimeout(hideTimer);
+      container.removeEventListener('scroll', handleScroll);
+      container.classList.remove('auto-hide-scrollbar', 'is-scrolling');
+    };
+  }, []);
+
   if (loading && !book) {
     return (
       <LoadingSpinner />
