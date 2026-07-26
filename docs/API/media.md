@@ -19,6 +19,7 @@
 | token | string | 认证 Token（可选） |
 | transcode | string | 转码格式：`mp3`、`wav`、`hls`（可选） |
 | seek | string | 跳转位置，如 `30.5`（秒，可选，仅转码模式） |
+| download | string | 下载模式标识：`1` / `true` / `yes` / `on`（可选）。该标志会透传给格式插件，供插件区分在线播放与离线下载场景 |
 
 **请求头：**
 
@@ -35,6 +36,17 @@
 | `Content-Range` | Range 响应 |
 | `Accept-Ranges` | `bytes` |
 | `X-Audio-Duration` | 音频时长（秒，转码模式） |
+| `X-Download-Extension` | 建议的文件扩展名（如 `mp3`、`m4a`、`flac`，仅插件处理格式时返回） |
+
+**处理优先级：**
+
+1. `.strm` 文件 → URL 重定向或代理
+2. HLS 转码（`transcode=hls`）→ 返回 HLS 会话信息
+3. 普通转码（`transcode=mp3/wav`）→ FFmpeg 管道转码
+4. 内存预加载缓存 → 直接返回
+5. 磁盘缓存 → 直接返回
+6. 插件格式处理（加密/特殊格式）→ 解密/转码后返回
+7. 本地/WebDAV/HTTP 直接流式传输
 
 **支持格式：** m4a, mp4, mp3, aac, flac, ogg, opus, wav, wma, strm
 
@@ -60,6 +72,34 @@
 可通过 `seek` 查询参数指定初始位置，例如 `/api/stream/:chapterId?transcode=hls&seek=120.5`。
 
 **STRM 文件：** 自动解析 `.strm` 文件中的 URL 并代理或重定向。
+
+---
+
+### GET /api/v1/public/media/:chapterId（签名公开流）
+
+无需登录的公开音频流接口，用于分享场景。URL 需携带签名参数，签名由服务端通过 `POST /api/v1/plugin-route-signatures` 生成。
+
+**路径参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| chapterId | string | 章节 ID |
+
+**查询参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| expires | number | 签名过期时间戳（Unix 秒） |
+| user | string | 用户 ID（签名绑定） |
+| signature | string | HMAC 签名 |
+| transcode | string | 转码格式：`mp3`、`wav`、`hls`（可选） |
+| seek | string | 跳转位置（秒，可选） |
+| download | string | 下载模式标识（可选） |
+
+**说明：**
+- 签名过期或校验失败返回 `403`
+- 签名绑定的用户身份用于权限校验（检查该用户是否有权访问对应书籍）
+- 同时支持 `/api/public/media/:chapterId`（无 v1 前缀）
 
 ---
 
