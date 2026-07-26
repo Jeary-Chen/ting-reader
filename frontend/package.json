@@ -22,13 +22,13 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-i18next": "^17.0.8",
-    "react-router-dom": "^7.13.0",
+    "react-router-dom": "^7.18.1",
     "react-window": "^2.2.7",
     "tailwind-merge": "^3.4.0",
     "zustand": "^5.0.10"
   },
   "devDependencies": {
-    "@eslint/js": "^9.39.1",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/postcss": "^4.1.18",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
@@ -36,7 +36,7 @@
     "@vitejs/plugin-legacy": "^8.0.2",
     "@vitejs/plugin-react": "^6.0.2",
     "autoprefixer": "^10.4.23",
-    "eslint": "^9.39.1",
+    "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
@@ -53,6 +53,7 @@
     "serialize-javascript": "^7.0.5",
     "glob": "^12.0.0",
     "sourcemap-codec": "npm:@jridgewell/sourcemap-codec@1.5.0",
-    "source-map": "^0.7.4"
+    "source-map": "^0.7.4",
+    "brace-expansion": "5.0.8"
   }
 }
