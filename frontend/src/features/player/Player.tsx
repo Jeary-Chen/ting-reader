@@ -161,6 +161,7 @@ const Player: React.FC = () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [chapters, setChapters] = useState<any[]>([]);
   const [customMinutes, setCustomMinutes] = useState("");
+  const [customEpisodes, setCustomEpisodes] = useState("");
   const [editSkipIntro, setEditSkipIntro] = useState(0);
   const [editSkipOutro, setEditSkipOutro] = useState(0);
 
@@ -221,7 +222,14 @@ const Player: React.FC = () => {
   );
   const chaptersPerGroup = CHAPTERS_PER_GROUP;
 
-  const { sleepTimer, startSleepTimer, cancelSleepTimer } = useSleepTimer({
+  const {
+    sleepTimer,
+    sleepEpisodes,
+    startSleepTimer,
+    startEpisodeSleepTimer,
+    cancelSleepTimer,
+    handleSleepChapterEnded,
+  } = useSleepTimer({
     isPlaying,
     onExpire: togglePlay,
   });
@@ -858,7 +866,12 @@ const Player: React.FC = () => {
         })
         .catch((err) => console.error("Failed to sync final progress", err));
     }
+    // 按集数睡眠：播完设定集数后停在下一条开头，不再继续播放。
+    const stopAfterThis = handleSleepChapterEnded();
     nextChapter();
+    if (stopAfterThis && isPlaying) {
+      togglePlay();
+    }
   };
 
   const openChapterList = () => {
@@ -1228,6 +1241,10 @@ const Player: React.FC = () => {
                 onSetCustomMinutes={setCustomMinutes}
                 onStartSleepTimer={startSleepTimer}
                 onCancelSleepTimer={cancelSleepTimer}
+                sleepEpisodes={sleepEpisodes}
+                customEpisodes={customEpisodes}
+                onSetCustomEpisodes={setCustomEpisodes}
+                onStartEpisodeSleepTimer={startEpisodeSleepTimer}
                 onCloseSleepTimer={() => setShowSleepTimer(false)}
                 onOpenChapterList={openChapterList}
               />

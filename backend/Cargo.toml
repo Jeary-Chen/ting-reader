@@ -1,8 +1,9 @@
 [package]
 name = "ting_reader"
-version = "1.5.4"
+version = "1.5.5"
 edition = "2021"
 rust-version = "1.70"
+license = "AGPL-3.0-only"
 
 [dependencies]
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }

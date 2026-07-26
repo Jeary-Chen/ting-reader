@@ -94,3 +94,41 @@ body {
     scrollbar-width: none;  /* Firefox */
   }
 }
+
+/* Flutter-style auto-hiding scrollbar. Enabled per page (e.g. book detail)
+   by adding .auto-hide-scrollbar to the scroll container; the thumb only
+   appears while .is-scrolling is set (or when hovered). Unlayered on
+   purpose so it overrides the global scrollbar-hiding rules above. */
+.auto-hide-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+.auto-hide-scrollbar.is-scrolling {
+  scrollbar-color: rgb(100 116 139 / 0.45) transparent;
+}
+.dark .auto-hide-scrollbar.is-scrolling {
+  scrollbar-color: rgb(148 163 184 / 0.4) transparent;
+}
+.auto-hide-scrollbar::-webkit-scrollbar {
+  display: block;
+  width: 8px;
+  height: 8px;
+  background: transparent;
+}
+.auto-hide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.auto-hide-scrollbar::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  transition: background-color 0.3s ease;
+}
+.auto-hide-scrollbar.is-scrolling::-webkit-scrollbar-thumb,
+.auto-hide-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 0.45);
+}
+.dark .auto-hide-scrollbar.is-scrolling::-webkit-scrollbar-thumb,
+.dark .auto-hide-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(148 163 184 / 0.4);
+}
