@@ -268,22 +268,24 @@ const HomePage: React.FC = () => {
           {homeLayout.showHero && (
           <div className="relative overflow-hidden rounded-3xl border border-white/70 dark:border-white/10 bg-[linear-gradient(135deg,#f8fafc_0%,#dbeafe_42%,#f0f9ff_100%)] dark:bg-[linear-gradient(135deg,#020617_0%,#172554_46%,#2e1065_100%)] text-slate-950 dark:text-white shadow-2xl shadow-sky-200/70 dark:shadow-slate-950/40">
             {activeHeroItem && (
-              <img
-                src={getCoverUrl(activeHeroItem.cover_url, activeHeroItem.library_id, activeHeroItem.id)}
-                alt=""
-                aria-hidden="true"
-                referrerPolicy="no-referrer"
-                className="absolute -right-12 -top-16 w-[58%] h-[140%] object-cover opacity-20 dark:opacity-24 blur-3xl scale-110"
-                onError={(event) => {
-                  (event.target as HTMLImageElement).style.display = 'none';
-                }}
-              />
+              <div className="pointer-events-none absolute bottom-[7%] left-[83%] top-[-9%] z-[1] aspect-square -translate-x-1/2 overflow-hidden rounded-full">
+                <img
+                  src={getCoverUrl(activeHeroItem.cover_url, activeHeroItem.library_id, activeHeroItem.id)}
+                  alt=""
+                  aria-hidden="true"
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover opacity-[0.14] dark:opacity-[0.2] blur-[1px]"
+                  onError={(event) => {
+                    (event.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
             )}
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_12%,rgba(14,165,233,0.26),transparent_34%),radial-gradient(circle_at_75%_24%,rgba(168,85,247,0.2),transparent_30%),linear-gradient(115deg,rgba(255,255,255,0.72)_0%,rgba(255,255,255,0.2)_38%,rgba(15,23,42,0.1)_100%)] dark:bg-[radial-gradient(circle_at_12%_12%,rgba(56,189,248,0.2),transparent_32%),radial-gradient(circle_at_74%_24%,rgba(168,85,247,0.28),transparent_30%),linear-gradient(115deg,rgba(15,23,42,0.1)_0%,rgba(15,23,42,0.25)_45%,rgba(2,6,23,0.58)_100%)]" />
             <div className="absolute -left-32 top-12 h-28 w-[62%] rotate-[-12deg] bg-white/45 dark:bg-white/10 blur-2xl" />
             <div className="absolute inset-x-0 bottom-0 h-40 bg-gradient-to-t from-white/70 via-white/20 to-transparent dark:from-slate-950/60 dark:via-slate-950/10 dark:to-transparent" />
             <div className="absolute inset-y-0 right-0 w-1/2 bg-[linear-gradient(90deg,transparent,rgba(15,23,42,0.08))] dark:bg-[linear-gradient(90deg,transparent,rgba(15,23,42,0.35))]" />
-            <div className="relative p-4 sm:p-5 md:p-7 min-h-0 sm:min-h-[420px] flex flex-col gap-4 sm:gap-6">
+            <div className="relative z-10 p-4 sm:p-5 md:p-7 min-h-0 sm:min-h-[420px] flex flex-col gap-4 sm:gap-6">
               <div className="flex-1 min-w-0 flex flex-col justify-between gap-5 sm:gap-8">
                 <div className="flex flex-col lg:flex-row gap-5 sm:gap-6 lg:gap-8">
                   <div className="flex-1 min-w-0">

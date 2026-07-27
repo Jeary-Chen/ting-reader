@@ -248,6 +248,8 @@ const Player: React.FC = () => {
   const [hlsSeekOffset, setHlsSeekOffset] = useState(0);
   const isInitialLoadRef = useRef(true);
   const hlsRequestIdRef = useRef(0);
+  // 防止 skip-outro 在同一章节内多次触发 nextChapter。
+  const skipOutroChapterRef = useRef<string | null>(null);
   const shouldUseHlsForCurrentChapter =
     isAppleMobileBrowser() &&
     isStrmPath(currentChapter?.path) &&
@@ -566,7 +568,11 @@ const Player: React.FC = () => {
         duration > minChapterDuration &&
         duration - time <= currentBook.skip_outro
       ) {
-        nextChapter();
+        // 每集只触发一次，避免 timeUpdate 反复调用 nextChapter。
+        if (skipOutroChapterRef.current !== currentChapter?.id) {
+          skipOutroChapterRef.current = currentChapter?.id ?? null;
+          advanceToNextChapter();
+        }
       }
     }
   };
@@ -853,6 +859,17 @@ const Player: React.FC = () => {
       : ""
     : getStreamUrl(currentChapter.id);
 
+  // 切换到下一集并处理按集数睡眠定时：若集数已用完则暂停播放。
+  const advanceToNextChapter = () => {
+    const stopAfterThis = handleSleepChapterEnded();
+    nextChapter();
+    if (stopAfterThis) {
+      // nextChapter 会同步把新章节置为播放状态；不要依赖 ended/pause 事件
+      // 到达顺序或旧的 isPlaying 闭包值，直接阻止下一集自动开始。
+      setIsPlaying(false);
+    }
+  };
+
   const handleEnded = () => {
     if (currentBook && currentChapter) {
       const finalPosition = Math.floor(duration);
@@ -867,11 +884,7 @@ const Player: React.FC = () => {
         .catch((err) => console.error("Failed to sync final progress", err));
     }
     // 按集数睡眠：播完设定集数后停在下一条开头，不再继续播放。
-    const stopAfterThis = handleSleepChapterEnded();
-    nextChapter();
-    if (stopAfterThis && isPlaying) {
-      togglePlay();
-    }
+    advanceToNextChapter();
   };
 
   const openChapterList = () => {

@@ -113,7 +113,7 @@ pub async fn create_user(
     ))
 }
 
-/// Handler for PATCH /api/users/:id - Update user (admin only)
+/// Handler for PATCH or PUT /api/users/:id - Update user (admin only)
 pub async fn update_user(
     State(state): State<AppState>,
     Path(user_id): Path<String>,

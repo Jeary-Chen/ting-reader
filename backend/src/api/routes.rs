@@ -214,7 +214,10 @@ pub fn build_api_routes(state: AppState) -> Router {
         )
         // User management endpoints (admin only)
         .route("/api/users", get(list_users).post(create_user))
-        .route("/api/users/:id", patch(update_user).delete(delete_user))
+        .route(
+            "/api/users/:id",
+            patch(update_user).put(update_user).delete(delete_user),
+        )
         // Library management endpoints
         .route("/api/libraries", get(list_libraries).post(create_library))
         .route(

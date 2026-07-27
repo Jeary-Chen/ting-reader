@@ -112,11 +112,25 @@ export const useSleepTimer = (options: {
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
   const endTimeRef = useRef<number | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 记录播放被手动暂停的时刻，恢复播放时把暂停时长补回 endTime，让倒计时随播放暂停而暂停。
+  const pauseStartRef = useRef<number | null>(null);
 
   // 按集数睡眠：剩余可播集数（含当前集），章节自然播完时递减，归零即停。
   // 与按分钟定时互斥，开启一种会取消另一种。
   const [sleepEpisodes, setSleepEpisodes] = useState<number | null>(null);
   const sleepEpisodesRef = useRef<number | null>(null);
+
+  // 暂停/恢复时同步 endTime：暂停记录时刻，恢复时把暂停时长补回 endTime。
+  useEffect(() => {
+    if (endTimeRef.current === null) return;
+    if (!isPlaying) {
+      pauseStartRef.current = Date.now();
+    } else if (pauseStartRef.current !== null) {
+      endTimeRef.current += Date.now() - pauseStartRef.current;
+      pauseStartRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying]);
 
   // 倒计时：用 endTime 推导剩余秒数。
   useEffect(() => {
@@ -175,6 +189,7 @@ export const useSleepTimer = (options: {
       intervalRef.current = null;
     }
     endTimeRef.current = null;
+    pauseStartRef.current = null;
     setSleepTimer(null);
     setEpisodeCount(episodes);
   };
@@ -194,6 +209,7 @@ export const useSleepTimer = (options: {
   const cancelSleepTimer = () => {
     setSleepTimer(null);
     endTimeRef.current = null;
+    pauseStartRef.current = null;
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
       intervalRef.current = null;
