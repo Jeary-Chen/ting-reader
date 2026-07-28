@@ -85,7 +85,8 @@ const Layout: React.FC = () => {
     if (token) {
       validateConnection();
     } else {
-      setIsConnecting(false);
+      const timer = window.setTimeout(() => setIsConnecting(false), 0);
+      return () => window.clearTimeout(timer);
     }
   }, [token, setUser]);
 

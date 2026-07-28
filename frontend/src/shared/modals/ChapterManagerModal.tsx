@@ -37,12 +37,15 @@ const ChapterManagerModal: React.FC<Props> = ({ book, bookId, initialChapters, o
   const [editingChapter, setEditingChapter] = useState<EditableChapter | null>(null);
 
   useEffect(() => {
-    setChapters(sortChapters(initialChapters));
-    setChangedIds(new Set());
-    setSelectedIds(new Set());
-    setSelectionMode(false);
-    setGroupIndex(0);
-    setSearch('');
+    const timer = window.setTimeout(() => {
+      setChapters(sortChapters(initialChapters));
+      setChangedIds(new Set());
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      setGroupIndex(0);
+      setSearch('');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [initialChapters]);
 
   useEffect(() => {
@@ -71,13 +74,16 @@ const ChapterManagerModal: React.FC<Props> = ({ book, bookId, initialChapters, o
   const extraCount = useMemo(() => chapters.filter((chapter) => Boolean(chapter.is_extra)).length, [chapters]);
 
   useEffect(() => {
-    if (activeTab === 'extra' && extraCount === 0) {
-      setActiveTab('main');
-      setGroupIndex(0);
-    } else if (activeTab === 'main' && mainCount === 0 && extraCount > 0) {
-      setActiveTab('extra');
-      setGroupIndex(0);
-    }
+    const timer = window.setTimeout(() => {
+      if (activeTab === 'extra' && extraCount === 0) {
+        setActiveTab('main');
+        setGroupIndex(0);
+      } else if (activeTab === 'main' && mainCount === 0 && extraCount > 0) {
+        setActiveTab('extra');
+        setGroupIndex(0);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [activeTab, extraCount, mainCount]);
 
   const tabChapters = useMemo(
@@ -109,7 +115,11 @@ const ChapterManagerModal: React.FC<Props> = ({ book, bookId, initialChapters, o
   }, [filteredChapters.length]);
 
   useEffect(() => {
-    setGroupIndex((current) => Math.min(current, Math.max(groups.length - 1, 0)));
+    const timer = window.setTimeout(
+      () => setGroupIndex((current) => Math.min(current, Math.max(groups.length - 1, 0))),
+      0,
+    );
+    return () => window.clearTimeout(timer);
   }, [groups.length]);
 
   const visibleChapters = useMemo(() => {

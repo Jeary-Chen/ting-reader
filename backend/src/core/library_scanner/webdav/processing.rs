@@ -592,6 +592,34 @@ impl LibraryScanner {
         } else {
             false
         };
+        if use_json_chapters {
+            let file_stems: Vec<String> = file_urls
+                .iter()
+                .map(|file_url| {
+                    let decoded_file_url = self.decode_url_path(file_url);
+                    let filename = decoded_file_url.split('/').last().unwrap_or_default();
+                    std::path::Path::new(filename)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or(filename)
+                        .to_string()
+                })
+                .collect();
+            if let Some(chapters) = json_chapters.take() {
+                let (aligned, matched_by_title) =
+                    crate::core::metadata_writer::align_chapters_to_file_stems(
+                        chapters,
+                        &file_stems,
+                    );
+                if matched_by_title {
+                    info!(
+                        "Aligned metadata.json chapters to WebDAV files by title for book: {}",
+                        book_title
+                    );
+                }
+                json_chapters = Some(aligned);
+            }
+        }
         let preserve_raw_chapter_titles =
             chapter_title_template_preserves_raw(chapter_title_template.as_deref());
 
@@ -878,31 +906,7 @@ impl LibraryScanner {
 
         // Fetch all chapters to generate metadata.json correctly with cumulative times
         let chapters = self.chapter_repo.find_by_book(&book_id).await?;
-        let mut sorted_chapters = chapters;
-        sorted_chapters.sort_by(|a, b| {
-            a.chapter_index
-                .unwrap_or(0)
-                .cmp(&b.chapter_index.unwrap_or(0))
-                .then_with(|| {
-                    natord::compare(
-                        a.title.as_deref().unwrap_or(""),
-                        b.title.as_deref().unwrap_or(""),
-                    )
-                })
-        });
-
-        let mut abs_chapters = Vec::new();
-        let mut current_time = 0.0;
-        for (idx, ch) in sorted_chapters.iter().enumerate() {
-            let duration = ch.duration.unwrap_or(0) as f64;
-            abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
-                id: idx as u32,
-                start: current_time,
-                end: current_time + duration,
-                title: ch.title.clone().unwrap_or_default(),
-            });
-            current_time += duration;
-        }
+        let abs_chapters = crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
 
         // Write metadata.json to temp dir for WebDAV book
         if scraper_config.metadata_writing_enabled {

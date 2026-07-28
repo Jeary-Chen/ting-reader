@@ -29,6 +29,7 @@ impl LibraryScanner {
     ) -> Result<bool> {
         let mut has_changes = false;
         let total_files = files.len();
+        let mut json_chapters = json_chapters;
 
         // Use JSON chapters if available and count matches
         let use_json_chapters = if let Some(ref chapters) = json_chapters {
@@ -44,6 +45,33 @@ impl LibraryScanner {
         } else {
             false
         };
+        let mut json_chapters_matched_by_title = false;
+        if use_json_chapters {
+            let file_stems: Vec<String> = files
+                .iter()
+                .map(|path| {
+                    path.file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or_default()
+                        .to_string()
+                })
+                .collect();
+            if let Some(chapters) = json_chapters.take() {
+                let (aligned, matched_by_title) =
+                    crate::core::metadata_writer::align_chapters_to_file_stems(
+                        chapters,
+                        &file_stems,
+                    );
+                if matched_by_title {
+                    json_chapters_matched_by_title = true;
+                    info!(
+                        "Aligned metadata.json chapters to local files by title for book_id: {}",
+                        book_id
+                    );
+                }
+                json_chapters = Some(aligned);
+            }
+        }
         let preserve_raw_chapter_titles =
             chapter_title_template_preserves_raw(chapter_title_template);
 
@@ -231,6 +259,17 @@ impl LibraryScanner {
                     let mut should_update = false;
                     let mut new_title = ch.title.clone();
                     let mut new_idx = ch.chapter_index;
+                    let json_duration = if json_chapters_matched_by_title {
+                        json_chapters
+                            .as_ref()
+                            .and_then(|chapters| chapters.get(index))
+                            .map(|chapter| ((chapter.end - chapter.start).round() as i32).max(0))
+                    } else {
+                        None
+                    };
+                    let duration_changed = json_duration
+                        .map(|duration| ch.duration != Some(duration))
+                        .unwrap_or(false);
                     let mut new_is_extra = if extract_extra_chapters {
                         ch.is_extra
                     } else {
@@ -274,9 +313,15 @@ impl LibraryScanner {
                     }
 
                     let scanned_path = file_path.to_string_lossy().to_string();
-                    if ch.path != scanned_path || (should_update && ch.manual_corrected == 0) {
+                    if ch.path != scanned_path
+                        || duration_changed
+                        || (should_update && ch.manual_corrected == 0)
+                    {
                         let mut updated_ch = ch.clone();
                         updated_ch.path = scanned_path;
+                        if let Some(duration) = json_duration {
+                            updated_ch.duration = Some(duration);
+                        }
                         if ch.manual_corrected == 0 {
                             updated_ch.chapter_index = new_idx;
                             updated_ch.title = new_title;

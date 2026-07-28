@@ -21,14 +21,16 @@ const SeriesModal: React.FC<SeriesModalProps> = ({ isOpen, onClose, selectedBook
   const [loading, setLoading] = useState(false);
 
   React.useEffect(() => {
-    if (isOpen && firstBook) {
-      setAuthor(firstBook.author || '');
-      setNarrator(firstBook.narrator || '');
-      setCoverUrl(firstBook.cover_url || '');
-      setDescription(firstBook.description || '');
-      // Reset title when opening
-      setTitle('');
-    }
+    const timer = window.setTimeout(() => {
+      if (isOpen && firstBook) {
+        setAuthor(firstBook.author || '');
+        setNarrator(firstBook.narrator || '');
+        setCoverUrl(firstBook.cover_url || '');
+        setDescription(firstBook.description || '');
+        setTitle('');
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [isOpen, firstBook]);
 
   if (!isOpen) return null;

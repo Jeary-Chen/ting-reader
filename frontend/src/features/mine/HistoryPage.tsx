@@ -60,9 +60,12 @@ const HistoryPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchHistory();
+    const timer = window.setTimeout(() => void fetchHistory(), 0);
     window.addEventListener('focus', fetchHistory);
-    return () => window.removeEventListener('focus', fetchHistory);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('focus', fetchHistory);
+    };
   }, []);
 
   const groups = useMemo(() => {

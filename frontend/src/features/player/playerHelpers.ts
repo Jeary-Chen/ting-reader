@@ -129,7 +129,6 @@ export const useSleepTimer = (options: {
       endTimeRef.current += Date.now() - pauseStartRef.current;
       pauseStartRef.current = null;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying]);
 
   // 倒计时：用 endTime 推导剩余秒数。

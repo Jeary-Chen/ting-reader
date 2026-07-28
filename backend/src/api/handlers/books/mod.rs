@@ -488,32 +488,8 @@ pub async fn update_book(
             // Sync chapters from DB
             let chapter_repo = ChapterRepository::new(state.book_repo.db().clone());
             if let Ok(chapters) = chapter_repo.find_by_book(&updated_book.id).await {
-                let mut sorted_chapters = chapters;
-                sorted_chapters.sort_by(|a, b| {
-                    a.chapter_index
-                        .unwrap_or(0)
-                        .cmp(&b.chapter_index.unwrap_or(0))
-                        .then_with(|| {
-                            natord::compare(
-                                a.title.as_deref().unwrap_or(""),
-                                b.title.as_deref().unwrap_or(""),
-                            )
-                        })
-                });
-
-                let mut abs_chapters = Vec::new();
-                let mut current_time = 0.0;
-                for (idx, ch) in sorted_chapters.iter().enumerate() {
-                    let duration = ch.duration.unwrap_or(0) as f64;
-                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
-                        id: idx as u32,
-                        start: current_time,
-                        end: current_time + duration,
-                        title: ch.title.clone().unwrap_or_default(),
-                    });
-                    current_time += duration;
-                }
-                metadata_json.chapters = abs_chapters;
+                metadata_json.chapters =
+                    crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
             }
 
             // Sync series from DB
@@ -1004,32 +980,8 @@ pub async fn update_chapter(
 
             // Sync chapters from DB
             if let Ok(chapters) = chapter_repo.find_by_book(&book.id).await {
-                let mut sorted_chapters = chapters;
-                sorted_chapters.sort_by(|a, b| {
-                    a.chapter_index
-                        .unwrap_or(0)
-                        .cmp(&b.chapter_index.unwrap_or(0))
-                        .then_with(|| {
-                            natord::compare(
-                                a.title.as_deref().unwrap_or(""),
-                                b.title.as_deref().unwrap_or(""),
-                            )
-                        })
-                });
-
-                let mut abs_chapters = Vec::new();
-                let mut current_time = 0.0;
-                for (idx, ch) in sorted_chapters.iter().enumerate() {
-                    let duration = ch.duration.unwrap_or(0) as f64;
-                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
-                        id: idx as u32,
-                        start: current_time,
-                        end: current_time + duration,
-                        title: ch.title.clone().unwrap_or_default(),
-                    });
-                    current_time += duration;
-                }
-                metadata_json.chapters = abs_chapters;
+                metadata_json.chapters =
+                    crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
             }
 
             // Sync series from DB
@@ -1246,32 +1198,8 @@ pub async fn batch_update_chapters(
 
             // Sync chapters from DB
             if let Ok(chapters) = chapter_repo.find_by_book(&book.id).await {
-                let mut sorted_chapters = chapters;
-                sorted_chapters.sort_by(|a, b| {
-                    a.chapter_index
-                        .unwrap_or(0)
-                        .cmp(&b.chapter_index.unwrap_or(0))
-                        .then_with(|| {
-                            natord::compare(
-                                a.title.as_deref().unwrap_or(""),
-                                b.title.as_deref().unwrap_or(""),
-                            )
-                        })
-                });
-
-                let mut abs_chapters = Vec::new();
-                let mut current_time = 0.0;
-                for (idx, ch) in sorted_chapters.iter().enumerate() {
-                    let duration = ch.duration.unwrap_or(0) as f64;
-                    abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
-                        id: idx as u32,
-                        start: current_time,
-                        end: current_time + duration,
-                        title: ch.title.clone().unwrap_or_default(),
-                    });
-                    current_time += duration;
-                }
-                metadata_json.chapters = abs_chapters;
+                metadata_json.chapters =
+                    crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
             }
 
             // Sync series from DB

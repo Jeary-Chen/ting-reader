@@ -56,49 +56,6 @@ const Player: React.FC = () => {
     const base = API_BASE_URL || window.location.origin;
     return `${base.replace(/\/$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
   };
-  const streamStartOffsetRef = useRef<{
-    chapterId: string | null;
-    offset: number;
-  }>({
-    chapterId: null,
-    offset: 0,
-  });
-
-  const getStreamUrl = (chapterId: string) => {
-    let url = "";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    if ((window as any).electronAPI) {
-      // Electron mode: use custom protocol for caching
-      const remote = encodeURIComponent(API_BASE_URL);
-      url = `ting://stream/${chapterId}?token=${token}&remote=${remote}`;
-    } else {
-      url = `${API_BASE_URL}/api/stream/${chapterId}?token=${token}`;
-    }
-
-    if (shouldTranscode) {
-      url += "&transcode=mp3";
-    }
-
-    // Keep this fixed per chapter so the backend can log the start position without reloading as progress changes.
-    const initialOffset =
-      streamStartOffsetRef.current.chapterId === chapterId
-        ? streamStartOffsetRef.current.offset
-        : 0;
-    const explicitSeekOffset =
-      currentChapter?.id === chapterId ? seekOffset : null;
-    const requestSeekOffset =
-      explicitSeekOffset !== null ? explicitSeekOffset : initialOffset;
-    if (requestSeekOffset > 0) {
-      url += `&seek=${Math.floor(requestSeekOffset)}`;
-    }
-
-    // Add retry count to force URL refresh even if shouldTranscode didn't change (e.g. network retry)
-    if (retryCount > 0) {
-      url += `&retry=${retryCount}`;
-    }
-
-    return url;
-  };
 
   const {
     currentBook,
@@ -124,16 +81,6 @@ const Player: React.FC = () => {
     setIsCollapsed,
     isSeriesEditing,
   } = usePlayerStore();
-
-  if (
-    currentChapter?.id &&
-    streamStartOffsetRef.current.chapterId !== currentChapter.id
-  ) {
-    streamStartOffsetRef.current = {
-      chapterId: currentChapter.id,
-      offset: Math.max(0, Math.floor(currentTime || 0)),
-    };
-  }
 
   const { isConnected: isWsConnected, sendProgress: wsSendProgress } = useWebSocket();
 
@@ -242,6 +189,10 @@ const Player: React.FC = () => {
   const [retryCount, setRetryCount] = useState(0);
   const [shouldTranscode, setShouldTranscode] = useState(false);
   const [seekOffset, setSeekOffset] = useState<number | null>(null);
+  const [streamStartOffset, setStreamStartOffset] = useState<{
+    chapterId: string | null;
+    offset: number;
+  }>({ chapterId: null, offset: 0 });
   const [hlsStreamUrl, setHlsStreamUrl] = useState<string | null>(null);
   const [hlsSessionId, setHlsSessionId] = useState<string | null>(null);
   const [hlsChapterId, setHlsChapterId] = useState<string | null>(null);
@@ -258,11 +209,31 @@ const Player: React.FC = () => {
     shouldUseHlsForCurrentChapter &&
     hlsChapterId === currentChapter?.id &&
     !!hlsStreamUrl;
+  const getStreamUrl = (chapterId: string) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let url = (window as any).electronAPI
+      ? `ting://stream/${chapterId}?token=${token}&remote=${encodeURIComponent(API_BASE_URL)}`
+      : `${API_BASE_URL}/api/stream/${chapterId}?token=${token}`;
+
+    if (shouldTranscode) url += "&transcode=mp3";
+
+    const initialOffset =
+      streamStartOffset.chapterId === chapterId
+        ? streamStartOffset.offset
+        : currentChapter?.id === chapterId
+          ? Math.max(0, Math.floor(currentTime || 0))
+          : 0;
+    const explicitSeekOffset = currentChapter?.id === chapterId ? seekOffset : null;
+    const requestSeekOffset = explicitSeekOffset !== null ? explicitSeekOffset : initialOffset;
+    if (requestSeekOffset > 0) url += `&seek=${Math.floor(requestSeekOffset)}`;
+    if (retryCount > 0) url += `&retry=${retryCount}`;
+    return url;
+  };
   const getTranscodeStartOffset = () => {
     if (!shouldTranscode) return 0;
     if (seekOffset !== null) return Math.max(0, seekOffset);
-    return streamStartOffsetRef.current.chapterId === currentChapter?.id
-      ? Math.max(0, streamStartOffsetRef.current.offset)
+    return streamStartOffset.chapterId === currentChapter?.id
+      ? Math.max(0, streamStartOffset.offset)
       : 0;
   };
   const getMediaOffset = () =>
@@ -271,8 +242,8 @@ const Player: React.FC = () => {
   const tryTranscodeFallback = () => {
     if (shouldTranscode || retryCount >= 3) return;
     const chapterStartOffset =
-      streamStartOffsetRef.current.chapterId === currentChapter?.id
-        ? streamStartOffsetRef.current.offset
+      streamStartOffset.chapterId === currentChapter?.id
+        ? streamStartOffset.offset
         : 0;
     const fallbackOffset = Math.max(
       0,
@@ -347,31 +318,42 @@ const Player: React.FC = () => {
     if (ref === volumeControlRef) setShowVolumeControl(false);
   });
 
+  useEffect(() => {
+    const chapterId = currentChapter?.id ?? null;
+    const offset = chapterId
+      ? Math.max(0, Math.floor(usePlayerStore.getState().currentTime || 0))
+      : 0;
+    const timer = window.setTimeout(
+      () => setStreamStartOffset({ chapterId, offset }),
+      0,
+    );
+    return () => window.clearTimeout(timer);
+  }, [currentChapter?.id]);
+
   // Reset all playback state when chapter ID changes
   useEffect(() => {
     isInitialLoadRef.current = true;
-    setShouldTranscode(false);
-    setSeekOffset(null);
-    setHlsStreamUrl(null);
-    setHlsSessionId(null);
-    setHlsChapterId(null);
-    setHlsSeekOffset(0);
     hlsRequestIdRef.current += 1;
-    setTimeout(() => {
+    const timer = window.setTimeout(() => {
+      setShouldTranscode(false);
+      setSeekOffset(null);
+      setHlsStreamUrl(null);
+      setHlsSessionId(null);
+      setHlsChapterId(null);
+      setHlsSeekOffset(0);
       setBufferedTime(0);
       setRetryCount(0);
+      if (currentChapter?.duration && currentChapter.duration > 0) {
+        setDuration(currentChapter.duration);
+        console.log(
+          `Chapter changed; duration set immediately: ${currentChapter.duration}s`,
+        );
+      } else {
+        setDuration(0);
+        console.log("Chapter changed; waiting for audio metadata duration");
+      }
     }, 0);
-
-    // Apply the chapter duration immediately, without waiting for audio metadata.
-    if (currentChapter?.duration && currentChapter.duration > 0) {
-      setDuration(currentChapter.duration);
-      console.log(
-        `Chapter changed; duration set immediately: ${currentChapter.duration}s`,
-      );
-    } else {
-      setDuration(0);
-      console.log("Chapter changed; waiting for audio metadata duration");
-    }
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChapter?.id]);
 
@@ -384,58 +366,62 @@ const Player: React.FC = () => {
   }, [currentChapter?.duration, setDuration]);
 
   useEffect(() => {
-    if (!currentChapter || !shouldUseHlsForCurrentChapter) {
-      setHlsStreamUrl(null);
-      setHlsSessionId(null);
-      setHlsChapterId(null);
-      setHlsSeekOffset(0);
-      return;
-    }
-
-    const requestId = ++hlsRequestIdRef.current;
-    let startAt = Math.max(0, usePlayerStore.getState().currentTime || 0);
-    if (
-      isInitialLoadRef.current &&
-      currentBook?.skip_intro &&
-      startAt < currentBook.skip_intro
-    ) {
-      startAt = currentBook.skip_intro;
-    }
-
-    setHlsChapterId(currentChapter.id);
-    setHlsStreamUrl(null);
-    setHlsSessionId(null);
-    setHlsSeekOffset(startAt);
-    setCurrentTime(startAt);
-    isInitialLoadRef.current = false;
-
-    const params: Record<string, string | number> = { transcode: "hls" };
-    if (token) params.token = token;
-    if (startAt > 0) params.seek = startAt;
-
-    apiClient
-      .get(`/api/stream/${currentChapter.id}`, { params })
-      .then((res) => {
-        if (requestId !== hlsRequestIdRef.current) return;
-        const playlistUrl = res.data?.playlist_url;
-        const sessionId = res.data?.session_id;
-        if (!playlistUrl || !sessionId) {
-          throw new Error("HLS response missing playlist URL or session ID");
-        }
-        setHlsSessionId(sessionId);
-        setHlsStreamUrl(toAbsoluteMediaUrl(playlistUrl));
-      })
-      .catch((err) => {
-        if (requestId !== hlsRequestIdRef.current) return;
-        console.error("HLS stream initialization failed", err);
+    let requestId: number | null = null;
+    const timer = window.setTimeout(() => {
+      if (!currentChapter || !shouldUseHlsForCurrentChapter) {
         setHlsStreamUrl(null);
         setHlsSessionId(null);
         setHlsChapterId(null);
-        tryTranscodeFallback();
-      });
+        setHlsSeekOffset(0);
+        return;
+      }
+
+      requestId = ++hlsRequestIdRef.current;
+      let startAt = Math.max(0, usePlayerStore.getState().currentTime || 0);
+      if (
+        isInitialLoadRef.current &&
+        currentBook?.skip_intro &&
+        startAt < currentBook.skip_intro
+      ) {
+        startAt = currentBook.skip_intro;
+      }
+
+      setHlsChapterId(currentChapter.id);
+      setHlsStreamUrl(null);
+      setHlsSessionId(null);
+      setHlsSeekOffset(startAt);
+      setCurrentTime(startAt);
+      isInitialLoadRef.current = false;
+
+      const params: Record<string, string | number> = { transcode: "hls" };
+      if (token) params.token = token;
+      if (startAt > 0) params.seek = startAt;
+
+      void apiClient
+        .get(`/api/stream/${currentChapter.id}`, { params })
+        .then((res) => {
+          if (requestId !== hlsRequestIdRef.current) return;
+          const playlistUrl = res.data?.playlist_url;
+          const sessionId = res.data?.session_id;
+          if (!playlistUrl || !sessionId) {
+            throw new Error("HLS response missing playlist URL or session ID");
+          }
+          setHlsSessionId(sessionId);
+          setHlsStreamUrl(toAbsoluteMediaUrl(playlistUrl));
+        })
+        .catch((err) => {
+          if (requestId !== hlsRequestIdRef.current) return;
+          console.error("HLS stream initialization failed", err);
+          setHlsStreamUrl(null);
+          setHlsSessionId(null);
+          setHlsChapterId(null);
+          tryTranscodeFallback();
+        });
+    }, 0);
 
     return () => {
-      hlsRequestIdRef.current += 1;
+      window.clearTimeout(timer);
+      if (requestId !== null) hlsRequestIdRef.current += 1;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -828,7 +814,8 @@ const Player: React.FC = () => {
   }, [location.pathname, isExpanded, isHiddenPage, setIsExpanded]);
 
   useEffect(() => {
-    setShowVolumeControl(false);
+    const timer = window.setTimeout(() => setShowVolumeControl(false), 0);
+    return () => window.clearTimeout(timer);
   }, [isExpanded]);
 
   // Fullscreen Logic for Widget

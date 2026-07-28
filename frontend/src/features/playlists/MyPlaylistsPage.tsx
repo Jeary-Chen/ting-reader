@@ -141,7 +141,8 @@ const MyPlaylistsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchPlaylists();
+    const timer = window.setTimeout(() => void fetchPlaylists(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {

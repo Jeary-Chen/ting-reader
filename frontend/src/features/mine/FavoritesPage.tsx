@@ -14,7 +14,7 @@ const FavoritesPage: React.FC = () => {
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   const [books, setBooks] = useState<Book[]>([]);
   const [loading, setLoading] = useState(true);
-  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('rect');
+  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('square');
   const [iconSize, setIconSize] = useState<'small' | 'medium' | 'large'>('medium');
 
   useEffect(() => {

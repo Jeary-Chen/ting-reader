@@ -4,10 +4,10 @@ import apiClient from '../api/client';
 export type CoverShape = 'rect' | 'square';
 
 const COVER_SHAPE_EVENT = 'ting-reader-bookshelf-cover-shape-change';
-let cachedCoverShape: CoverShape = 'rect';
+let cachedCoverShape: CoverShape = 'square';
 
 export const normalizeCoverShape = (value: unknown): CoverShape => (
-  value === 'square' ? 'square' : 'rect'
+  value === 'rect' ? 'rect' : 'square'
 );
 
 export const getCoverAspectClass = (coverShape: CoverShape) => (

@@ -79,7 +79,8 @@ const SeriesDetailPage: React.FC = () => {
       }
     };
     loadSettings();
-    fetchSeries();
+    const timer = window.setTimeout(() => void fetchSeries(), 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 

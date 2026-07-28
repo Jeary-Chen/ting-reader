@@ -63,7 +63,8 @@ const NotificationSettingsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData();
+    const timer = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const enabledCount = webhooks.filter((item) => item.enabled).length;

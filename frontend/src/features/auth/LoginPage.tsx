@@ -31,16 +31,22 @@ const LoginPage: React.FC = () => {
   const isElectron = !!(window as any).electronAPI;
 
   useEffect(() => {
-    if (storedServerUrl && isElectron) {
-      setServerAddress(storedServerUrl);
-    }
+    const timer = window.setTimeout(() => {
+      if (storedServerUrl && isElectron) {
+        setServerAddress(storedServerUrl);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [storedServerUrl, isElectron]);
 
   useEffect(() => {
-    if (rememberPassword) {
-      setUsername(safeStorage.getItem('login_username') || '');
-      setPassword(safeStorage.getItem('login_password') || '');
-    }
+    const timer = window.setTimeout(() => {
+      if (rememberPassword) {
+        setUsername(safeStorage.getItem('login_username') || '');
+        setPassword(safeStorage.getItem('login_password') || '');
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [rememberPassword]);
 
   const resolveServerUrl = async (url: string) => {

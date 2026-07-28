@@ -28,7 +28,7 @@ const BookshelfPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'createdAt' | 'title' | 'author' | 'year'>('createdAt');
   const [iconSize, setIconSize] = useState<'small' | 'medium' | 'large'>('medium');
-  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('rect');
+  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('square');
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   
@@ -77,7 +77,8 @@ const BookshelfPage: React.FC = () => {
 
   // Reset visible count when filters change
   useEffect(() => {
-    setVisibleCount(50);
+    const timer = window.setTimeout(() => setVisibleCount(50), 0);
+    return () => window.clearTimeout(timer);
   }, [sortBy, selectedLibraryId]);
 
   useEffect(() => {
@@ -191,7 +192,8 @@ const BookshelfPage: React.FC = () => {
 
   useEffect(() => {
     if (settingsLoaded) {
-      fetchData();
+      const timer = window.setTimeout(() => void fetchData(), 0);
+      return () => window.clearTimeout(timer);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLibraryId, settingsLoaded]);
@@ -622,8 +624,8 @@ const BookshelfPage: React.FC = () => {
                   title: t('bookshelf.coverShape'),
                   value: coverShape,
                   options: [
-                    { value: 'rect', label: t('bookshelf.rectCoverDefault') },
-                    { value: 'square', label: t('bookshelf.squareCover') },
+                    { value: 'rect', label: t('bookshelf.rectCover') },
+                    { value: 'square', label: t('bookshelf.squareCoverDefault') },
                   ],
                   onChange: (value) => handleCoverShapeChange(value as 'rect' | 'square'),
                 },

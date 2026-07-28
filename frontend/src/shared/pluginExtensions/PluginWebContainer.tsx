@@ -114,34 +114,36 @@ const PluginWebContainer = ({
   };
 
   useEffect(() => {
-    if (!src || !srcBaseUrl) {
-      setSrcDoc(undefined);
-      return;
-    }
-
     let cancelled = false;
-    setLoadError(undefined);
-    setSrcDoc(undefined);
+    const timer = window.setTimeout(() => {
+      if (!src || !srcBaseUrl) {
+        setSrcDoc(undefined);
+        return;
+      }
 
-    void apiClient
-      .get<string>(src, { responseType: "text" })
-      .then((response) => {
-        if (cancelled) return;
-        const html =
-          typeof response.data === "string"
-            ? response.data
-            : String(response.data ?? "");
-        setSrcDoc(withBaseHref(html, srcBaseUrl));
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setLoadError(
-          error instanceof Error ? error.message : "Plugin UI failed to load.",
-        );
-      });
+      setLoadError(undefined);
+      setSrcDoc(undefined);
+      void apiClient
+        .get<string>(src, { responseType: "text" })
+        .then((response) => {
+          if (cancelled) return;
+          const html =
+            typeof response.data === "string"
+              ? response.data
+              : String(response.data ?? "");
+          setSrcDoc(withBaseHref(html, srcBaseUrl));
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setLoadError(
+            error instanceof Error ? error.message : "Plugin UI failed to load.",
+          );
+        });
+    }, 0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [src, srcBaseUrl]);
 

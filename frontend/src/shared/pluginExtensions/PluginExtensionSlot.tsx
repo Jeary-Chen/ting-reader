@@ -340,9 +340,10 @@ const PluginBuiltinView = ({
   };
 
   useEffect(() => {
-    if (config.autoRun) {
-      void run();
-    }
+    const timer = window.setTimeout(() => {
+      if (config.autoRun) void run();
+    }, 0);
+    return () => window.clearTimeout(timer);
     // Run once per opened extension; config is derived from the extension.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [extension.id]);

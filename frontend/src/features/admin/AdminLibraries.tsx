@@ -116,11 +116,6 @@ const AdminLibraries: React.FC = () => {
     scraper_config: DEFAULT_SCRAPER_CONFIG
   });
 
-  useEffect(() => {
-    fetchLibraries();
-    fetchScraperSources();
-  }, []);
-
   const fetchScraperSources = async () => {
     try {
       const response = await apiClient.get('/api/scraper/sources');
@@ -131,20 +126,6 @@ const AdminLibraries: React.FC = () => {
       console.error('Failed to fetch scraper sources', err);
     }
   };
-
-  useEffect(() => {
-    if (isModalOpen && formData.type === 'local') {
-      fetchStorageRoots();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isModalOpen, formData.type]);
-
-  useEffect(() => {
-    if (isModalOpen && formData.type === 'local') {
-      fetchFolders(currentBrowsePath);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isModalOpen, formData.type, currentBrowsePath, selectedStorageRoot]);
 
   const fetchFolders = async (subPath: string) => {
     try {
@@ -170,6 +151,12 @@ const AdminLibraries: React.FC = () => {
       const nextRoot = matchedRoot?.path || selectedStorageRoot || roots[0]?.path || '';
       setSelectedStorageRoot(nextRoot);
       setCurrentBrowsePath(nextRoot ? relativePathFromRoot(formData.url, nextRoot) : '');
+      if (!formData.url.trim() && nextRoot) {
+        setFormData((current) => {
+          if (current.type !== 'local' || current.url.trim()) return current;
+          return {...current, url: nextRoot, root_path: '/'};
+        });
+      }
     } catch (err) {
       console.error('Failed to fetch storage roots', err);
       setStorageRoots([]);
@@ -188,6 +175,30 @@ const AdminLibraries: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchLibraries();
+      void fetchScraperSources();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (isModalOpen && formData.type === 'local') void fetchStorageRoots();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, formData.type]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (isModalOpen && formData.type === 'local') void fetchFolders(currentBrowsePath);
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isModalOpen, formData.type, currentBrowsePath, selectedStorageRoot]);
 
   const openEditModal = (lib: Library) => {
     setEditingId(lib.id);
@@ -255,6 +266,14 @@ const AdminLibraries: React.FC = () => {
   const handleSaveLibrary = async (e: React.FormEvent) => {
     e.preventDefault();
     if (savingLibrary) return;
+    const browsedLocalPath = selectedStorageRoot
+      ? joinRootAndSubPath(selectedStorageRoot, currentBrowsePath)
+      : currentBrowsePath;
+    const localPath = formData.url.trim() || browsedLocalPath.trim();
+    if (formData.type === 'local' && !localPath) {
+      alert(t('adminLibraries.localPathRequired'));
+      return;
+    }
     setSavingLibrary(true);
     try {
       const payload: Record<string, unknown> = {
@@ -263,7 +282,7 @@ const AdminLibraries: React.FC = () => {
       };
 
       if (formData.type === 'local') {
-        payload.path = formData.url;
+        payload.path = localPath;
       } else if (formData.type === 'rss') {
         payload.rss_feed_url = formData.url;
         payload.root_path = '/';

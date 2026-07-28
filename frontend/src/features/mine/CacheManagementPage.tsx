@@ -13,10 +13,6 @@ const CacheManagementPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [expandedBookTitle, setExpandedBookTitle] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCachedFiles();
-  }, []);
-
   const fetchCachedFiles = async () => {
     try {
       const res = await apiClient.get('/api/cache');
@@ -28,6 +24,11 @@ const CacheManagementPage: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void fetchCachedFiles(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleClearAll = async () => {
     if (!confirm(t('downloadsPage.clearAllConfirm'))) return;

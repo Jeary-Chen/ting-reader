@@ -148,7 +148,8 @@ const ScrapeDiffModal: React.FC<Props> = ({ bookId, onClose, onSave }) => {
   }, [bookId, buildSearchValuesBySource, t]);
 
   useEffect(() => {
-    loadInitialData();
+    const timer = window.setTimeout(() => void loadInitialData(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadInitialData]);
 
   const clearSearchResults = () => {

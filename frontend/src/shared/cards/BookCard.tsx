@@ -15,7 +15,7 @@ interface BookCardProps {
   coverShape?: 'rect' | 'square';
 }
 
-const BookCard: React.FC<BookCardProps> = ({ book, onClick, disableLink, coverShape = 'rect' }) => {
+const BookCard: React.FC<BookCardProps> = ({ book, onClick, disableLink, coverShape = 'square' }) => {
   const { t } = useTranslation();
   const effectiveThemeColor = book.theme_color && !isTooLight(book.theme_color) ? book.theme_color : undefined;
 

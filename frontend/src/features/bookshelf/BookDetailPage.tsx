@@ -117,7 +117,7 @@ const BookDetailPage: React.FC = () => {
   const allChaptersCacheRef = useRef<Chapter[] | null>(null);
 
   // User Settings
-  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('rect');
+  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('square');
 
   // Regex Generator State
   const [showRegexGenerator, setShowRegexGenerator] = useState(false);
@@ -152,25 +152,31 @@ const BookDetailPage: React.FC = () => {
   // Reset scroll state when book ID changes
   useEffect(() => {
     hasInitialScrolled.current = false;
-    setHighlightedChapterId(null);
     allChaptersCacheRef.current = null;
-    setChapters([]);
-    setChapterTotals({ total: 0, main: 0, extra: 0 });
-    setBookProgress(null);
-    setActiveTab('main');
-    setCurrentGroupIndex(0);
-    setChapterAscending(true);
-    setChapterGroupsDescending(false);
-    setChapterGroupOrders([]);
-    setEditChapterGroupOrder('asc');
+    const timer = window.setTimeout(() => {
+      setHighlightedChapterId(null);
+      setChapters([]);
+      setChapterTotals({ total: 0, main: 0, extra: 0 });
+      setBookProgress(null);
+      setActiveTab('main');
+      setCurrentGroupIndex(0);
+      setChapterAscending(true);
+      setChapterGroupsDescending(false);
+      setChapterGroupOrders([]);
+      setEditChapterGroupOrder('asc');
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [id, entryChapterId]);
 
   // Clear highlighted chapter when current chapter changes (user plays a new chapter)
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   useEffect(() => {
-    if (currentChapter?.book_id === book?.id && !entryChapterId) {
-      setHighlightedChapterId(null);
-    }
+    const timer = window.setTimeout(() => {
+      if (currentChapter?.book_id === book?.id && !entryChapterId) {
+        setHighlightedChapterId(null);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChapter?.id, book?.id, entryChapterId]);
 
@@ -210,9 +216,10 @@ const BookDetailPage: React.FC = () => {
   const storeChapters = usePlayerStore((state) => state.chapters);
 
   useEffect(() => {
-    if (book) {
-      setThemeColor(book.theme_color || null);
-    }
+    const timer = window.setTimeout(() => {
+      if (book) setThemeColor(book.theme_color || null);
+    }, 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book?.theme_color]);
 
@@ -419,19 +426,17 @@ const BookDetailPage: React.FC = () => {
 
   // Auto-highlight current chapter logic (without scroll)
   useEffect(() => {
-    if (book?.id !== id) return;
-
-    if (entryChapterId && chapters.some(chapter => chapter.id === entryChapterId)) {
-      setHighlightedChapterId(entryChapterId);
-      return;
-    }
-
-    if (resumeChapter) {
-      setHighlightedChapterId(resumeChapter.id);
-      return;
-    }
-
-    setHighlightedChapterId(null);
+    const timer = window.setTimeout(() => {
+      if (book?.id !== id) return;
+      if (entryChapterId && chapters.some(chapter => chapter.id === entryChapterId)) {
+        setHighlightedChapterId(entryChapterId);
+      } else if (resumeChapter) {
+        setHighlightedChapterId(resumeChapter.id);
+      } else {
+        setHighlightedChapterId(null);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [book?.id, id, resumeChapter, entryChapterId, chapters, t]);
 
   const doScroll = (chapterId: string, groupIndex: number) => {

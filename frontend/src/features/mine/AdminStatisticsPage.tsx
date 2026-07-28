@@ -53,7 +53,8 @@ const AdminStatisticsPage: React.FC = () => {
   }, [t]);
 
   useEffect(() => {
-    fetchReport();
+    const timer = window.setTimeout(() => void fetchReport(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchReport]);
 
   const maxUserListen = useMemo(

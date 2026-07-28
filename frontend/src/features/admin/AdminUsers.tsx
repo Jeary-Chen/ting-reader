@@ -37,11 +37,6 @@ const AdminUsers: React.FC = () => {
   const [selectedBooks, setSelectedBooks] = useState<Book[]>([]);
   const [isSearchingBooks, setIsSearchingBooks] = useState(false);
 
-  useEffect(() => {
-    fetchUsers();
-    fetchLibraries();
-  }, []);
-
   const fetchLibraries = async () => {
     try {
       const response = await apiClient.get('/api/libraries');
@@ -61,6 +56,14 @@ const AdminUsers: React.FC = () => {
       // setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchUsers();
+      void fetchLibraries();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (bookSearchQuery.trim().length > 0) {
@@ -88,8 +91,11 @@ const AdminUsers: React.FC = () => {
       }, 500);
       return () => clearTimeout(timer);
     } else {
-      setBookSearchResults([]);
-      setSeriesSearchResults([]);
+      const timer = setTimeout(() => {
+        setBookSearchResults([]);
+        setSeriesSearchResults([]);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [bookSearchQuery]);
 

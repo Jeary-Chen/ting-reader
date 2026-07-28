@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import apiClient from '../../core/api/client';
 import type { Book, Library, Series } from '../../core/types';
 import BookCard from '../../shared/cards/BookCard';
@@ -6,6 +6,119 @@ import { Search as SearchIcon, Loader2, BookX, ChevronLeft, ChevronRight, Slider
 import { usePlayerStore } from '../../core/stores/playerStore';
 import BackButton from '../../shared/widgets/BackButton';
 import { useTranslation } from 'react-i18next';
+
+type FilterOption = string | { id: string; name: string };
+
+interface FilterRowProps {
+  label: string;
+  allLabel: string;
+  items: FilterOption[];
+  selected: string;
+  onSelect: (value: string) => void;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+}
+
+const scrollFilterRow = (
+  ref: React.RefObject<HTMLDivElement | null>,
+  direction: 'left' | 'right',
+) => {
+  ref.current?.scrollBy({
+    left: direction === 'left' ? -300 : 300,
+    behavior: 'smooth',
+  });
+};
+
+const FilterRow: React.FC<FilterRowProps> = ({
+  label,
+  allLabel,
+  items,
+  selected,
+  onSelect,
+  scrollRef,
+}) => {
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkScroll = useCallback(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const { scrollLeft, scrollWidth, clientWidth } = element;
+    setCanScrollLeft(scrollLeft > 0);
+    setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 1);
+  }, [scrollRef]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(checkScroll);
+    window.addEventListener('resize', checkScroll);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('resize', checkScroll);
+    };
+  }, [checkScroll, items]);
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="flex flex-row items-center gap-3 sm:gap-6 py-1">
+      <div className="text-sm font-bold text-slate-400 shrink-0 min-w-[60px] sm:min-w-[70px] text-left">
+        {label}
+      </div>
+      <div className="relative flex-1 group/row min-w-0">
+        {canScrollLeft && (
+          <button
+            onClick={() => scrollFilterRow(scrollRef, 'left')}
+            className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 rounded-full shadow-md border border-slate-100 dark:border-slate-700 text-slate-400 hover:text-primary-500 hidden sm:flex items-center justify-center backdrop-blur-sm transition-all animate-in fade-in zoom-in duration-200"
+          >
+            <ChevronLeft size={16} />
+          </button>
+        )}
+
+        <div
+          ref={scrollRef}
+          onScroll={checkScroll}
+          className="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth pr-4 sm:pr-0 -mr-4 sm:mr-0 mask-linear-fade"
+        >
+          <button
+            onClick={() => onSelect('')}
+            className={`shrink-0 px-3 py-1.5 rounded-lg text-sm transition-all whitespace-nowrap ${
+              selected === ''
+                ? 'bg-primary-500 text-white font-medium shadow-md shadow-primary-500/20'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            {allLabel}
+          </button>
+          {items.map((item) => {
+            const value = typeof item === 'string' ? item : item.id;
+            const itemLabel = typeof item === 'string' ? item : item.name;
+            return (
+              <button
+                key={value}
+                onClick={() => onSelect(selected === value ? '' : value)}
+                className={`shrink-0 px-3 py-1.5 rounded-lg text-sm transition-all whitespace-nowrap ${
+                  selected === value
+                    ? 'bg-primary-500 text-white font-medium shadow-md shadow-primary-500/20'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                {itemLabel}
+              </button>
+            );
+          })}
+        </div>
+
+        {canScrollRight && (
+          <button
+            onClick={() => scrollFilterRow(scrollRef, 'right')}
+            className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 rounded-full shadow-md border border-slate-100 dark:border-slate-700 text-slate-400 hover:text-primary-500 hidden sm:flex items-center justify-center backdrop-blur-sm transition-all animate-in fade-in zoom-in duration-200"
+          >
+            <ChevronRight size={16} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
 
 const SearchPage: React.FC = () => {
   const { t } = useTranslation();
@@ -36,29 +149,17 @@ const SearchPage: React.FC = () => {
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   
   // Cover shape and icon size settings from bookshelf
-  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('rect');
+  const [coverShape, setCoverShape] = useState<'rect' | 'square'>('square');
   const [iconSize, setIconSize] = useState<'small' | 'medium' | 'large'>('medium');
 
   // Scroll refs for filter rows
-  const filterRowRefs = {
-    libraries: useRef<HTMLDivElement>(null),
-    series: useRef<HTMLDivElement>(null),
-    tags: useRef<HTMLDivElement>(null),
-    genres: useRef<HTMLDivElement>(null),
-    years: useRef<HTMLDivElement>(null),
-    authors: useRef<HTMLDivElement>(null),
-    narrators: useRef<HTMLDivElement>(null),
-  };
-
-  const scrollRow = (ref: React.RefObject<HTMLDivElement | null>, direction: 'left' | 'right') => {
-    if (ref.current) {
-      const scrollAmount = 300;
-      ref.current.scrollBy({
-        left: direction === 'left' ? -scrollAmount : scrollAmount,
-        behavior: 'smooth'
-      });
-    }
-  };
+  const librariesScrollRef = useRef<HTMLDivElement>(null);
+  const seriesScrollRef = useRef<HTMLDivElement>(null);
+  const tagsScrollRef = useRef<HTMLDivElement>(null);
+  const genresScrollRef = useRef<HTMLDivElement>(null);
+  const yearsScrollRef = useRef<HTMLDivElement>(null);
+  const authorsScrollRef = useRef<HTMLDivElement>(null);
+  const narratorsScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -201,104 +302,6 @@ const SearchPage: React.FC = () => {
     searchBooks();
   }, [debouncedQuery, selectedTag, selectedGenre, selectedYear, selectedAuthor, selectedNarrator, selectedLibraryId, selectedSeries, allSeries]);
 
-  // Filter Row Component
-  const FilterRow = ({ 
-    label, 
-    items, 
-    selected, 
-    onSelect, 
-    scrollRef 
-  }: { 
-    label: string, 
-    items: string[] | {id: string, name: string}[], 
-    selected: string, 
-    onSelect: (val: string) => void,
-    scrollRef: React.RefObject<HTMLDivElement | null>
-  }) => {
-    const [canScrollLeft, setCanScrollLeft] = useState(false);
-    const [canScrollRight, setCanScrollRight] = useState(false);
-
-    const checkScroll = () => {
-      if (scrollRef.current) {
-        const { scrollLeft, scrollWidth, clientWidth } = scrollRef.current;
-        setCanScrollLeft(scrollLeft > 0);
-        setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 1); // -1 buffer
-      }
-    };
-
-    useEffect(() => {
-      checkScroll();
-      window.addEventListener('resize', checkScroll);
-      return () => window.removeEventListener('resize', checkScroll);
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [items]);
-
-    if (!items || items.length === 0) return null;
-
-    return (
-      <div className="flex flex-row items-center gap-3 sm:gap-6 py-1">
-        <div className="text-sm font-bold text-slate-400 shrink-0 min-w-[60px] sm:min-w-[70px] text-left">
-          {label}
-        </div>
-        <div className="relative flex-1 group/row min-w-0">
-          {/* Left Arrow */}
-          {canScrollLeft && (
-            <button 
-              onClick={() => scrollRow(scrollRef, 'left')}
-              className="absolute -left-3 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 rounded-full shadow-md border border-slate-100 dark:border-slate-700 text-slate-400 hover:text-primary-500 hidden sm:flex items-center justify-center backdrop-blur-sm transition-all animate-in fade-in zoom-in duration-200"
-            >
-              <ChevronLeft size={16} />
-            </button>
-          )}
-          
-          <div 
-            ref={scrollRef}
-            onScroll={checkScroll}
-            className="flex items-center gap-2 overflow-x-auto no-scrollbar scroll-smooth pr-4 sm:pr-0 -mr-4 sm:mr-0 mask-linear-fade"
-          >
-            <button
-              onClick={() => onSelect('')}
-              className={`shrink-0 px-3 py-1.5 rounded-lg text-sm transition-all whitespace-nowrap ${
-                selected === ''
-                  ? 'bg-primary-500 text-white font-medium shadow-md shadow-primary-500/20'
-                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              {t('searchPage.all')}
-            </button>
-            {items.map((item) => {
-              const value = typeof item === 'string' ? item : item.id;
-              const label = typeof item === 'string' ? item : item.name;
-              return (
-                <button
-                  key={value}
-                  onClick={() => onSelect(selected === value ? '' : value)}
-                  className={`shrink-0 px-3 py-1.5 rounded-lg text-sm transition-all whitespace-nowrap ${
-                    selected === value
-                      ? 'bg-primary-500 text-white font-medium shadow-md shadow-primary-500/20'
-                      : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Right Arrow */}
-          {canScrollRight && (
-            <button 
-              onClick={() => scrollRow(scrollRef, 'right')}
-              className="absolute -right-3 top-1/2 -translate-y-1/2 z-10 p-1 bg-white/90 dark:bg-slate-800/90 rounded-full shadow-md border border-slate-100 dark:border-slate-700 text-slate-400 hover:text-primary-500 hidden sm:flex items-center justify-center backdrop-blur-sm transition-all animate-in fade-in zoom-in duration-200"
-            >
-              <ChevronRight size={16} />
-            </button>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   const hasActiveFilters = selectedLibraryId || selectedTag || selectedGenre || selectedYear || selectedAuthor || selectedNarrator || selectedSeries;
 
   return (
@@ -359,52 +362,59 @@ const SearchPage: React.FC = () => {
             <div className="space-y-4 divide-y divide-slate-50 dark:divide-slate-800/50">
               <FilterRow
                 label={t('searchPage.library')}
+                allLabel={t('searchPage.all')}
                 items={libraries}
                 selected={selectedLibraryId}
                 onSelect={setSelectedLibraryId}
-                scrollRef={filterRowRefs.libraries}
+                scrollRef={librariesScrollRef}
               />
               <FilterRow
                 label={t('searchPage.series')}
+                allLabel={t('searchPage.all')}
                 items={allSeries.map(s => ({ id: s.id, name: s.title }))}
                 selected={selectedSeries}
                 onSelect={setSelectedSeries}
-                scrollRef={filterRowRefs.series}
+                scrollRef={seriesScrollRef}
               />
               <FilterRow
                 label={t('searchPage.tags')}
+                allLabel={t('searchPage.all')}
                 items={allTags}
                 selected={selectedTag}
                 onSelect={setSelectedTag}
-                scrollRef={filterRowRefs.tags}
+                scrollRef={tagsScrollRef}
               />
               <FilterRow
                 label={t('searchPage.genre')}
+                allLabel={t('searchPage.all')}
                 items={allGenres}
                 selected={selectedGenre}
                 onSelect={setSelectedGenre}
-                scrollRef={filterRowRefs.genres}
+                scrollRef={genresScrollRef}
               />
               <FilterRow
                 label={t('searchPage.year')}
+                allLabel={t('searchPage.all')}
                 items={allYears}
                 selected={selectedYear}
                 onSelect={setSelectedYear}
-                scrollRef={filterRowRefs.years}
+                scrollRef={yearsScrollRef}
               />
               <FilterRow
                 label={t('searchPage.author')}
+                allLabel={t('searchPage.all')}
                 items={allAuthors}
                 selected={selectedAuthor}
                 onSelect={setSelectedAuthor}
-                scrollRef={filterRowRefs.authors}
+                scrollRef={authorsScrollRef}
               />
               <FilterRow
                 label={t('searchPage.narrator')}
+                allLabel={t('searchPage.all')}
                 items={allNarrators}
                 selected={selectedNarrator}
                 onSelect={setSelectedNarrator} 
-                scrollRef={filterRowRefs.narrators}
+                scrollRef={narratorsScrollRef}
               />
             </div>
           </div>

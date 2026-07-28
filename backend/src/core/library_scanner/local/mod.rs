@@ -444,26 +444,8 @@ impl LibraryScanner {
                             .find_by_book(&book_id)
                             .await
                             .unwrap_or_default();
-                        let mut sorted_chapters = chapters;
-                        sorted_chapters.sort_by(|a, b| {
-                            a.chapter_index
-                                .unwrap_or(0)
-                                .cmp(&b.chapter_index.unwrap_or(0))
-                        });
-                        let mut abs_chapters = Vec::new();
-                        let mut current_time = 0.0;
-                        for (idx, ch) in sorted_chapters.iter().enumerate() {
-                            let duration = ch.duration.unwrap_or(0) as f64;
-                            abs_chapters.push(
-                                crate::core::metadata_writer::AudiobookshelfChapter {
-                                    id: idx as u32,
-                                    start: current_time,
-                                    end: current_time + duration,
-                                    title: ch.title.clone().unwrap_or_default(),
-                                },
-                            );
-                            current_time += duration;
-                        }
+                        let abs_chapters =
+                            crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
                         let extended_meta =
                             crate::core::metadata_writer::ExtendedMetadata::default();
                         let series_list = self
@@ -819,24 +801,8 @@ impl LibraryScanner {
         if scraper_config.metadata_writing_enabled {
             debug!("Writing metadata.json for book: {}", book_id);
             let chapters = self.chapter_repo.find_by_book(&book_id).await?;
-            let mut sorted_chapters = chapters;
-            sorted_chapters.sort_by(|a, b| {
-                a.chapter_index
-                    .unwrap_or(0)
-                    .cmp(&b.chapter_index.unwrap_or(0))
-            });
-            let mut abs_chapters = Vec::new();
-            let mut current_time = 0.0;
-            for (idx, ch) in sorted_chapters.iter().enumerate() {
-                let duration = ch.duration.unwrap_or(0) as f64;
-                abs_chapters.push(crate::core::metadata_writer::AudiobookshelfChapter {
-                    id: idx as u32,
-                    start: current_time,
-                    end: current_time + duration,
-                    title: ch.title.clone().unwrap_or_default(),
-                });
-                current_time += duration;
-            }
+            let abs_chapters =
+                crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
             let extended_meta = crate::core::metadata_writer::ExtendedMetadata {
                 subtitle,
                 published_year,

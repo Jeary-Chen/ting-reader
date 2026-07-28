@@ -81,7 +81,8 @@ const PlaylistDetailPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData();
+    const timer = window.setTimeout(() => void fetchData(), 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 

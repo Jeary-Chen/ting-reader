@@ -90,21 +90,25 @@ const PluginsPage: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchPlugins();
+    const timer = window.setTimeout(() => void fetchPlugins(), 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (!hasPluginStoreProvider) {
-      setStorePlugins([]);
-      if (activeTab !== 'installed') {
-        setActiveTab('installed');
+    const timer = window.setTimeout(() => {
+      if (!hasPluginStoreProvider) {
+        setStorePlugins([]);
+        if (activeTab !== 'installed') {
+          setActiveTab('installed');
+        }
+        return;
       }
-      return;
-    }
 
-    if ((activeTab === 'store' || activeTab === 'updates') && storePlugins.length === 0) {
-      fetchStorePlugins();
-    }
+      if ((activeTab === 'store' || activeTab === 'updates') && storePlugins.length === 0) {
+        void fetchStorePlugins();
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, hasPluginStoreProvider]);
 

@@ -132,7 +132,8 @@ const PluginConfigDialog: React.FC<Props> = ({ pluginId, pluginName, configSchem
   }, [pluginId]);
 
   useEffect(() => {
-    fetchConfig();
+    const timer = window.setTimeout(() => void fetchConfig(), 0);
+    return () => window.clearTimeout(timer);
   }, [fetchConfig]);
 
   const handleSave = async () => {

@@ -12,7 +12,7 @@ interface SeriesCardProps {
   coverShape?: 'rect' | 'square';
 }
 
-const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, coverShape = 'rect' }) => {
+const SeriesCard: React.FC<SeriesCardProps> = ({ series, onClick, coverShape = 'square' }) => {
   const { t } = useTranslation();
   const content = (
     <>

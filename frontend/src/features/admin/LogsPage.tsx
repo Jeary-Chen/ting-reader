@@ -93,8 +93,11 @@ const LogsPage: React.FC = () => {
   }, [moduleFilter, levelFilter, page]);
 
   useEffect(() => {
-    setLoading(true);
-    fetchData();
+    const timer = window.setTimeout(() => {
+      setLoading(true);
+      void fetchData();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [moduleFilter, levelFilter, fetchData]);
 
   useEffect(() => {
