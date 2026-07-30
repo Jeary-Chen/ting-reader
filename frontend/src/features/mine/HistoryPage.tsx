@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import apiClient from '../../core/api/client';
 import type { Progress } from '../../core/types';
 import { getCoverUrl } from '../../core/utils/image';

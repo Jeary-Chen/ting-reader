@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Link } from "react-router-dom";
+import { Link } from "react-router";
 import apiClient from "../../core/api/client";
 import type { Book, Playlist, Progress } from "../../core/types";
 import { useAuthStore } from "../../core/stores/authStore";

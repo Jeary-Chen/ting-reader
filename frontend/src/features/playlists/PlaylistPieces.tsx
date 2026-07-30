@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { ArrowDown, ArrowUp, Layers, ListMusic, Plus, X } from 'lucide-react';
 import type { Book, PlaylistItem, Series } from '../../core/types';

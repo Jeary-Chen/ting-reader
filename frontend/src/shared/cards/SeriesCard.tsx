@@ -1,7 +1,7 @@
 import React from 'react';
 import type { Series } from '../../core/types';
 import { Layers } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { getCoverUrl } from '../../core/utils/image';
 import ExpandableTitle from '../widgets/ExpandableTitle';
 import { useTranslation } from 'react-i18next';

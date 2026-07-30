@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import apiClient from '../../core/api/client';
 import type { Book, Chapter, Progress } from '../../core/types';
 import { usePlayerStore } from '../../core/stores/playerStore';

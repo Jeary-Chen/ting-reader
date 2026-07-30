@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import apiClient from '../../core/api/client';
 import { useAuthStore } from '../../core/stores/authStore';
 import { USER_AGREEMENT_URL, PRIVACY_POLICY_URL } from '../../core/constants/links';

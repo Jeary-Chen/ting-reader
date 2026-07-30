@@ -1,7 +1,7 @@
 import React from 'react';
 import type { Book } from '../../core/types';
 import { Play } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { getCoverUrl } from '../../core/utils/image';
 import { toSolidColor, isLight, isTooLight } from '../../core/utils/color';

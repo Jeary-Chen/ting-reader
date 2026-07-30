@@ -3,7 +3,7 @@ import apiClient from '../../core/api/client';
 import type { Book } from '../../core/types';
 import BookCard from '../../shared/cards/BookCard';
 import { Heart } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { usePlayerStore } from '../../core/stores/playerStore';
 import BackButton from '../../shared/widgets/BackButton';
 import LoadingSpinner from '../../shared/ui/LoadingSpinner';

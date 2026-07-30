@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation } from "react-router-dom";
+import { useLocation } from "react-router";
 import { usePlayerStore } from "../../core/stores/playerStore";
 import { useAuthStore } from "../../core/stores/authStore";
 import { useWebSocket } from "../../core/hooks/useWebSocket";
@@ -333,6 +333,7 @@ const Player: React.FC = () => {
   // Reset all playback state when chapter ID changes
   useEffect(() => {
     isInitialLoadRef.current = true;
+    skipOutroChapterRef.current = null;
     hlsRequestIdRef.current += 1;
     const timer = window.setTimeout(() => {
       setShouldTranscode(false);
@@ -439,6 +440,35 @@ const Player: React.FC = () => {
     }
   }, [retryCount]);
 
+  const requestAudioPlayback = (audio: HTMLAudioElement) => {
+    const requestedSrc = audio.getAttribute("src");
+    const playPromise = audio.play();
+    if (playPromise === undefined) return;
+
+    playPromise.catch((err) => {
+      // A chapter/source switch can abort the previous play request. The new
+      // source's canplay event will retry it, so stale failures must not change
+      // the playback intent kept in the store.
+      const sourceChanged =
+        audioRef.current !== audio || audio.getAttribute("src") !== requestedSrc;
+      if (sourceChanged || !usePlayerStore.getState().isPlaying) return;
+
+      if (err.name === "AbortError" || err.code === 20) {
+        console.log("Playback request interrupted; waiting for media readiness");
+        return;
+      }
+      if (err.name === "NotAllowedError") {
+        // Safari/iOS may reject play() when it isn't treated as a direct user gesture.
+        setIsPlaying(false);
+        setError(t("player.autoplayBlocked"));
+        console.warn("Playback blocked by browser policy", err);
+        return;
+      }
+      console.error("Playback failed", err);
+      // Don't set user-visible error yet, let onError handler try to recover first
+    });
+  };
+
   // Sync state with audio element
   useEffect(() => {
     if (!audioRef.current || !currentChapter) return;
@@ -451,26 +481,7 @@ const Player: React.FC = () => {
     // Actually, retryCount is part of the dependency array, so this runs on retry too.
 
     if (isPlaying) {
-      const playPromise = audioRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          // Ignore AbortError which happens when pausing/switching quickly
-          if (err.name === "AbortError" || err.code === 20) {
-            console.log("Playback promise aborted normally");
-            return;
-          }
-          if (err.name === "NotAllowedError") {
-            // Safari/iOS may reject play() when it isn't treated as a direct user gesture.
-            setIsPlaying(false);
-            setError(t("player.autoplayBlocked"));
-            console.warn("Playback blocked by browser policy", err);
-            return;
-          }
-          console.error("Playback failed", err);
-          // Don't set user-visible error yet, let onError handler try to recover first
-          // setError('Playback failed, possibly due to unsupported format or network error');
-        });
-      }
+      requestAudioPlayback(audioRef.current);
     } else {
       audioRef.current.pause();
     }
@@ -938,12 +949,23 @@ const Player: React.FC = () => {
       style={miniPlayerStyle}
     >
       <audio
+        key={currentChapter.id}
         ref={audioRef}
         src={audioSrc || undefined}
         crossOrigin="anonymous"
         onTimeUpdate={handleTimeUpdate}
         onProgress={handleProgress}
         onLoadedMetadata={handleLoadedMetadata}
+        onCanPlay={() => {
+          const audio = audioRef.current;
+          if (
+            audio &&
+            audio.paused &&
+            usePlayerStore.getState().isPlaying
+          ) {
+            requestAudioPlayback(audio);
+          }
+        }}
         onEnded={handleEnded}
         onPlay={() => {
           setIsPlaying(true);
