@@ -385,6 +385,7 @@ impl ApiServer {
         let router = api_router
             .route_service("/manifest.webmanifest", serve_manifest)
             .fallback_service(serve_dir);
+        let router = router.layer(middleware::from_fn(ensure_manifest_link));
         let router = router.layer(
             ServiceBuilder::new()
                 // Add security headers middleware
@@ -724,6 +725,52 @@ fn rewrite_root_relative_attribute(html: &str, attribute: &str, prefix: &str) ->
     output
 }
 
+async fn ensure_manifest_link(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.starts_with("text/html"))
+        .unwrap_or(false);
+
+    if !is_html {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = to_bytes(body, 8 * 1024 * 1024).await else {
+        return Response::from_parts(parts, Body::empty());
+    };
+    let Ok(html) = String::from_utf8(bytes.to_vec()) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+    let rewritten = ensure_manifest_link_in_html(&html);
+    if rewritten == html {
+        return Response::from_parts(parts, Body::from(bytes));
+    }
+
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(rewritten))
+}
+
+fn ensure_manifest_link_in_html(html: &str) -> String {
+    if html.contains("rel=\"manifest\"") || html.contains("rel='manifest'") {
+        return html.to_string();
+    }
+
+    let manifest_link = r#"<link rel="manifest" href="/manifest.webmanifest">"#;
+    if let Some(index) = html.find("</head>") {
+        let mut rewritten = String::with_capacity(html.len() + manifest_link.len());
+        rewritten.push_str(&html[..index]);
+        rewritten.push_str(manifest_link);
+        rewritten.push_str(&html[index..]);
+        rewritten
+    } else {
+        format!("{manifest_link}{html}")
+    }
+}
+
 async fn rewrite_gateway_html(response: Response, prefix: &str) -> Response {
     let is_html = response
         .headers()
@@ -892,6 +939,23 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    #[test]
+    fn direct_html_gets_manifest_link_when_static_entry_is_old() {
+        let html = "<html><head><title>Ting Reader</title></head><body></body></html>";
+        let rewritten = ensure_manifest_link_in_html(html);
+
+        assert!(rewritten.contains(r#"<link rel="manifest" href="/manifest.webmanifest">"#));
+        assert_eq!(rewritten.matches("rel=\"manifest\"").count(), 1);
+    }
+
+    #[test]
+    fn direct_html_does_not_duplicate_manifest_link() {
+        let html =
+            r#"<html><head><link rel="manifest" href="./manifest.webmanifest"></head></html>"#;
+
+        assert_eq!(ensure_manifest_link_in_html(html), html);
     }
 
     #[test]
