@@ -4,8 +4,24 @@ use crate::db::models::{Book, Series, SeriesBook};
 use crate::db::repository::base::Repository;
 use crate::db::repository::book::map_book_row;
 use async_trait::async_trait;
-use rusqlite::OptionalExtension;
+use rusqlite::{OptionalExtension, Row};
 use std::sync::Arc;
+
+fn map_series_row(row: &Row<'_>) -> rusqlite::Result<Series> {
+    Ok(Series {
+        id: row.get(0)?,
+        library_id: row.get(1)?,
+        title: row.get(2)?,
+        author: row.get(3)?,
+        narrator: row.get(4)?,
+        cover_url: row.get(5)?,
+        description: row.get(6)?,
+        // Older databases may contain NULL timestamps even though the current
+        // schema declares defaults. Keep those rows readable through the API.
+        created_at: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+        updated_at: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+    })
+}
 
 /// Repository for Series entities
 pub struct SeriesRepository {
@@ -27,19 +43,8 @@ impl SeriesRepository {
                  FROM series WHERE library_id = ? ORDER BY created_at DESC"
             ).map_err(TingError::DatabaseError)?;
 
-            let series = stmt.query_map([&library_id], |row| {
-                Ok(Series {
-                    id: row.get(0)?,
-                    library_id: row.get(1)?,
-                    title: row.get(2)?,
-                    author: row.get(3)?,
-                    narrator: row.get(4)?,
-                    cover_url: row.get(5)?,
-                    description: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            }).map_err(TingError::DatabaseError)?
+            let series = stmt.query_map([&library_id], map_series_row)
+                .map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(TingError::DatabaseError)?;
 
@@ -47,35 +52,23 @@ impl SeriesRepository {
         }).await
     }
 
-    /// Find or create series atomically (globally across all libraries)
+    /// Find or create a series atomically within one library.
     pub async fn find_or_create_by_title(&self, new_series: Series) -> Result<Series> {
         let search_title = new_series.title.trim().to_lowercase();
         self.db.transaction(move |tx| {
             let existing = tx.query_row(
                 "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
-                 FROM series WHERE LOWER(TRIM(title)) = ?",
-                rusqlite::params![&search_title],
-                |row| {
-                    Ok(Series {
-                        id: row.get(0)?,
-                        library_id: row.get(1)?,
-                        title: row.get(2)?,
-                        author: row.get(3)?,
-                        narrator: row.get(4)?,
-                        cover_url: row.get(5)?,
-                        description: row.get(6)?,
-                        created_at: row.get(7)?,
-                        updated_at: row.get(8)?,
-                    })
-                }
+                 FROM series WHERE LOWER(TRIM(title)) = ? AND library_id = ?",
+                rusqlite::params![&search_title, &new_series.library_id],
+                map_series_row,
             ).optional().map_err(TingError::DatabaseError)?;
 
             if let Some(s) = existing {
                 Ok(s)
             } else {
                 tx.execute(
-                    "INSERT INTO series (id, library_id, title, author, narrator, cover_url, description) \
-                     VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO series (id, library_id, title, author, narrator, cover_url, description, created_at, updated_at) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     rusqlite::params![
                         &new_series.id,
                         &new_series.library_id,
@@ -84,6 +77,8 @@ impl SeriesRepository {
                         &new_series.narrator,
                         &new_series.cover_url,
                         &new_series.description,
+                        &new_series.created_at,
+                        &new_series.updated_at,
                     ],
                 ).map_err(TingError::DatabaseError)?;
                 Ok(new_series)
@@ -99,19 +94,7 @@ impl SeriesRepository {
                 "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
                  FROM series WHERE LOWER(TRIM(title)) = ?",
                 rusqlite::params![&title],
-                |row| {
-                    Ok(Series {
-                        id: row.get(0)?,
-                        library_id: row.get(1)?,
-                        title: row.get(2)?,
-                        author: row.get(3)?,
-                        narrator: row.get(4)?,
-                        cover_url: row.get(5)?,
-                        description: row.get(6)?,
-                        created_at: row.get(7)?,
-                        updated_at: row.get(8)?,
-                    })
-                }
+                map_series_row
             ).optional()
             .map_err(TingError::DatabaseError)
         }).await
@@ -130,19 +113,7 @@ impl SeriesRepository {
                 "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
                  FROM series WHERE LOWER(TRIM(title)) = ? AND library_id = ?",
                 rusqlite::params![&title, &library_id],
-                |row| {
-                    Ok(Series {
-                        id: row.get(0)?,
-                        library_id: row.get(1)?,
-                        title: row.get(2)?,
-                        author: row.get(3)?,
-                        narrator: row.get(4)?,
-                        cover_url: row.get(5)?,
-                        description: row.get(6)?,
-                        created_at: row.get(7)?,
-                        updated_at: row.get(8)?,
-                    })
-                }
+                map_series_row
             ).optional()
             .map_err(TingError::DatabaseError)
         }).await
@@ -159,19 +130,8 @@ impl SeriesRepository {
                  WHERE sb.book_id = ?"
             ).map_err(TingError::DatabaseError)?;
 
-            let series = stmt.query_map([&book_id], |row| {
-                Ok(Series {
-                    id: row.get(0)?,
-                    library_id: row.get(1)?,
-                    title: row.get(2)?,
-                    author: row.get(3)?,
-                    narrator: row.get(4)?,
-                    cover_url: row.get(5)?,
-                    description: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            }).map_err(TingError::DatabaseError)?
+            let series = stmt.query_map([&book_id], map_series_row)
+                .map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(TingError::DatabaseError)?;
 
@@ -218,19 +178,8 @@ impl SeriesRepository {
 
             let mut stmt = conn.prepare(&query).map_err(TingError::DatabaseError)?;
 
-            let series = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
-                Ok(Series {
-                    id: row.get(0)?,
-                    library_id: row.get(1)?,
-                    title: row.get(2)?,
-                    author: row.get(3)?,
-                    narrator: row.get(4)?,
-                    cover_url: row.get(5)?,
-                    description: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            }).map_err(TingError::DatabaseError)?
+            let series = stmt.query_map(rusqlite::params_from_iter(params.iter()), map_series_row)
+                .map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(TingError::DatabaseError)?;
 
@@ -405,19 +354,7 @@ impl Repository<Series> for SeriesRepository {
                 "SELECT id, library_id, title, author, narrator, cover_url, description, created_at, updated_at \
                  FROM series WHERE id = ?",
                 [&id],
-                |row| {
-                    Ok(Series {
-                        id: row.get(0)?,
-                        library_id: row.get(1)?,
-                        title: row.get(2)?,
-                        author: row.get(3)?,
-                        narrator: row.get(4)?,
-                        cover_url: row.get(5)?,
-                        description: row.get(6)?,
-                        created_at: row.get(7)?,
-                        updated_at: row.get(8)?,
-                    })
-                }
+                map_series_row
             ).optional()
             .map_err(TingError::DatabaseError)
         }).await
@@ -430,19 +367,8 @@ impl Repository<Series> for SeriesRepository {
                  FROM series ORDER BY created_at DESC"
             ).map_err(TingError::DatabaseError)?;
 
-            let series = stmt.query_map([], |row| {
-                Ok(Series {
-                    id: row.get(0)?,
-                    library_id: row.get(1)?,
-                    title: row.get(2)?,
-                    author: row.get(3)?,
-                    narrator: row.get(4)?,
-                    cover_url: row.get(5)?,
-                    description: row.get(6)?,
-                    created_at: row.get(7)?,
-                    updated_at: row.get(8)?,
-                })
-            }).map_err(TingError::DatabaseError)?
+            let series = stmt.query_map([], map_series_row)
+                .map_err(TingError::DatabaseError)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(TingError::DatabaseError)?;
 
@@ -454,8 +380,8 @@ impl Repository<Series> for SeriesRepository {
         let series = series.clone();
         self.db.execute(move |conn| {
             conn.execute(
-                "INSERT INTO series (id, library_id, title, author, narrator, cover_url, description) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO series (id, library_id, title, author, narrator, cover_url, description, created_at, updated_at) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rusqlite::params![
                     &series.id,
                     &series.library_id,
@@ -464,6 +390,8 @@ impl Repository<Series> for SeriesRepository {
                     &series.narrator,
                     &series.cover_url,
                     &series.description,
+                    &series.created_at,
+                    &series.updated_at,
                 ],
             ).map_err(TingError::DatabaseError)?;
             Ok(())

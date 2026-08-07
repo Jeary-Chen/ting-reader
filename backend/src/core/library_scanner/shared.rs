@@ -148,6 +148,8 @@ impl LibraryScanner {
             created_at: chrono::Utc::now().to_rfc3339(),
             updated_at: chrono::Utc::now().to_rfc3339(),
         };
+        // Series identity is scoped by library in the repository, so identical
+        // titles in separate libraries remain independent collections.
         let series = self.series_repo.find_or_create_by_title(new_series).await?;
         let books = self.series_repo.find_books_by_series(&series.id).await?;
         let target_order = series_info.order.max(1);

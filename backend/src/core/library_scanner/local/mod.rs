@@ -673,7 +673,9 @@ impl LibraryScanner {
             )
             .await?;
 
-        // 5.1 Process Series
+        // 5.1 Process series declared by metadata.json. A single-book series is
+        // valid metadata; directory-based inference is handled separately and
+        // only activates when multiple matching volume directories exist.
         if !json_series.is_empty() {
             for series_title_raw in json_series {
                 let series_title_raw = series_title_raw.trim();
@@ -694,7 +696,14 @@ impl LibraryScanner {
                     }
                 }
 
-                // Find or create series atomically (globally across all libraries to handle concurrent syncs and multiple libraries)
+                tracing::debug!(
+                    book_id = %book_id,
+                    library_id = %library_id,
+                    series_title = %series_title,
+                    "Linking book to series declared in metadata.json"
+                );
+
+                // Find or create the series within this library.
                 let new_series = crate::db::models::Series {
                     id: Uuid::new_v4().to_string(),
                     library_id: library_id.to_string(),

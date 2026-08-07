@@ -832,7 +832,7 @@ impl LibraryScanner {
                     }
                 }
 
-                // Find or create series atomically (globally across all libraries to handle concurrent syncs and multiple libraries)
+                // Find or create the series within this library.
                 let new_series = crate::db::models::Series {
                     id: Uuid::new_v4().to_string(),
                     library_id: library.id.clone(),
