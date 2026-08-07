@@ -611,10 +611,7 @@ async fn serve_unix_socket(
             let io = TokioIo::new(stream);
             let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
                 let router = router.clone();
-                async move {
-                    let response = router.oneshot(request.map(Body::new)).await;
-                    Ok::<_, std::convert::Infallible>(response)
-                }
+                async move { router.oneshot(request.map(Body::new)).await }
             });
 
             if let Err(error) = http1::Builder::new()
