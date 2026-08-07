@@ -7,6 +7,7 @@ import {
 import apiClient from "../../core/api/client";
 import { useAuthStore } from "../../core/stores/authStore";
 import type { ClientExtensionDescriptor } from "../../core/pluginExtensions";
+import { getRuntimeUrl } from "../../core/utils/runtimeUrl";
 
 type PluginBridgeRequest = {
   type: "ting-plugin:request";
@@ -51,7 +52,7 @@ const pluginAssetPath = (extension: ClientExtensionDescriptor) => {
 
 const absoluteAssetUrl = (path: string, activeUrl?: string) => {
   try {
-    return new URL(path, activeUrl || window.location.origin).toString();
+    return getRuntimeUrl(path, activeUrl);
   } catch {
     return path;
   }

@@ -23,6 +23,7 @@ import PluginsPage from './features/admin/PluginsPage';
 import CacheManagementPage from './features/mine/CacheManagementPage';
 import WidgetPage from './features/widget/WidgetPage';
 import { useAuthStore } from './core/stores/authStore';
+import { getGatewayBasePath } from './core/utils/runtimeUrl';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -38,7 +39,7 @@ const AdminRoute = ({ children }: { children: React.ReactNode }) => {
 
 function App() {
   return (
-    <Router>
+    <Router basename={getGatewayBasePath()}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/widget" element={<WidgetPage />} />

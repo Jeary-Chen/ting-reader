@@ -15,6 +15,7 @@ import {
   Puzzle
 } from 'lucide-react';
 import { useAuthStore } from '../../core/stores/authStore';
+import { getRuntimeAssetUrl } from '../../core/utils/runtimeUrl';
 import { useTheme } from '../../core/hooks/useTheme';
 import { usePlayerStore } from '../../core/stores/playerStore';
 import { normalizeLanguage } from '../../core/i18n/locales';
@@ -137,7 +138,7 @@ const Layout: React.FC = () => {
       <div className="flex flex-col items-center justify-center h-screen bg-slate-50 dark:bg-slate-950 p-4">
         <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-2xl shadow-xl p-8 text-center space-y-6 border border-slate-200 dark:border-slate-800">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary-50 dark:bg-primary-900/20 mb-2">
-            <img src="/logo.png" alt={t('common.logoAlt')} className="w-10 h-10 object-contain" />
+            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-10 h-10 object-contain" />
           </div>
           
           {isConnecting ? (
@@ -239,7 +240,7 @@ const Layout: React.FC = () => {
       `}>
         <div className="flex flex-col h-full p-4">
           <div className="hidden xl:flex items-center gap-3 px-4 py-6 mb-4">
-            <img src="/logo.png" alt={t('common.logoAlt')} className="w-10 h-10 shadow-lg shadow-primary-500/10 object-contain" />
+            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-10 h-10 shadow-lg shadow-primary-500/10 object-contain" />
             <span className="font-bold text-xl dark:text-white tracking-tight">Ting Reader</span>
           </div>
 
@@ -285,7 +286,7 @@ const Layout: React.FC = () => {
         {/* Mobile Header */}
         <div className="xl:hidden h-16 shrink-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 z-40 pt-[env(safe-area-inset-top)]">
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt={t('common.logoAlt')} className="w-9 h-9 shadow-lg shadow-primary-500/10 object-contain" />
+            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-9 h-9 shadow-lg shadow-primary-500/10 object-contain" />
             <span className="font-bold text-lg dark:text-white tracking-tight">Ting Reader</span>
           </div>
           <div className="flex items-center gap-2">

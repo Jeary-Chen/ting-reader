@@ -20,6 +20,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import BackButton from "../../shared/widgets/BackButton";
+import { getRuntimeAssetUrl } from "../../core/utils/runtimeUrl";
 
 type UpdateInfo = {
   version: string;
@@ -88,7 +89,7 @@ const AboutPage: React.FC = () => {
         <section className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 md:p-8 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center gap-5">
             <img
-              src="/logo.png"
+              src={getRuntimeAssetUrl('/logo.png')}
               alt={t("common.logoAlt")}
               className="w-20 h-20 rounded-2xl object-contain shadow-sm"
             />

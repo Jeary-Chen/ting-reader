@@ -6,6 +6,7 @@ import { useAuthStore } from '../../core/stores/authStore';
 import { USER_AGREEMENT_URL, PRIVACY_POLICY_URL } from '../../core/constants/links';
 import { safeStorage } from '../../core/utils/storage';
 import { markSessionRestoreLogged } from '../../core/utils/sessionRestore';
+import { getRuntimeAssetUrl } from '../../core/utils/runtimeUrl';
 import { Lock, Server, User } from 'lucide-react';
 
 const LoginPage: React.FC = () => {
@@ -129,7 +130,7 @@ const LoginPage: React.FC = () => {
         <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl p-8 space-y-8 border border-slate-200 dark:border-slate-800">
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-20 h-20 mb-6">
-              <img src="/logo.png" alt={t('common.logoAlt')} className="w-full h-full object-contain" />
+            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-full h-full object-contain" />
             </div>
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">Ting Reader</h1>
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">{t('auth.tagline')}</p>

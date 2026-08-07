@@ -4202,6 +4202,8 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "hostname",
+ "hyper 1.8.1",
+ "hyper-util",
  "id3",
  "image",
  "jsonschema",

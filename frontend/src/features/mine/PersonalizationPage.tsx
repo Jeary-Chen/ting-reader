@@ -22,6 +22,7 @@ import {
   type HomeLayoutSettings,
 } from "../../core/utils/homeLayout";
 import BackButton from "../../shared/widgets/BackButton";
+import { getRuntimePath, getRuntimeUrl } from "../../core/utils/runtimeUrl";
 import {
   CheckCircle2,
   ChevronDown,
@@ -166,7 +167,7 @@ const PersonalizationPage: React.FC = () => {
 
   const widgetToken =
     widgetEmbedType === "private" && token ? `?token=${token}` : "";
-  const widgetUrl = `${window.location.origin}/widget${widgetToken}`;
+  const widgetUrl = getRuntimeUrl(`/widget${widgetToken}`);
   const embedCode = `<iframe src="${widgetUrl}" width="100%" height="150" frameborder="0" allow="autoplay; fullscreen"></iframe>`;
   const homeLayout = settings.home_layout ?? DEFAULT_HOME_LAYOUT;
   const layoutCodes = useMemo(
@@ -450,7 +451,7 @@ const PersonalizationPage: React.FC = () => {
                 {t("settings.widget")}
               </h2>
               <a
-                href="/widget"
+                href={getRuntimePath("/widget")}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-sm font-bold text-slate-600 dark:text-slate-300 hover:text-primary-600 transition-colors"

@@ -7,6 +7,7 @@ import { usePlayerStore } from '../../core/stores/playerStore';
 import { useAuthStore } from '../../core/stores/authStore';
 import { Search, ArrowLeft, User, Lock, LogIn } from 'lucide-react';
 import { getCoverUrl } from '../../core/utils/image';
+import { getRuntimePath } from '../../core/utils/runtimeUrl';
 import { getCoverAspectClass, useBookshelfCoverShape } from '../../core/hooks/useBookshelfCoverShape';
 
 const WidgetPage: React.FC = () => {
@@ -221,7 +222,7 @@ const WidgetPage: React.FC = () => {
                 key={book.id}
                 onClick={() => {
                   setShowBookList(false);
-                  window.history.pushState({}, '', `/widget/${book.id}${token ? `?token=${token}` : ''}`);
+                  window.history.pushState({}, '', getRuntimePath(`/widget/${book.id}${token ? `?token=${token}` : ''}`));
                   // Reload book logic
                   apiClient.get(`/api/books/${book.id}`).then(async (res) => {
                     const chaptersRes = await apiClient.get(`/api/books/${book.id}/chapters`);

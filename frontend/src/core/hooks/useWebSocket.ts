@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { usePlayerStore } from '../stores/playerStore';
+import { getRuntimeBaseUrl } from '../utils/runtimeUrl';
 
 interface ProgressUpdate {
   type: 'progress_updated';
@@ -30,15 +31,14 @@ export function useWebSocket() {
   const maxReconnectAttempts = 20;
 
   const getWsUrl = useCallback(() => {
-    if (!activeUrl) return null;
     try {
-      const url = new URL(activeUrl);
+      const url = new URL(getRuntimeBaseUrl(activeUrl));
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       url.pathname = url.pathname.replace(/\/$/, '') + '/api/ws';
       return url.toString();
     } catch {
       // Fallback: construct from string
-      const base = activeUrl.replace(/\/$/, '');
+      const base = getRuntimeBaseUrl(activeUrl).replace(/\/$/, '');
       const wsProtocol = base.startsWith('https') ? 'wss' : 'ws';
       return `${wsProtocol}://${new URL(base).host}/api/ws`;
     }

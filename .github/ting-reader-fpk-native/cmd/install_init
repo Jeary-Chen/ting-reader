@@ -13,5 +13,6 @@ mkdir -p "$DEFAULT_STORAGE"
 mkdir -p "$DEFAULT_DATA"
 mkdir -p "$DEFAULT_PLUGINS"
 mkdir -p "$DEFAULT_TEMP"
+rm -f "${TRIM_APPDEST}/ting-reader.sock" 2>/dev/null || true
 
 exit 0

@@ -125,6 +125,17 @@ impl Config {
                 .try_parsing(true),
         );
 
+        // fnOS uses these names when registering an application with the
+        // unified gateway. Keep them as explicit aliases so the FPK startup
+        // script can follow the platform convention without leaking package
+        // deployment details into the generic TING_* configuration.
+        if let Ok(prefix) = std::env::var("FNNAS_GATEWAY_PREFIX") {
+            builder = builder.set_override("server.gateway_prefix", prefix)?;
+        }
+        if let Ok(socket) = std::env::var("FNNAS_GATEWAY_SOCKET") {
+            builder = builder.set_override("server.gateway_socket", socket)?;
+        }
+
         // 4. Override with CLI arguments (highest priority)
         if let Some(host) = &cli_args.host {
             builder = builder.set_override("server.host", host.clone())?;
@@ -210,6 +221,13 @@ impl Config {
             .set_default("audio.cache_size", 104857600)? // 100 MB
             .set_default("audio.buffer_size", 65536)?; // 64 KB
 
+        if let Ok(prefix) = std::env::var("FNNAS_GATEWAY_PREFIX") {
+            builder = builder.set_override("server.gateway_prefix", prefix)?;
+        }
+        if let Ok(socket) = std::env::var("FNNAS_GATEWAY_SOCKET") {
+            builder = builder.set_override("server.gateway_socket", socket)?;
+        }
+
         // Override with environment variables
         let config: Config = builder
             .add_source(
@@ -279,6 +297,8 @@ pub struct ServerConfig {
     pub port: u16,
     pub max_connections: usize,
     pub request_timeout: u64, // seconds
+    pub gateway_prefix: Option<String>,
+    pub gateway_socket: Option<PathBuf>,
 }
 
 impl ServerConfig {
@@ -305,6 +325,24 @@ impl ServerConfig {
             return Err(ConfigError::InvalidServer(
                 "request_timeout must be greater than 0".to_string(),
             ));
+        }
+
+        if let Some(prefix) = &self.gateway_prefix {
+            let prefix = prefix.trim();
+            if prefix.is_empty() || !prefix.starts_with('/') || prefix.contains('?') {
+                return Err(ConfigError::InvalidServer(
+                    "gateway_prefix must be a non-empty URL path without a query string"
+                        .to_string(),
+                ));
+            }
+        }
+
+        if let Some(socket) = &self.gateway_socket {
+            if socket.as_os_str().is_empty() {
+                return Err(ConfigError::InvalidServer(
+                    "gateway_socket cannot be empty".to_string(),
+                ));
+            }
         }
 
         Ok(())

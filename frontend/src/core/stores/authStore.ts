@@ -6,6 +6,7 @@ import {
   clearSessionRestoreMarkers,
   persistAuthCookie,
 } from '../utils/sessionRestore';
+import { getRuntimeBaseUrl } from '../utils/runtimeUrl';
 
 const storedToken = safeStorage.getItem('auth_token');
 if (storedToken) {
@@ -29,8 +30,8 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   user: JSON.parse(safeStorage.getItem('user') || 'null'),
   token: storedToken,
-  serverUrl: safeStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
-  activeUrl: safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3000'),
+  serverUrl: safeStorage.getItem('server_url') || getRuntimeBaseUrl(),
+  activeUrl: safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || getRuntimeBaseUrl(),
   isAuthenticated: !!storedToken,
   setAuth: (user, token) => {
     safeStorage.setItem('auth_token', token);

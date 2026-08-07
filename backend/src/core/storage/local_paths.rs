@@ -308,6 +308,8 @@ mod tests {
                 port: 3000,
                 max_connections: 100,
                 request_timeout: 30,
+                gateway_prefix: None,
+                gateway_socket: None,
             },
             database: DatabaseConfig {
                 path: PathBuf::from("test.db"),

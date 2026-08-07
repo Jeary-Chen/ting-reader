@@ -7,11 +7,13 @@ DEFAULT_STORAGE="${TRIM_APPDEST_VOL}/@appshare/ting-reader/storage"
 DEFAULT_DATA="${TRIM_APPDEST_VOL}/@appshare/ting-reader/data"
 DEFAULT_PLUGINS="${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins"
 DEFAULT_TEMP="${TRIM_APPDEST_VOL}/@appshare/ting-reader/temp"
+GATEWAY_SOCKET="${TRIM_APPDEST}/ting-reader.sock"
 
 echo "Pre-creating directories..."
 mkdir -p "$DEFAULT_STORAGE"
 mkdir -p "$DEFAULT_DATA"
 mkdir -p "$DEFAULT_PLUGINS"
 mkdir -p "$DEFAULT_TEMP"
+rm -f "$GATEWAY_SOCKET" 2>/dev/null || true
 
 exit 0

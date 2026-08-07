@@ -4,6 +4,7 @@ desc="<b>听悦（Ting reader）</b> 是一款专为有声书爱好者设计的�
 
 [entry]
 title="听悦"
+directTitle="听悦（端口直连）"
 
 [install]
 stepTitle="应用配置"

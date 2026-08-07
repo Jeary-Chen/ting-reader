@@ -9,6 +9,8 @@ license = "AGPL-3.0-only"
 reqwest = { version = "0.11", features = ["json", "rustls-tls", "stream"] }
 # HTTP Server
 axum = { version = "0.7", features = ["multipart", "ws"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 tower = { version = "0.4", features = ["util", "timeout"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "fs", "compression-full"] }
 

@@ -2,9 +2,12 @@ import axios, { type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse }
 import { useAuthStore } from '../stores/authStore';
 import i18n from '../i18n';
 import { safeStorage } from '../utils/storage';
+import { getGatewayBasePath, getRuntimeBaseUrl } from '../utils/runtimeUrl';
 
 // Initial base URL
-const API_BASE_URL = safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || (import.meta.env.PROD ? '' : 'http://localhost:3000');
+const API_BASE_URL = getRuntimeBaseUrl(
+  safeStorage.getItem('active_url') || safeStorage.getItem('server_url'),
+);
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -73,7 +76,7 @@ apiClient.interceptors.request.use((config) => {
   
   // Update baseURL dynamically from store
   if (activeUrl && !config.url?.startsWith('http')) {
-    config.baseURL = activeUrl;
+    config.baseURL = getRuntimeBaseUrl(activeUrl);
   }
 
   if (token) {
@@ -103,7 +106,8 @@ apiClient.interceptors.response.use(
     // Handle 401 Unauthorized
     if (error.response?.status === 401 && !originalRequest._retry) {
       useAuthStore.getState().logout();
-      window.location.href = '/login';
+      const gatewayBasePath = getGatewayBasePath();
+      window.location.href = `${gatewayBasePath}/login`;
       return Promise.reject(error);
     }
 

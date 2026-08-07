@@ -12,6 +12,7 @@ import { useBookshelfCoverShape } from "../../core/hooks/useBookshelfCoverShape"
 import PluginExtensionSlot from "../../shared/pluginExtensions/PluginExtensionSlot";
 import ProgressBar from "./ProgressBar";
 import { isAppleMobileBrowser, isStrmPath } from "./platform";
+import { getRuntimeBaseUrl, getRuntimePathname, getRuntimeUrl } from "../../core/utils/runtimeUrl";
 import PlayerSettingsModal from "./PlayerSettingsModal";
 import ChapterListDrawer from "./ChapterListDrawer";
 import {
@@ -47,14 +48,11 @@ const Player: React.FC = () => {
   const { t } = useTranslation();
   const coverShape = useBookshelfCoverShape();
   const { token, activeUrl } = useAuthStore();
-  const API_BASE_URL =
-    activeUrl ||
-    import.meta.env.VITE_API_BASE_URL ||
-    (import.meta.env.PROD ? "" : "http://localhost:3000");
+  const API_BASE_URL = getRuntimeBaseUrl(activeUrl);
   const toAbsoluteMediaUrl = (url: string) => {
     if (/^https?:\/\//i.test(url)) return url;
     const base = API_BASE_URL || window.location.origin;
-    return `${base.replace(/\/$/, "")}${url.startsWith("/") ? url : `/${url}`}`;
+    return getRuntimeUrl(url, base);
   };
 
   const {
@@ -213,7 +211,7 @@ const Player: React.FC = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let url = (window as any).electronAPI
       ? `ting://stream/${chapterId}?token=${token}&remote=${encodeURIComponent(API_BASE_URL)}`
-      : `${API_BASE_URL}/api/stream/${chapterId}?token=${token}`;
+      : `${getRuntimeUrl(`/api/stream/${chapterId}`, API_BASE_URL)}?token=${token}`;
 
     if (shouldTranscode) url += "&transcode=mp3";
 
@@ -815,7 +813,7 @@ const Player: React.FC = () => {
   const isHiddenPage = hiddenPaths.some((path) =>
     location.pathname.startsWith(path),
   );
-  const isWidgetMode = window.location.pathname.startsWith("/widget");
+  const isWidgetMode = getRuntimePathname().startsWith("/widget");
 
   // Auto collapse player when navigating to hidden pages
   useEffect(() => {

@@ -17,13 +17,22 @@ use crate::core::config::ServerConfig;
 use crate::core::Config;
 use crate::db::manager::DatabaseManager;
 use crate::db::repository::BookRepository;
-use axum::{extract::Request, middleware, middleware::Next, response::Json, routing::get, Router};
+use axum::{
+    body::{to_bytes, Body},
+    extract::{Request, State},
+    http::{header, uri::PathAndQuery, Uri},
+    middleware,
+    middleware::Next,
+    response::{IntoResponse, Json, Response},
+    routing::{any, get},
+    Router,
+};
 use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal;
-use tower::ServiceBuilder;
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
     classify::ServerErrorsFailureClass,
     cors::CorsLayer,
@@ -32,10 +41,23 @@ use tower_http::{
 };
 use tracing::info;
 
+#[cfg(unix)]
+use hyper::body::Incoming;
+#[cfg(unix)]
+use hyper::server::conn::http1;
+#[cfg(unix)]
+use hyper_util::rt::TokioIo;
+
 /// HTTP API Server
 pub struct ApiServer {
     router: Router,
     config: ServerConfig,
+}
+
+#[derive(Clone)]
+struct GatewayProxyState {
+    router: Router,
+    prefix: String,
 }
 
 impl ApiServer {
@@ -409,6 +431,28 @@ impl ApiServer {
                 .layer(Self::build_cors_layer(&config.security.allowed_origins)),
         );
 
+        // The same route tree serves both the direct TCP endpoint and the
+        // fnOS gateway endpoint. The gateway forwards the registered prefix
+        // to this router, so the existing direct URLs remain unchanged.
+        let router = if let Some(prefix) =
+            normalize_gateway_prefix(config.server.gateway_prefix.as_deref())
+        {
+            let gateway_state = GatewayProxyState {
+                router: router.clone(),
+                prefix: prefix.clone(),
+            };
+            let gateway_path = prefix.clone();
+            let gateway_wildcard_path = format!("{prefix}/*path");
+
+            Router::new()
+                .route(&gateway_path, any(gateway_proxy))
+                .route(&gateway_wildcard_path, any(gateway_proxy))
+                .with_state(gateway_state)
+                .merge(router)
+        } else {
+            router
+        };
+
         Ok(router)
     }
 
@@ -458,7 +502,9 @@ impl ApiServer {
             "Starting HTTP server"
         );
 
-        // Create TCP listener
+        // Create TCP listener. This is intentionally kept enabled even when
+        // the fnOS Unix Socket gateway is configured for backward-compatible
+        // direct port access.
         let listener = tokio::net::TcpListener::bind(socket_addr).await?;
 
         info!(
@@ -468,14 +514,78 @@ impl ApiServer {
             "HTTP server listening"
         );
 
-        // Serve with graceful shutdown
-        axum::serve(
-            listener,
-            self.router
-                .into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        #[cfg(unix)]
+        let gateway_socket = self.config.gateway_socket.clone();
+
+        #[cfg(unix)]
+        let gateway_listener = if let Some(path) = gateway_socket.as_ref() {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if path.exists() {
+                std::fs::remove_file(path)?;
+            }
+
+            let listener = tokio::net::UnixListener::bind(path)?;
+
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o660))?;
+
+            info!(
+                socket = %path.display(),
+                prefix = ?self.config.gateway_prefix,
+                "fnOS unified gateway socket listening"
+            );
+            Some(listener)
+        } else {
+            None
+        };
+
+        #[cfg(unix)]
+        if let Some(gateway_listener) = gateway_listener {
+            let tcp_server = axum::serve(
+                listener,
+                self.router
+                    .clone()
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            );
+            let gateway_server = serve_unix_socket(gateway_listener, self.router.clone());
+
+            tokio::select! {
+                result = tcp_server => result?,
+                result = gateway_server => result?,
+                _ = shutdown_signal() => {},
+            }
+
+            if let Some(path) = gateway_socket.as_ref() {
+                let _ = std::fs::remove_file(path);
+            }
+        } else {
+            axum::serve(
+                listener,
+                self.router
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+        }
+
+        #[cfg(not(unix))]
+        {
+            if self.config.gateway_socket.is_some() {
+                tracing::warn!(
+                    "fnOS unified gateway socket is configured but Unix sockets are unavailable on this platform"
+                );
+            }
+
+            axum::serve(
+                listener,
+                self.router
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
+        }
 
         info!("HTTP server shut down gracefully");
 
@@ -486,6 +596,118 @@ impl ApiServer {
     pub fn router(&self) -> &Router {
         &self.router
     }
+}
+
+#[cfg(unix)]
+async fn serve_unix_socket(
+    listener: tokio::net::UnixListener,
+    router: Router,
+) -> anyhow::Result<()> {
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let router = router.clone();
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(stream);
+            let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
+                let router = router.clone();
+                async move {
+                    let response = router.oneshot(request.map(Body::new)).await;
+                    Ok::<_, std::convert::Infallible>(response)
+                }
+            });
+
+            if let Err(error) = http1::Builder::new()
+                .serve_connection(io, service)
+                .with_upgrades()
+                .await
+            {
+                tracing::debug!(error = %error, "Unix socket HTTP connection closed with error");
+            }
+        });
+    }
+}
+
+fn normalize_gateway_prefix(prefix: Option<&str>) -> Option<String> {
+    let prefix = prefix?.trim();
+    if prefix.is_empty() {
+        return None;
+    }
+
+    let mut normalized = if prefix.starts_with('/') {
+        prefix.to_string()
+    } else {
+        format!("/{prefix}")
+    };
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    Some(normalized)
+}
+
+async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Request) -> Response {
+    let original_uri = request.uri().clone();
+    let stripped_path = original_uri
+        .path()
+        .strip_prefix(&state.prefix)
+        .filter(|path| !path.is_empty())
+        .unwrap_or("/");
+    let path_and_query = match original_uri.query() {
+        Some(query) => format!("{stripped_path}?{query}"),
+        None => stripped_path.to_string(),
+    };
+
+    let mut parts = original_uri.into_parts();
+    parts.path_and_query = match PathAndQuery::try_from(path_and_query) {
+        Ok(path_and_query) => Some(path_and_query),
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Invalid gateway path").into_response()
+        }
+    };
+    let rewritten_uri = match Uri::from_parts(parts) {
+        Ok(uri) => uri,
+        Err(_) => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Invalid gateway URI").into_response()
+        }
+    };
+    *request.uri_mut() = rewritten_uri;
+
+    match state.router.oneshot(request).await {
+        Ok(response) => rewrite_gateway_html(response, &state.prefix).await,
+        Err(error) => match error {},
+    }
+}
+
+async fn rewrite_gateway_html(response: Response, prefix: &str) -> Response {
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.starts_with("text/html"))
+        .unwrap_or(false);
+
+    if !is_html {
+        return response;
+    }
+
+    let (mut parts, body) = response.into_parts();
+    let Ok(bytes) = to_bytes(body, 8 * 1024 * 1024).await else {
+        return Response::from_parts(parts, Body::empty());
+    };
+    let Ok(mut html) = String::from_utf8(bytes.to_vec()) else {
+        return Response::from_parts(parts, Body::from(bytes));
+    };
+
+    // The Docker image is also used for direct port access, so its Vite build
+    // keeps root-relative assets. Rewrite only gateway HTML responses to the
+    // registered prefix, keeping the direct TCP page fully compatible.
+    let asset_prefix = format!("{prefix}/");
+    html = html.replace("src=\"/", &format!("src=\"{asset_prefix}"));
+    html = html.replace("href=\"/", &format!("href=\"{asset_prefix}"));
+    html = html.replace("<head>", &format!("<head><base href=\"{asset_prefix}\">"));
+
+    parts.headers.remove(header::CONTENT_LENGTH);
+    Response::from_parts(parts, Body::from(html))
 }
 
 /// Health check endpoint handler

@@ -6,6 +6,7 @@ services:
       - "0.0.0.0:${wizard_port}:3000"
       - "[::]:${wizard_port}:3000"
     volumes:
+      - "${TRIM_APPDEST}:/app/target:rw"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/data:/app/data"
       - "${wizard_storage_path:-${TRIM_APPDEST_VOL}/@appshare/ting-reader/storage}:/app/storage"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins:/app/plugins"
@@ -15,6 +16,8 @@ services:
       - RUST_LOG=info
       - TING_SERVER__HOST=0.0.0.0
       - TING_SERVER__PORT=3000
+      - FNNAS_GATEWAY_SOCKET=/app/target/ting-reader.sock
+      - FNNAS_GATEWAY_PREFIX=/app/ting-reader
       - TEMP_DIR=/app/temp
       - DATA_DIR=/app/data
       - STORAGE_DIR=/app/storage
