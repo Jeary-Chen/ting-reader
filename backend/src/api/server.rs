@@ -19,7 +19,7 @@ use crate::db::manager::DatabaseManager;
 use crate::db::repository::BookRepository;
 use axum::{
     body::{to_bytes, Body},
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header, uri::PathAndQuery, Uri},
     middleware,
     middleware::Next,
@@ -669,6 +669,21 @@ async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Requ
     };
     *request.uri_mut() = rewritten_uri;
 
+    // The outer `/*path` route has already inserted its wildcard into Axum's
+    // private URL-parameter extension. Re-dispatching the same request through
+    // the inner router would append the inner route parameter, so handlers such
+    // as `Path<String>` would see two values for a one-parameter route.
+    // Rebuild the routing extensions before the second dispatch while retaining
+    // the connection address used by login auditing.
+    let connect_info = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .copied();
+    request.extensions_mut().clear();
+    if let Some(connect_info) = connect_info {
+        request.extensions_mut().insert(connect_info);
+    }
+
     match state.router.oneshot(request).await {
         Ok(response) => rewrite_gateway_html(response, &state.prefix).await,
         Err(error) => match error {},
@@ -774,5 +789,33 @@ mod tests {
         assert_eq!(value["status"], "ok");
         assert!(value["version"].is_string());
         assert!(value["timestamp"].is_number());
+    }
+
+    #[tokio::test]
+    async fn gateway_proxy_does_not_leak_outer_wildcard_path_param() {
+        use axum::extract::Path;
+
+        async fn get_library(Path(id): Path<String>) -> String {
+            id
+        }
+
+        let inner_router = Router::new().route("/api/libraries/:id", get(get_library));
+        let state = GatewayProxyState {
+            router: inner_router,
+            prefix: "/app/ting-reader".to_string(),
+        };
+        let app = Router::new()
+            .route("/app/ting-reader", any(gateway_proxy))
+            .route("/app/ting-reader/*path", any(gateway_proxy))
+            .with_state(state);
+
+        let request = Request::builder()
+            .uri("/app/ting-reader/api/libraries/library-1")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+
+        assert_eq!(body.as_ref(), b"library-1");
     }
 }
