@@ -824,4 +824,40 @@ mod tests {
 
         assert_eq!(body.as_ref(), b"library-1");
     }
+
+    #[tokio::test]
+    async fn gateway_proxy_preserves_websocket_upgrade() {
+        use axum::extract::ws::WebSocketUpgrade;
+        use axum::http::StatusCode;
+
+        async fn websocket(ws: WebSocketUpgrade) -> Response {
+            ws.on_upgrade(|_| async {})
+        }
+
+        let inner_router = Router::new().route("/api/ws", get(websocket));
+        let state = GatewayProxyState {
+            router: inner_router,
+            prefix: "/app/ting-reader".to_string(),
+        };
+        let app = Router::new()
+            .route("/app/ting-reader", any(gateway_proxy))
+            .route("/app/ting-reader/*path", any(gateway_proxy))
+            .with_state(state);
+
+        let mut request = Request::builder()
+            .method("GET")
+            .uri("/app/ting-reader/api/ws")
+            .header(header::CONNECTION, "upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header(header::SEC_WEBSOCKET_VERSION, "13")
+            .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Body::empty())
+            .unwrap();
+        let on_upgrade = hyper::upgrade::on(&mut request);
+        request.extensions_mut().insert(on_upgrade);
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
 }
