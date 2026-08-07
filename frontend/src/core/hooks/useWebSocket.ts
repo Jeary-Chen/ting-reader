@@ -31,17 +31,19 @@ export function useWebSocket() {
   const maxReconnectAttempts = 20;
 
   const getWsUrl = useCallback(() => {
+    if (typeof window === 'undefined') return '';
+
+    const base = getRuntimeBaseUrl(activeUrl) || window.location.origin;
+    let url: URL;
     try {
-      const url = new URL(getRuntimeBaseUrl(activeUrl));
-      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-      url.pathname = url.pathname.replace(/\/$/, '') + '/api/ws';
-      return url.toString();
+      url = new URL(base, window.location.origin);
     } catch {
-      // Fallback: construct from string
-      const base = getRuntimeBaseUrl(activeUrl).replace(/\/$/, '');
-      const wsProtocol = base.startsWith('https') ? 'wss' : 'ws';
-      return `${wsProtocol}://${new URL(base).host}/api/ws`;
+      url = new URL(window.location.origin);
     }
+
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    url.pathname = url.pathname.replace(/\/$/, '') + '/api/ws';
+    return url.toString();
   }, [activeUrl]);
 
   const connect = useCallback(() => {
