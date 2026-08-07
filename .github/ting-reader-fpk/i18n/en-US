@@ -4,7 +4,6 @@ desc="<b>Ting Reader</b> is a self-hosted audiobook management system for audiob
 
 [entry]
 title="Ting Reader"
-directTitle="Ting Reader (Direct Port)"
 
 [install]
 stepTitle="App Configuration"

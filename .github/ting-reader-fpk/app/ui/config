@@ -9,15 +9,6 @@
             "gatewayPrefix": "/app/ting-reader",
             "url": "/app/ting-reader/",
             "allUsers": true
-        },
-        "ting-reader.direct": {
-            "title": "${entry.directTitle}",
-            "icon": "images/icon-{0}.png",
-            "type": "url",
-            "protocol": "http",
-            "port": "${wizard_port}",
-            "url": "/",
-            "allUsers": true
         }
     }
 }
