@@ -377,10 +377,15 @@ impl ApiServer {
         // Static file serving for SPA
         let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "static".to_string());
         let index_path = std::path::PathBuf::from(&static_dir).join("index.html");
+        let manifest_path = std::path::PathBuf::from(&static_dir).join("manifest.webmanifest");
+        let serve_manifest = ServeFile::new(manifest_path);
         let serve_dir = ServeDir::new(&static_dir).fallback(ServeFile::new(index_path));
 
         // Apply global middleware layers
-        let router = api_router.fallback_service(serve_dir).layer(
+        let router = api_router
+            .route_service("/manifest.webmanifest", serve_manifest)
+            .fallback_service(serve_dir);
+        let router = router.layer(
             ServiceBuilder::new()
                 // Add security headers middleware
                 .layer(middleware::from_fn(move |mut req: Request, next: Next| {
@@ -696,6 +701,29 @@ async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Requ
     }
 }
 
+fn rewrite_root_relative_attribute(html: &str, attribute: &str, prefix: &str) -> String {
+    let root_attribute = format!("{attribute}=\"/");
+    let prefixed_attribute = format!("{attribute}=\"{prefix}");
+    let mut output = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(index) = remaining.find(&root_attribute) {
+        output.push_str(&remaining[..index]);
+        let candidate = &remaining[index..];
+
+        if candidate.starts_with(&prefixed_attribute) {
+            output.push_str(&prefixed_attribute);
+            remaining = &candidate[prefixed_attribute.len()..];
+        } else {
+            output.push_str(&prefixed_attribute);
+            remaining = &candidate[root_attribute.len()..];
+        }
+    }
+
+    output.push_str(remaining);
+    output
+}
+
 async fn rewrite_gateway_html(response: Response, prefix: &str) -> Response {
     let is_html = response
         .headers()
@@ -720,8 +748,13 @@ async fn rewrite_gateway_html(response: Response, prefix: &str) -> Response {
     // keeps root-relative assets. Rewrite only gateway HTML responses to the
     // registered prefix, keeping the direct TCP page fully compatible.
     let asset_prefix = format!("{prefix}/");
-    html = html.replace("src=\"/", &format!("src=\"{asset_prefix}"));
-    html = html.replace("href=\"/", &format!("href=\"{asset_prefix}"));
+    html = rewrite_root_relative_attribute(&html, "src", &asset_prefix);
+    html = rewrite_root_relative_attribute(&html, "href", &asset_prefix);
+    if !html.contains("rel=\"manifest\"") && !html.contains("rel='manifest'") {
+        let manifest_link =
+            format!("<link rel=\"manifest\" href=\"{asset_prefix}manifest.webmanifest\">");
+        html = html.replace("</head>", &format!("{manifest_link}</head>"));
+    }
     html = html.replace("<head>", &format!("<head><base href=\"{asset_prefix}\">"));
 
     parts.headers.remove(header::CONTENT_LENGTH);
@@ -859,5 +892,15 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    #[test]
+    fn gateway_asset_rewrite_does_not_duplicate_prefix() {
+        let html = r#"<script src="/assets/index.js"></script><link rel="manifest" href="/app/ting-reader/manifest.webmanifest">"#;
+        let rewritten = rewrite_root_relative_attribute(html, "src", "/app/ting-reader/");
+
+        assert!(rewritten.contains("src=\"/app/ting-reader/assets/index.js\""));
+        assert!(rewritten.contains("href=\"/app/ting-reader/manifest.webmanifest\""));
+        assert!(!rewritten.contains("/app/ting-reader/app/ting-reader/"));
     }
 }
