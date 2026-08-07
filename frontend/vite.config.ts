@@ -9,6 +9,10 @@ const packageJson = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
 ) as { version?: string }
 
+// A relative base works for both the fnOS gateway path and direct port access.
+// A dedicated gateway-only build can still override it with VITE_APP_BASE_URL.
+const appBase = process.env.VITE_APP_BASE_URL || './'
+
 // https://vite.dev/config/
 export default defineConfig({
   define: {
@@ -35,8 +39,8 @@ export default defineConfig({
         theme_color: '#0284c7',
         background_color: '#ffffff',
         display: 'standalone',
-        start_url: '/',
-        scope: '/',
+        start_url: appBase,
+        scope: appBase,
         orientation: 'portrait-primary',
         icons: [
           {
@@ -144,7 +148,7 @@ export default defineConfig({
       }
     })
   ],
-  base: '/',
+  base: appBase,
   build: {
     outDir: 'dist',
     minify: 'terser',
