@@ -674,14 +674,20 @@ async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Requ
     // the inner router would append the inner route parameter, so handlers such
     // as `Path<String>` would see two values for a one-parameter route.
     // Rebuild the routing extensions before the second dispatch while retaining
-    // the connection address used by login auditing.
+    // the connection address used by login auditing and Hyper's pending upgrade.
     let connect_info = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .copied();
+    let on_upgrade = request
+        .extensions_mut()
+        .remove::<hyper::upgrade::OnUpgrade>();
     request.extensions_mut().clear();
     if let Some(connect_info) = connect_info {
         request.extensions_mut().insert(connect_info);
+    }
+    if let Some(on_upgrade) = on_upgrade {
+        request.extensions_mut().insert(on_upgrade);
     }
 
     match state.router.oneshot(request).await {
