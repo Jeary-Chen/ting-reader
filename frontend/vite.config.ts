@@ -26,6 +26,7 @@ export default defineConfig({
     cspSafeLegacyPlugin(),
     VitePWA({
       registerType: 'autoUpdate',
+      useCredentials: true,
       includeAssets: ['favicon.ico', 'pwa-64.png', 'pwa-128.png', 'pwa-192.png', 'pwa-256.png', 'pwa-512.png', 'pwa-*-maskable.png'],
       devOptions: {
         enabled: true,
