@@ -655,6 +655,7 @@ async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Requ
         .strip_prefix(&state.prefix)
         .filter(|path| !path.is_empty())
         .unwrap_or("/");
+    let should_rewrite_html = !is_plugin_asset_path(stripped_path);
     let path_and_query = match original_uri.query() {
         Some(query) => format!("{stripped_path}?{query}"),
         None => stripped_path.to_string(),
@@ -697,9 +698,14 @@ async fn gateway_proxy(State(state): State<GatewayProxyState>, mut request: Requ
     }
 
     match state.router.oneshot(request).await {
-        Ok(response) => rewrite_gateway_html(response, &state.prefix).await,
+        Ok(response) if should_rewrite_html => rewrite_gateway_html(response, &state.prefix).await,
+        Ok(response) => response,
         Err(error) => match error {},
     }
+}
+
+fn is_plugin_asset_path(path: &str) -> bool {
+    path.starts_with("/api/v1/plugin-assets/") || path.starts_with("/api/plugin-assets/")
 }
 
 fn rewrite_root_relative_attribute(html: &str, attribute: &str, prefix: &str) -> String {
@@ -726,6 +732,10 @@ fn rewrite_root_relative_attribute(html: &str, attribute: &str, prefix: &str) ->
 }
 
 async fn ensure_manifest_link(request: Request, next: Next) -> Response {
+    if is_plugin_asset_path(request.uri().path()) {
+        return next.run(request).await;
+    }
+
     let is_manifest_request = request.uri().path().ends_with("/manifest.webmanifest");
     let response = next.run(request).await;
     if is_manifest_request {
@@ -982,6 +992,67 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
+    }
+
+    #[tokio::test]
+    async fn plugin_asset_html_skips_manifest_injection() {
+        async fn plugin_asset() -> Response {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(Body::from(
+                    r#"<html><head><link rel="stylesheet" href="./rss.css"></head></html>"#,
+                ))
+                .unwrap()
+        }
+
+        let app = Router::new()
+            .route("/api/v1/plugin-assets/:id/*path", get(plugin_asset))
+            .layer(middleware::from_fn(ensure_manifest_link));
+        let request = Request::builder()
+            .uri("/api/v1/plugin-assets/rss-feed/ui/rss.html")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body.contains("href=\"./rss.css\""));
+        assert!(!body.contains("manifest.webmanifest"));
+    }
+
+    #[tokio::test]
+    async fn gateway_proxy_preserves_plugin_asset_relative_urls() {
+        async fn plugin_asset() -> Response {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(Body::from(
+                    r#"<html><head><link rel="stylesheet" href="./rss.css"></head></html>"#,
+                ))
+                .unwrap()
+        }
+
+        let inner_router =
+            Router::new().route("/api/v1/plugin-assets/:id/*path", get(plugin_asset));
+        let state = GatewayProxyState {
+            router: inner_router,
+            prefix: "/app/ting-reader".to_string(),
+        };
+        let app = Router::new()
+            .route("/app/ting-reader", any(gateway_proxy))
+            .route("/app/ting-reader/*path", any(gateway_proxy))
+            .with_state(state);
+
+        let request = Request::builder()
+            .uri("/app/ting-reader/api/v1/plugin-assets/rss-feed/ui/rss.html")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+
+        assert!(body.contains("href=\"./rss.css\""));
+        assert!(!body.contains("<base href=\"/app/ting-reader/\">"));
+        assert!(!body.contains("/app/ting-reader/rss.css"));
     }
 
     #[test]
