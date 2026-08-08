@@ -774,11 +774,19 @@ fn ensure_manifest_link_in_html(html: &str) -> String {
         let mut rewritten_tag = tag.to_string();
         rewritten_tag = rewritten_tag.replace(
             "href=\"/app/ting-reader/manifest.webmanifest\"",
-            "href=\"/manifest.webmanifest\"",
+            "href=\"./manifest.webmanifest\"",
         );
         rewritten_tag = rewritten_tag.replace(
             "href='/app/ting-reader/manifest.webmanifest'",
+            "href='./manifest.webmanifest'",
+        );
+        rewritten_tag = rewritten_tag.replace(
+            "href=\"/manifest.webmanifest\"",
+            "href=\"./manifest.webmanifest\"",
+        );
+        rewritten_tag = rewritten_tag.replace(
             "href='/manifest.webmanifest'",
+            "href='./manifest.webmanifest'",
         );
         if !rewritten_tag.contains("crossorigin=") {
             let insert_at = rewritten_tag
@@ -798,7 +806,7 @@ fn ensure_manifest_link_in_html(html: &str) -> String {
     }
 
     let manifest_link =
-        r#"<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">"#;
+        r#"<link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">"#;
     if let Some(index) = html.find("</head>") {
         let mut rewritten = String::with_capacity(html.len() + manifest_link.len());
         rewritten.push_str(&html[..index]);
@@ -982,7 +990,7 @@ mod tests {
         let rewritten = ensure_manifest_link_in_html(html);
 
         assert!(rewritten.contains(
-            r#"<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">"#
+            r#"<link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">"#
         ));
         assert_eq!(rewritten.matches("rel=\"manifest\"").count(), 1);
     }
@@ -992,7 +1000,9 @@ mod tests {
         let html = r#"<html><head><link rel="manifest" href="/app/ting-reader/manifest.webmanifest"></head></html>"#;
         let rewritten = ensure_manifest_link_in_html(html);
 
-        assert!(rewritten.contains(r#"href="/manifest.webmanifest" crossorigin="use-credentials""#));
+        assert!(
+            rewritten.contains(r#"href="./manifest.webmanifest" crossorigin="use-credentials""#)
+        );
         assert_eq!(rewritten.matches("rel=\"manifest\"").count(), 1);
     }
 
