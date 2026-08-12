@@ -7,6 +7,6 @@ source                = thirdparty
 maintainer            = ${common.maintainer}
 maintainer_url        = https://github.com/dqsq2e2/ting-reader
 distributor           = ${common.distributor}
-distributor_url       = https://www.tingreader.cn
+distributor_url       = https://www.tingreader.cn/en
 desktop_uidir         = ui
 desktop_applaunchname = ting-reader.main
