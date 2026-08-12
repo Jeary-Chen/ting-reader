@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import apiClient from "../../core/api/client";
 import { formatLocalizedDate } from "../../core/utils/locale";
+import { useApplicationTimeZone } from "../../core/utils/timeZone";
 import {
   CHANGELOG_URL,
   PRIVACY_POLICY_URL,
@@ -37,6 +38,7 @@ const formatVersion = (version: string | undefined) => {
 
 const AboutPage: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const [backendVersion, setBackendVersion] = useState("");
   const [loadingVersion, setLoadingVersion] = useState(true);
   const [checkingBackendUpdate, setCheckingBackendUpdate] = useState(false);

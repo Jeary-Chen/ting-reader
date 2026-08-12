@@ -13,9 +13,11 @@ import {
   Edit
 } from 'lucide-react';
 import { formatDate } from '../../core/utils/date';
+import { useApplicationTimeZone } from '../../core/utils/timeZone';
 
 const AdminUsers: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const [users, setUsers] = useState<UserType[]>([]);
   // const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);

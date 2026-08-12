@@ -1,13 +1,13 @@
 
 import i18n from '../i18n';
 import { normalizeLanguage } from '../i18n/locales';
+import { getApplicationTimeZone } from './timeZone';
 
 const currentLocale = () => normalizeLanguage(i18n.resolvedLanguage || i18n.language);
 
-export const formatDate = (dateString: string | null | undefined): string => {
-  if (!dateString) return i18n.t('common.unknownTime');
+export const parseBackendDate = (dateString: string | null | undefined): Date | null => {
+  if (!dateString) return null;
   try {
-    // 1. Basic cleanup
     let cleanDate = dateString.trim();
     
     // 2. Fix the ".3f" suffix issue from previous bad backend version
@@ -28,25 +28,32 @@ export const formatDate = (dateString: string | null | undefined): string => {
     // We look for a dot followed by more than 3 digits
     cleanDate = cleanDate.replace(/(\.\d{3})\d+/, '$1');
 
-    let date = new Date(cleanDate);
-    
-    // 5. Fallback: If invalid, try appending Z (assuming UTC)
-    if (isNaN(date.getTime())) {
-       // If it doesn't have timezone info (Z or +HH:MM or -HH:MM)
-       if (!cleanDate.endsWith('Z') && !cleanDate.includes('+')) {
-          const dateWithZ = new Date(cleanDate + 'Z');
-          if (!isNaN(dateWithZ.getTime())) {
-            date = dateWithZ;
-          }
-       }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+      cleanDate = `${cleanDate}T00:00:00Z`;
+    } else if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(cleanDate)) {
+      // SQLite CURRENT_TIMESTAMP values have no offset but are always UTC.
+      cleanDate = `${cleanDate}Z`;
     }
 
+    const date = new Date(cleanDate);
     if (isNaN(date.getTime())) {
-       console.warn(`解析日期失败: ${dateString} (cleaned: ${cleanDate})`);
-       return i18n.t('common.unknownTime');
+      console.warn(`解析日期失败: ${dateString} (cleaned: ${cleanDate})`);
+      return null;
     }
-    
+
+    return date;
+  } catch {
+    return null;
+  }
+};
+
+export const formatDate = (dateString: string | null | undefined): string => {
+  const date = parseBackendDate(dateString);
+  if (!date) return i18n.t('common.unknownTime');
+
+  try {
     return new Intl.DateTimeFormat(currentLocale(), {
+        timeZone: getApplicationTimeZone(),
         year: 'numeric',
         month: 'long',
         day: 'numeric',

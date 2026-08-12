@@ -12,6 +12,8 @@ services:
       - "${wizard_storage_path:-${TRIM_APPDEST_VOL}/@appshare/ting-reader/storage}:/app/storage"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins:/app/plugins"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/temp:/app/temp"
+      - "/etc/localtime:/etc/localtime:ro"
+      - "/etc/timezone:/etc/timezone:ro"
     restart: unless-stopped
     environment:
       - RUST_LOG=info
@@ -20,6 +22,7 @@ services:
       - FNNAS_GATEWAY_SOCKET=/app/target/ting-reader.sock
       - FNNAS_GATEWAY_PREFIX=/app/ting-reader
       - FNNAS_FPK_INITIAL_ADMIN_LANGUAGE=1
+      - FNNAS_FPK_INITIAL_TIME_ZONE=1
       - TRIM_API_TOKEN=${TRIM_API_TOKEN:-}
       - TRIM_SYS_LANGUAGE=${TRIM_SYS_LANGUAGE:-}
       - TEMP_DIR=/app/temp

@@ -1,5 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Serialize)]
+pub struct ApplicationTimeZoneResponse {
+    pub time_zone: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateApplicationTimeZoneRequest {
+    pub time_zone: String,
+}
+
 // Metrics API models
 
 /// Response for admin statistics dashboard

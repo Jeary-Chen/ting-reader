@@ -34,7 +34,7 @@ use crate::core::StorageService;
 use crate::db::repository::{
     BookRepository, ChapterRepository, FavoriteRepository, LibraryRepository,
     NotificationWebhookRepository, PlaylistRepository, ProgressRepository, SeriesRepository,
-    UserRepository, UserSettingsRepository,
+    SystemSettingsRepository, UserRepository, UserSettingsRepository,
 };
 use crate::plugin::config::PluginConfigManager;
 use crate::plugin::manager::PluginManager;
@@ -49,6 +49,7 @@ pub struct AppState {
     pub progress_repo: Arc<ProgressRepository>,
     pub favorite_repo: Arc<FavoriteRepository>,
     pub settings_repo: Arc<UserSettingsRepository>,
+    pub system_settings_repo: Arc<SystemSettingsRepository>,
     pub library_repo: Arc<LibraryRepository>,
     pub chapter_repo: Arc<ChapterRepository>,
     pub series_repo: Arc<SeriesRepository>,

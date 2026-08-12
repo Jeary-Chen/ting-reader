@@ -4,9 +4,12 @@ import { Trash2, HardDrive, Download, Database, ChevronDown, ChevronRight } from
 import { getCoverAspectClass, useBookshelfCoverShape } from '../../core/hooks/useBookshelfCoverShape';
 import { useTranslation } from 'react-i18next';
 import BackButton from '../../shared/widgets/BackButton';
+import { getApplicationTimeZone, useApplicationTimeZone } from '../../core/utils/timeZone';
+import { parseBackendDate } from '../../core/utils/date';
 
 const CacheManagementPage: React.FC = () => {
   const { t, i18n } = useTranslation();
+  useApplicationTimeZone();
   const coverShape = useBookshelfCoverShape();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [cachedFiles, setCachedFiles] = useState<any[]>([]);
@@ -212,7 +215,7 @@ const CacheManagementPage: React.FC = () => {
                                                 <span>
                                                     {t('downloadsPage.cachedAt', {
                                                         time: file.created_at
-                                                            ? new Date(file.created_at).toLocaleString(i18n.language?.startsWith('en') ? 'en-US' : 'zh-CN')
+                                                            ? parseBackendDate(file.created_at)?.toLocaleString(i18n.language?.startsWith('en') ? 'en-US' : 'zh-CN', { timeZone: getApplicationTimeZone() }) || t('downloadsPage.unknownTime')
                                                             : t('downloadsPage.unknownTime'),
                                                     })}
                                                 </span>

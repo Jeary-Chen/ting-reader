@@ -1,14 +1,14 @@
 use super::AppState;
 use crate::api::models::{
-    AdminStatisticsOverview, AdminStatisticsResponse, BatchDeleteTasksRequest,
-    BatchDeleteTasksResponse, BookActivityStatistics, CancelTaskResponse, ClearTasksQuery,
-    ClearTasksResponse, ComponentHealth, ComponentStatus, ComponentsHealth, ConfigResponse,
-    DatabaseConfigResponse, DatabaseMetrics, DeleteTaskResponse, HealthResponse, HealthStatus,
-    LibraryStatistics, LoggingConfigResponse, MetricsResponse, PluginMetrics,
+    AdminStatisticsOverview, AdminStatisticsResponse, ApplicationTimeZoneResponse,
+    BatchDeleteTasksRequest, BatchDeleteTasksResponse, BookActivityStatistics, CancelTaskResponse,
+    ClearTasksQuery, ClearTasksResponse, ComponentHealth, ComponentStatus, ComponentsHealth,
+    ConfigResponse, DatabaseConfigResponse, DatabaseMetrics, DeleteTaskResponse, HealthResponse,
+    HealthStatus, LibraryStatistics, LoggingConfigResponse, MetricsResponse, PluginMetrics,
     PluginSystemConfigResponse, RecentActivityPoint, SecurityConfigResponse, ServerConfigResponse,
     StorageConfigResponse, SystemMetrics, TaskDetailResponse, TaskInfoResponse,
-    TaskQueueConfigResponse, TaskQueueMetrics, TasksQuery, UpdateConfigRequest,
-    UpdateConfigResponse, UserActivityStatistics,
+    TaskQueueConfigResponse, TaskQueueMetrics, TasksQuery, UpdateApplicationTimeZoneRequest,
+    UpdateConfigRequest, UpdateConfigResponse, UserActivityStatistics,
 };
 use crate::core::error::{Result, TingError};
 use crate::db::repository::Repository;
@@ -28,6 +28,43 @@ pub use logs::{
     clear_system_logs, export_system_logs, get_system_logs, ClearSystemLogsResponse,
     ExportLogsQuery, LogsQuery, LogsResponse,
 };
+
+/// Return the application-wide time zone. Reading is available to every
+/// authenticated user so clients can render timestamps consistently.
+pub async fn get_application_time_zone(
+    State(state): State<AppState>,
+    _user: crate::auth::middleware::AuthUser,
+) -> Result<impl IntoResponse> {
+    let time_zone = state
+        .system_settings_repo
+        .application_time_zone_or_default()
+        .await?;
+
+    Ok(Json(ApplicationTimeZoneResponse { time_zone }))
+}
+
+/// Update the application-wide time zone. Only administrators may change it.
+pub async fn update_application_time_zone(
+    State(state): State<AppState>,
+    user: crate::auth::middleware::AuthUser,
+    Json(request): Json<UpdateApplicationTimeZoneRequest>,
+) -> Result<impl IntoResponse> {
+    if user.role != "admin" {
+        return Err(TingError::PermissionDenied(
+            "Admin access required".to_string(),
+        ));
+    }
+
+    state
+        .system_settings_repo
+        .set_application_time_zone(&request.time_zone)
+        .await?;
+    let time_zone = state
+        .system_settings_repo
+        .application_time_zone_or_default()
+        .await?;
+    Ok(Json(ApplicationTimeZoneResponse { time_zone }))
+}
 
 /// Handler for GET /api/v1/system/check-update - Check for updates via backend proxy
 pub async fn check_update(State(_state): State<AppState>) -> Result<impl IntoResponse> {

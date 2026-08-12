@@ -104,6 +104,9 @@ impl ApiServer {
         let settings_repo = Arc::new(crate::db::repository::UserSettingsRepository::new(
             db.clone(),
         ));
+        let system_settings_repo = Arc::new(crate::db::repository::SystemSettingsRepository::new(
+            db.clone(),
+        ));
         let library_repo = Arc::new(crate::db::repository::LibraryRepository::new(db.clone()));
         let chapter_repo = Arc::new(crate::db::repository::ChapterRepository::new(db.clone()));
         let series_repo = Arc::new(crate::db::repository::SeriesRepository::new(db.clone()));
@@ -296,6 +299,7 @@ impl ApiServer {
             progress_repo,
             favorite_repo,
             settings_repo,
+            system_settings_repo,
             library_repo,
             chapter_repo,
             series_repo,

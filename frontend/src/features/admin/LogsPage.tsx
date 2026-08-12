@@ -23,6 +23,7 @@ import {
   Eraser
 } from 'lucide-react';
 import { formatDate } from '../../core/utils/date';
+import { useApplicationTimeZone } from '../../core/utils/timeZone';
 
 interface LogEntry {
   timestamp: string;
@@ -58,6 +59,7 @@ const LEVEL_OPTIONS: Array<{ label?: string; labelKey?: string; value: string }>
 
 const LogsPage: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(true);
   

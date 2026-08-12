@@ -40,6 +40,8 @@ pub mod signing;
 pub mod storage;
 #[path = "books/text_cleaner.rs"]
 pub mod text_cleaner;
+#[path = "app/time.rs"]
+pub mod time;
 #[path = "storage/webdav_client.rs"]
 pub mod webdav_client;
 

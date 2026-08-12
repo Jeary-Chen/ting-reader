@@ -26,6 +26,7 @@ import {
   markSessionRestoreLogged,
 } from '../../core/utils/sessionRestore';
 import apiClient from '../../core/api/client';
+import { setApplicationTimeZone } from '../../core/utils/timeZone';
 
 import Player from '../../features/player/Player';
 import PluginExtensionHost from '../pluginExtensions/PluginExtensionHost';
@@ -107,6 +108,17 @@ const Layout: React.FC = () => {
       }).catch(err => console.error('Failed to sync user settings', err));
     }
   }, [user, setPlaybackSpeed, isConnecting, connectionError, setLanguage]);
+
+  React.useEffect(() => {
+    if (!user || isConnecting || connectionError) return;
+    apiClient.get('/api/system/time-zone')
+      .then((response) => {
+        if (typeof response.data?.time_zone === 'string') {
+          setApplicationTimeZone(response.data.time_zone);
+        }
+      })
+      .catch((error) => console.error('Failed to sync application time zone', error));
+  }, [user, isConnecting, connectionError]);
 
   React.useEffect(() => {
     refreshTheme();

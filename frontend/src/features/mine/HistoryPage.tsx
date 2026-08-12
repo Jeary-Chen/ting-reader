@@ -24,6 +24,12 @@ import {
 import LoadingSpinner from '../../shared/ui/LoadingSpinner';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
+import { parseBackendDate } from '../../core/utils/date';
+import {
+  getApplicationDayDifference,
+  getApplicationTimeZone,
+  useApplicationTimeZone,
+} from '../../core/utils/timeZone';
 
 interface HistoryBookGroup {
   book_id: string;
@@ -39,6 +45,7 @@ const progressKey = (progress: Progress) =>
 
 const HistoryPage: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   const coverShape = useBookshelfCoverShape();
   const [recentPlays, setRecentPlays] = useState<Progress[]>([]);
@@ -458,15 +465,16 @@ const progressPercent = (progress: Progress) => {
 
 const formatLastListenedTime = (value: string | undefined, t: TFunction, language: string) => {
   if (!value) return t('historyPage.unknownTime');
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return t('historyPage.unknownTime');
+  const date = parseBackendDate(value);
+  if (!date) return t('historyPage.unknownTime');
 
-  const now = new Date();
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const dayDiff = Math.round((startOfToday - startOfDate) / 86400000);
+  const dayDiff = getApplicationDayDifference(date);
   const locale = language?.startsWith('en') ? 'en-US' : 'zh-CN';
-  const time = date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
+  const time = date.toLocaleTimeString(locale, {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: getApplicationTimeZone(),
+  });
 
   if (dayDiff === 0) return t('historyPage.today', { time });
   if (dayDiff === 1) return t('historyPage.yesterday', { time });
@@ -478,6 +486,7 @@ const formatLastListenedTime = (value: string | undefined, t: TFunction, languag
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: getApplicationTimeZone(),
   });
 };
 

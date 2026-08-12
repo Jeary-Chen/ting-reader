@@ -17,7 +17,6 @@ import LoadingSpinner from '../../shared/ui/LoadingSpinner';
 import {
   Calendar,
   ChevronRight,
-  Clock,
   Headphones,
   Heart,
   History,
@@ -30,6 +29,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { formatLocalizedDate } from '../../core/utils/locale';
+import { getCurrentHour, useApplicationTimeZone } from '../../core/utils/timeZone';
 
 type HeroItem = {
   id: string;
@@ -60,6 +60,7 @@ const progressUpdatedTime = (progress: Progress) => {
 
 const HomePage: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   const coverShape = useBookshelfCoverShape();
   const [recentPlays, setRecentPlays] = useState<Progress[]>([]);
@@ -71,6 +72,13 @@ const HomePage: React.FC = () => {
   const [homeLayout, setHomeLayout] = useState(DEFAULT_HOME_LAYOUT);
   const [loading, setLoading] = useState(true);
   const [activeHeroBookId, setActiveHeroBookId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const refreshNow = () => setNow(new Date());
+    const timer = window.setInterval(refreshNow, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -220,7 +228,7 @@ const HomePage: React.FC = () => {
   }, [recentPlays]);
 
   const getGreeting = () => {
-    const hour = new Date().getHours();
+    const hour = getCurrentHour(now);
     if (hour >= 5 && hour < 12) return t('home.greetingMorning');
     if (hour >= 12 && hour < 14) return t('home.greetingNoon');
     if (hour >= 14 && hour < 18) return t('home.greetingAfternoon');
@@ -251,7 +259,7 @@ const HomePage: React.FC = () => {
           <div className="flex items-center gap-2">
             <div className="hidden md:flex h-12 items-center gap-2 text-sm text-slate-500 bg-white dark:bg-slate-900 px-4 py-2.5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
               <Calendar size={16} />
-              <span>{formatLocalizedDate(new Date(), { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+              <span>{formatLocalizedDate(now, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
             </div>
             <Link
               to="/search"
@@ -399,17 +407,6 @@ const HomePage: React.FC = () => {
             <DataCard icon={<Heart size={20} />} label={t('home.favoriteWorks')} value={favorites.length} unit={t('home.bookUnit')} tone="text-red-500 bg-red-50 dark:bg-red-900/20" />
             <DataCard icon={<ListMusic size={20} />} label={t('home.myPlaylists')} value={playlists.length} unit={t('home.itemUnit')} tone="text-amber-600 bg-amber-50 dark:bg-amber-900/20" />
             <DataCard icon={<History size={20} />} label={t('home.listeningHistory')} value={recentPlays.length} unit={t('home.recordUnit')} tone="text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" />
-            <div className="col-span-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-violet-50 dark:bg-violet-900/20 text-violet-600 flex items-center justify-center">
-                  <Clock size={20} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-xs text-slate-500 font-bold">{t('home.nowPlaying')}</p>
-                  <p className="text-lg md:text-xl font-bold dark:text-white truncate">{currentChapter?.title || t('home.noPlayback')}</p>
-                </div>
-              </div>
-            </div>
           </div>
           )}
         </section>

@@ -21,12 +21,15 @@ import type {
   UserActivityStatistics,
 } from '../../core/types';
 import LoadingSpinner from '../../shared/ui/LoadingSpinner';
+import { parseBackendDate } from '../../core/utils/date';
 import { formatLocalizedNumber, getCurrentLocale } from '../../core/utils/locale';
+import { getApplicationTimeZone, useApplicationTimeZone } from '../../core/utils/timeZone';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 const AdminStatisticsPage: React.FC = () => {
   const { t } = useTranslation();
+  useApplicationTimeZone();
   const [report, setReport] = useState<AdminStatistics | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -567,20 +570,25 @@ const formatShortDuration = (seconds?: number) => {
 
 const formatDateTime = (value: string | undefined, t: Translate) => {
   if (!value) return t('adminStats.noRecord');
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = parseBackendDate(value);
+  if (!date) return value;
   return date.toLocaleString(getCurrentLocale(), {
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: getApplicationTimeZone(),
   });
 };
 
 const formatDay = (value: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value.slice(5);
-  return date.toLocaleDateString(getCurrentLocale(), { month: '2-digit', day: '2-digit' });
+  const date = parseBackendDate(value);
+  if (!date) return value.slice(5);
+  return date.toLocaleDateString(getCurrentLocale(), {
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: getApplicationTimeZone(),
+  });
 };
 
 export default AdminStatisticsPage;

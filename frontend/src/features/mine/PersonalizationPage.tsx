@@ -34,12 +34,18 @@ import {
   Info,
   Key,
   Languages,
+  Globe2,
   Monitor,
   Moon,
   Settings,
   Sun,
   User,
 } from "lucide-react";
+import {
+  APPLICATION_TIME_ZONE_OPTIONS,
+  getApplicationTimeZone,
+  setApplicationTimeZone,
+} from "../../core/utils/timeZone";
 import LoadingSpinner from "../../shared/ui/LoadingSpinner";
 import PluginExtensionSlot from "../../shared/pluginExtensions/PluginExtensionSlot";
 
@@ -83,6 +89,8 @@ const PersonalizationPage: React.FC = () => {
   const [widgetEmbedType, setWidgetEmbedType] = useState<"private" | "public">(
     "private",
   );
+  const [applicationTimeZone, setApplicationTimeZoneState] = useState(getApplicationTimeZone());
+  const [timeZoneSaving, setTimeZoneSaving] = useState(false);
 
   useEffect(() => {
     const fetchSettings = async () => {
@@ -119,6 +127,35 @@ const PersonalizationPage: React.FC = () => {
     fetchSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    apiClient.get("/api/system/time-zone")
+      .then((response) => {
+        const value = response.data?.time_zone;
+        if (typeof value === "string") {
+          setApplicationTimeZoneState(value);
+          setApplicationTimeZone(value);
+        }
+      })
+      .catch((error) => console.error("获取应用时区失败", error));
+  }, [user?.role]);
+
+  const handleApplicationTimeZoneChange = async (value: string) => {
+    setTimeZoneSaving(true);
+    try {
+      const response = await apiClient.put("/api/system/time-zone", { time_zone: value });
+      const savedTimeZone = response.data?.time_zone || value;
+      setApplicationTimeZoneState(savedTimeZone);
+      setApplicationTimeZone(savedTimeZone);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 1800);
+    } catch {
+      alert(t("common.saveFailed"));
+    } finally {
+      setTimeZoneSaving(false);
+    }
+  };
 
   const sanitizeSettings = (data: SettingsState) => {
     const cleanSettings: Record<string, unknown> = {
@@ -323,6 +360,43 @@ const PersonalizationPage: React.FC = () => {
               />
             </label>
           </div>
+          {user?.role === "admin" && (
+            <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="text-xl font-bold dark:text-white mb-2 flex items-center gap-2">
+                  <Globe2 size={20} className="text-indigo-500" />
+                  {t("settings.timeZone")}
+                </h2>
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {t("settings.timeZoneDescription")}
+                </p>
+              </div>
+              <label className="relative block w-full md:w-64 shrink-0">
+                <span className="sr-only">{t("settings.timeZone")}</span>
+                <Globe2
+                  size={18}
+                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-primary-600"
+                />
+                <select
+                  value={applicationTimeZone}
+                  disabled={timeZoneSaving}
+                  onChange={(event) => void handleApplicationTimeZoneChange(event.target.value)}
+                  className="w-full appearance-none rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 py-3 pl-11 pr-10 text-sm font-bold text-slate-700 dark:text-slate-200 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 disabled:opacity-60"
+                >
+                  {!APPLICATION_TIME_ZONE_OPTIONS.some((option) => option.value === applicationTimeZone) && (
+                    <option value={applicationTimeZone}>{applicationTimeZone}</option>
+                  )}
+                  {APPLICATION_TIME_ZONE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={16}
+                  className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-slate-400"
+                />
+              </label>
+            </div>
+          )}
         </section>
 
         <section className="bg-white dark:bg-slate-900 rounded-3xl p-5 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">

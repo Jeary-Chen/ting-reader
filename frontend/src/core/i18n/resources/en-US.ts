@@ -75,6 +75,9 @@ const enUS = {
     language: "Language",
     languageDescription:
       "The interface language syncs to your account and is also saved locally.",
+    timeZone: "Application time zone",
+    timeZoneDescription:
+      "Administrators control time display across the app; the server and database remain in UTC.",
     zhCN: "简体中文",
     enUS: "English",
     light: "Light",
@@ -86,7 +89,7 @@ const enUS = {
       "Show continue listening and a large switchable cover hero",
     homeStats: "Listening Stats",
     homeStatsDescription:
-      "Show recent listening, favorites, playlists, and current playback",
+      "Show recent listening, favorites, playlists, and history records",
     homeRecommended: "Recommended",
     homeRecommendedDescription:
       "Show a mixed feed from favorites, recent listening, and new additions",

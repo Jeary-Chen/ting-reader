@@ -108,8 +108,9 @@ async fn main() -> Result<()> {
         "Database initialized"
     );
 
+    let system_settings_repo = db::repository::SystemSettingsRepository::new(db.clone());
     // Ensure default admin user exists
-    ensure_admin_user(db.clone()).await?;
+    ensure_admin_user(db.clone(), &system_settings_repo).await?;
 
     // Derive the shared encryption key before plugin discovery so plugin
     // configuration can be loaded before plugin initialization.
@@ -174,7 +175,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn ensure_admin_user(db: std::sync::Arc<db::DatabaseManager>) -> Result<()> {
+async fn ensure_admin_user(
+    db: std::sync::Arc<db::DatabaseManager>,
+    system_settings_repo: &db::repository::SystemSettingsRepository,
+) -> Result<()> {
     use ting_reader::auth::hash_password;
     use ting_reader::db::models::{User, UserSettings};
     use ting_reader::db::repository::{Repository, UserRepository};
@@ -196,6 +200,15 @@ async fn ensure_admin_user(db: std::sync::Arc<db::DatabaseManager>) -> Result<()
             role: "admin".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
         };
+
+        // FPK uses the host OS time zone as the initial display preference.
+        // This is intentionally done only while creating the first admin.
+        if let Some(time_zone) = core::time::initial_time_zone_from_os() {
+            system_settings_repo
+                .set_application_time_zone(&time_zone)
+                .await?;
+        }
+
         if let Some(language) = core::fnos::initial_admin_language().await {
             let settings = UserSettings {
                 user_id: admin_user.id.clone(),

@@ -41,6 +41,7 @@ use crate::api::handlers::{
     find_tool_providers,
     generate_regex,
     get_admin_statistics,
+    get_application_time_zone,
     get_book,
     get_book_chapters,
     get_book_progress,
@@ -101,6 +102,7 @@ use crate::api::handlers::{
     test_notification_webhook,
     test_webdav_connection,
     uninstall_plugin,
+    update_application_time_zone,
     update_book,
     update_chapter,
     update_config,
@@ -314,6 +316,10 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/v1/tasks/batch-delete", post(batch_delete_tasks))
         // System management endpoints
         .route("/api/v1/system/statistics", get(get_admin_statistics))
+        .route(
+            "/api/v1/system/time-zone",
+            get(get_application_time_zone).put(update_application_time_zone),
+        )
         .route("/api/v1/system/metrics", get(get_metrics))
         .route("/api/v1/system/config", get(get_config).put(update_config))
         .route(
@@ -416,6 +422,10 @@ pub fn build_api_routes(state: AppState) -> Router {
         .route("/api/tasks/batch-delete", post(batch_delete_tasks))
         // System management endpoints (without /v1)
         .route("/api/system/statistics", get(get_admin_statistics))
+        .route(
+            "/api/system/time-zone",
+            get(get_application_time_zone).put(update_application_time_zone),
+        )
         .route("/api/system/metrics", get(get_metrics))
         .route("/api/system/config", get(get_config).put(update_config))
         .route(
