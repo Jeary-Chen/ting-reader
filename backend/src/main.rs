@@ -176,7 +176,7 @@ async fn main() -> Result<()> {
 
 async fn ensure_admin_user(db: std::sync::Arc<db::DatabaseManager>) -> Result<()> {
     use ting_reader::auth::hash_password;
-    use ting_reader::db::models::User;
+    use ting_reader::db::models::{User, UserSettings};
     use ting_reader::db::repository::{Repository, UserRepository};
     use uuid::Uuid;
 
@@ -196,7 +196,23 @@ async fn ensure_admin_user(db: std::sync::Arc<db::DatabaseManager>) -> Result<()
             role: "admin".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
         };
-        user_repo.create(&admin_user).await?;
+        if let Some(language) = core::fnos::initial_admin_language().await {
+            let settings = UserSettings {
+                user_id: admin_user.id.clone(),
+                playback_speed: 1.0,
+                theme: "auto".to_string(),
+                auto_play: 1,
+                skip_intro: 0,
+                skip_outro: 0,
+                settings_json: Some(serde_json::json!({ "language": language }).to_string()),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            };
+            user_repo
+                .create_with_settings(&admin_user, &settings)
+                .await?;
+        } else {
+            user_repo.create(&admin_user).await?;
+        }
         info!(
             message_key = "system.default_admin.created",
             message_params = %serde_json::json!({ "username": "admin" }),

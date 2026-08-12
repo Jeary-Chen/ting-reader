@@ -7,6 +7,7 @@ services:
       - "[::]:${wizard_port}:3000"
     volumes:
       - "${TRIM_APPDEST}:/app/target:rw"
+      - "/var/run/trim_open_gateway_apiscope.socket:/var/run/trim_open_gateway_apiscope.socket"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/data:/app/data"
       - "${wizard_storage_path:-${TRIM_APPDEST_VOL}/@appshare/ting-reader/storage}:/app/storage"
       - "${TRIM_APPDEST_VOL}/@appshare/ting-reader/plugins:/app/plugins"
@@ -18,6 +19,9 @@ services:
       - TING_SERVER__PORT=3000
       - FNNAS_GATEWAY_SOCKET=/app/target/ting-reader.sock
       - FNNAS_GATEWAY_PREFIX=/app/ting-reader
+      - FNNAS_FPK_INITIAL_ADMIN_LANGUAGE=1
+      - TRIM_API_TOKEN=${TRIM_API_TOKEN:-}
+      - TRIM_SYS_LANGUAGE=${TRIM_SYS_LANGUAGE:-}
       - TEMP_DIR=/app/temp
       - DATA_DIR=/app/data
       - STORAGE_DIR=/app/storage
