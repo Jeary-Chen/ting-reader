@@ -321,8 +321,10 @@ impl LibraryScanner {
     fn extract_from_json(&self, dir: &Path) -> Option<ScannedMetadata> {
         match crate::core::metadata_writer::read_metadata_json(dir) {
             Ok(Some(meta)) => {
-                let mut m = ScannedMetadata::default();
-                m.title = meta.title;
+                let mut m = ScannedMetadata {
+                    title: meta.title,
+                    ..Default::default()
+                };
                 if !meta.authors.is_empty() {
                     m.author = Some(meta.authors[0].clone());
                 }
@@ -441,9 +443,7 @@ impl LibraryScanner {
                             if !a.trim().is_empty() {
                                 if m.author.is_none() {
                                     m.author = Some(a.to_string());
-                                } else if m.author.as_ref().map(|s| s.as_str()) != Some(a)
-                                    && m.narrator.is_none()
-                                {
+                                } else if m.author.as_deref() != Some(a) && m.narrator.is_none() {
                                     m.narrator = Some(a.to_string());
                                 }
                             }

@@ -1,13 +1,10 @@
 import type { PluginCapability, PluginCapabilityRegistration } from "../types";
 
 export type ClientExtensionSlot =
+  | "app.sidebar_page"
   | "global.floating_action"
   | "global.panel"
-  | "settings.section"
-  | "book.detail_action"
-  | "reader.toolbar_action"
-  | "reader.side_panel"
-  | "reader.document_viewer";
+  | "book.detail_action";
 
 export type ClientExtensionRenderMode =
   "schema" | "builtin" | "web_container" | "action";
@@ -26,6 +23,7 @@ export type ClientExtensionDescriptor = {
   id: string;
   pluginId: string;
   pluginName: string;
+  clientGrant?: string;
   slot: ClientExtensionSlot;
   renderMode: ClientExtensionRenderMode;
   render?: UiExtensionRenderConfig;
@@ -86,9 +84,14 @@ export type UiExtensionRenderConfig = {
     width?: number;
     mobile_type?: string;
   };
+  bridge?: {
+    allow_capability_invoke?: boolean;
+    capabilities?: string[];
+    host_methods?: string[];
+  };
 };
 
 export type CapabilityRegistrationLike = Pick<
   PluginCapabilityRegistration,
-  "plugin_id" | "plugin_name" | "capability"
+  "plugin_id" | "plugin_name" | "client_grant" | "capability"
 >;

@@ -94,6 +94,47 @@ async fn test_install_plugin_success() {
 }
 
 #[tokio::test]
+async fn test_install_plugin_rejects_path_traversal_identity() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin_dir = temp_dir.path().join("plugins");
+    let temp_extract = temp_dir.path().join("temp");
+    let source_dir = temp_dir.path().join("source");
+    let outside_dir = temp_dir.path().join("outside@1.0.0");
+
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::write(outside_dir.join("sentinel.txt"), "keep").unwrap();
+    let metadata = serde_json::json!({
+        "id": "../outside",
+        "name": "Unsafe Plugin",
+        "version": "1.0.0",
+        "author": "Test Author",
+        "description": "Unsafe plugin",
+        "entry_point": "plugin.js",
+        "runtime": "javascript",
+        "capabilities": test_capabilities(),
+    });
+    fs::write(
+        source_dir.join("plugin.yml"),
+        serde_yaml::to_string(&metadata).unwrap(),
+    )
+    .unwrap();
+    fs::write(source_dir.join("plugin.js"), "// Test plugin").unwrap();
+
+    let installer = PluginInstaller::new(plugin_dir, temp_extract).unwrap();
+    let error = installer
+        .install_plugin(&source_dir, |_metadata| Ok(()))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(error, TingError::PluginLoadError(_)));
+    assert_eq!(
+        fs::read_to_string(outside_dir.join("sentinel.txt")).unwrap(),
+        "keep"
+    );
+}
+
+#[tokio::test]
 async fn test_install_plugin_dependency_failure() {
     let temp_dir = TempDir::new().unwrap();
     let plugin_dir = temp_dir.path().join("plugins");
@@ -204,6 +245,26 @@ async fn test_uninstall_plugin() {
 
     // Verify plugin was removed
     assert!(!installed_path.exists());
+}
+
+#[test]
+fn test_uninstall_plugin_rejects_path_traversal_identity() {
+    let temp_dir = TempDir::new().unwrap();
+    let plugin_dir = temp_dir.path().join("plugins");
+    let temp_extract = temp_dir.path().join("temp");
+    let outside_dir = temp_dir.path().join("outside@1.0.0");
+    fs::create_dir_all(&outside_dir).unwrap();
+    fs::write(outside_dir.join("sentinel.txt"), "keep").unwrap();
+
+    let installer = PluginInstaller::new(plugin_dir, temp_extract).unwrap();
+    let malicious_id = "../outside@1.0.0".to_string();
+    let error = installer.uninstall_plugin(&malicious_id).unwrap_err();
+
+    assert!(matches!(error, TingError::PluginLoadError(_)));
+    assert_eq!(
+        fs::read_to_string(outside_dir.join("sentinel.txt")).unwrap(),
+        "keep"
+    );
 }
 
 // ========== Tests for Requirement 26.2: Plugin Package Validation ==========

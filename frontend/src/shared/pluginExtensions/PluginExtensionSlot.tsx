@@ -114,6 +114,10 @@ const PluginExtensionSlot = ({
   >("idle");
   const [actionMessage, setActionMessage] = useState<string>();
   const [menuOpen, setMenuOpen] = useState(false);
+  const visibleActiveExtension = activeExtension
+    ? visibleExtensions.find((extension) => extension.id === activeExtension.id) ||
+      null
+    : null;
 
   if (visibleExtensions.length === 0) {
     return <>{empty}</>;
@@ -138,6 +142,8 @@ const PluginExtensionSlot = ({
           contexts: extension.contexts,
           context: context || {},
         },
+        extension.capability.id,
+        extension.clientGrant,
       );
       setActionState("success");
       setActionMessage(
@@ -222,19 +228,19 @@ const PluginExtensionSlot = ({
         ))}
       </div>
 
-      {activeExtension ? (
+      {visibleActiveExtension ? (
         <div className="fixed inset-0 z-[125] flex items-end justify-end bg-slate-950/30 p-3 backdrop-blur-sm sm:p-6">
           <section className="flex h-[min(38rem,86vh)] w-full max-w-md flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
             <header className="flex h-14 shrink-0 items-center gap-3 border-b border-slate-200 px-4 dark:border-slate-800">
               <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary-50 text-primary-700 dark:bg-primary-950/40 dark:text-primary-300">
-                <PluginExtensionIcon extension={activeExtension} size={17} />
+                <PluginExtensionIcon extension={visibleActiveExtension} size={17} />
               </div>
               <div className="min-w-0 flex-1">
                 <h2 className="truncate text-sm font-semibold text-slate-950 dark:text-white">
-                  {extensionLabel(activeExtension)}
+                  {extensionLabel(visibleActiveExtension)}
                 </h2>
                 <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                  {activeExtension.pluginName}
+                  {visibleActiveExtension.pluginName}
                 </p>
               </div>
               <button
@@ -248,24 +254,24 @@ const PluginExtensionSlot = ({
             </header>
             <div
               className={`flex flex-1 flex-col text-sm leading-6 text-slate-500 dark:text-slate-400 ${
-                activeExtension.renderMode === "web_container"
+                visibleActiveExtension.renderMode === "web_container"
                   ? "min-h-0"
                   : "justify-center gap-4 px-6"
               }`}
             >
-              {activeExtension.renderMode === "web_container" ? (
+              {visibleActiveExtension.renderMode === "web_container" ? (
                 <PluginWebContainer
-                  extension={activeExtension}
+                  extension={visibleActiveExtension}
                   context={context}
                 />
-              ) : activeExtension.renderMode === "schema" ? (
+              ) : visibleActiveExtension.renderMode === "schema" ? (
                 <PluginSchemaForm
-                  extension={activeExtension}
+                  extension={visibleActiveExtension}
                   context={context}
                 />
-              ) : activeExtension.renderMode === "builtin" ? (
+              ) : visibleActiveExtension.renderMode === "builtin" ? (
                 <PluginBuiltinView
-                  extension={activeExtension}
+                  extension={visibleActiveExtension}
                   context={context}
                 />
               ) : actionState === "running" ? (
@@ -313,6 +319,8 @@ const PluginBuiltinView = ({
         config.component === "host_method"
           ? await invokePluginHost({
               plugin_id: extension.pluginId,
+              ui_capability_id: extension.capability.id,
+              ui_grant: extension.clientGrant || "",
               method: config.method || "",
               params: config.params,
             })
@@ -325,6 +333,8 @@ const PluginBuiltinView = ({
                 context: context || {},
                 params: config.params,
               },
+              extension.capability.id,
+              extension.clientGrant,
             );
       setMessage(
         typeof result === "string"
@@ -424,6 +434,8 @@ const PluginSchemaForm = ({
           context: context || {},
           values,
         },
+        extension.capability.id,
+        extension.clientGrant,
       );
       setMessage(
         typeof result === "string"
@@ -531,6 +543,91 @@ const PluginSchemaForm = ({
       </button>
     </form>
   );
+};
+
+const PluginActionView = ({
+  extension,
+  context,
+}: {
+  extension: ClientExtensionDescriptor;
+  context?: Record<string, unknown>;
+}) => {
+  const [running, setRunning] = useState(false);
+  const [message, setMessage] = useState<string>();
+  const [failed, setFailed] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    setMessage(undefined);
+    setFailed(false);
+    try {
+      const result = await invokePluginCapability(
+        extension.pluginId,
+        extension.capability.id,
+        {
+          slot: extension.slot,
+          contexts: extension.contexts,
+          context: context || {},
+        },
+        extension.capability.id,
+        extension.clientGrant,
+      );
+      setMessage(
+        typeof result === "string"
+          ? result
+          : JSON.stringify(result ?? { ok: true }, null, 2),
+      );
+    } catch (error) {
+      setFailed(true);
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-1 flex-col gap-4 p-5">
+      <button
+        type="button"
+        onClick={() => void run()}
+        disabled={running}
+        className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary-600 px-4 text-sm font-semibold text-white transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {running ? <Loader2 size={16} className="animate-spin" /> : null}
+        {running ? "Running..." : extension.render?.submit_label || "Run"}
+      </button>
+      {message ? (
+        <pre
+          className={`min-h-0 flex-1 overflow-auto rounded-md border px-3 py-2 text-xs ${
+            failed
+              ? "border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-300"
+              : "border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
+          }`}
+        >
+          {message}
+        </pre>
+      ) : null}
+    </div>
+  );
+};
+
+export const PluginExtensionContent = ({
+  extension,
+  context,
+}: {
+  extension: ClientExtensionDescriptor;
+  context?: Record<string, unknown>;
+}) => {
+  if (extension.renderMode === "web_container") {
+    return <PluginWebContainer extension={extension} context={context} />;
+  }
+  if (extension.renderMode === "schema") {
+    return <PluginSchemaForm extension={extension} context={context} />;
+  }
+  if (extension.renderMode === "builtin") {
+    return <PluginBuiltinView extension={extension} context={context} />;
+  }
+  return <PluginActionView extension={extension} context={context} />;
 };
 
 export default PluginExtensionSlot;

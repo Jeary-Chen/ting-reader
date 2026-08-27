@@ -26,7 +26,7 @@ pub(super) async fn handle_strm_stream(
     // Read the URL from the file
     let url = if library.library_type == "local" {
         std::fs::read_to_string(&chapter.path)
-            .map_err(|e| TingError::IoError(e))?
+            .map_err(TingError::IoError)?
             .trim()
             .to_string()
     } else if library.library_type == "webdav" {
@@ -41,7 +41,7 @@ pub(super) async fn handle_strm_stream(
         reader
             .read_to_string(&mut content)
             .await
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
         content.trim().to_string()
     } else {
         let (mut reader, _) = state
@@ -54,7 +54,7 @@ pub(super) async fn handle_strm_stream(
         reader
             .read_to_string(&mut content)
             .await
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
         content.trim().to_string()
     };
 
@@ -148,7 +148,7 @@ pub(super) async fn handle_strm_stream(
 
                         // 更新数据库中的时长
                         if let Ok(Some(mut chapter_record)) =
-                            state.chapter_repo.find_by_id(&chapter_id).await
+                            state.chapter_repo.find_by_id(chapter_id).await
                         {
                             let new_duration = d.round() as i32;
                             tracing::info!(
@@ -229,7 +229,7 @@ pub(super) async fn handle_strm_stream(
         tracing::info!("Starting FFmpeg process reading directly from URL...");
 
         // Spawn FFmpeg process
-        let mut child = cmd.spawn().map_err(|e| TingError::IoError(e))?;
+        let mut child = cmd.spawn().map_err(TingError::IoError)?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
             TingError::IoError(std::io::Error::new(
@@ -245,10 +245,8 @@ pub(super) async fn handle_strm_stream(
             tokio::spawn(async move {
                 let mut buffer = String::new();
                 use tokio::io::AsyncReadExt;
-                if let Ok(_) = stderr.read_to_string(&mut buffer).await {
-                    if !buffer.is_empty() {
-                        tracing::warn!("FFmpeg stderr: {}", buffer);
-                    }
+                if stderr.read_to_string(&mut buffer).await.is_ok() && !buffer.is_empty() {
+                    tracing::warn!("FFmpeg stderr: {}", buffer);
                 }
             });
         }
@@ -427,7 +425,7 @@ pub(super) async fn handle_strm_stream(
         // Add optional headers
         if let Some(cl) = content_length {
             if let Some(cr) = content_range {
-                return Ok((
+                Ok((
                     response_builder.0,
                     [
                         response_builder.1[0].clone(),
@@ -439,9 +437,9 @@ pub(super) async fn handle_strm_stream(
                     ],
                     body,
                 )
-                    .into_response());
+                    .into_response())
             } else {
-                return Ok((
+                Ok((
                     response_builder.0,
                     [
                         response_builder.1[0].clone(),
@@ -452,10 +450,10 @@ pub(super) async fn handle_strm_stream(
                     ],
                     body,
                 )
-                    .into_response());
+                    .into_response())
             }
         } else if let Some(cr) = content_range {
-            return Ok((
+            Ok((
                 response_builder.0,
                 [
                     response_builder.1[0].clone(),
@@ -466,13 +464,13 @@ pub(super) async fn handle_strm_stream(
                 ],
                 body,
             )
-                .into_response());
+                .into_response())
         } else {
-            return Ok((response_builder.0, response_builder.1, body).into_response());
+            Ok((response_builder.0, response_builder.1, body).into_response())
         }
     } else {
         // 302 redirect (zero bandwidth cost)
         tracing::info!("Redirecting to strm URL");
-        return Ok((StatusCode::FOUND, [(header::LOCATION, url)], Body::empty()).into_response());
+        Ok((StatusCode::FOUND, [(header::LOCATION, url)], Body::empty()).into_response())
     }
 }

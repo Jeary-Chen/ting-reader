@@ -34,6 +34,8 @@ use crate::api::handlers::{
     delete_series,
     delete_task,
     delete_user,
+    export_all_plugin_logs,
+    export_plugin_logs,
     export_system_logs,
     find_content_processors,
     find_event_handlers,
@@ -41,6 +43,7 @@ use crate::api::handlers::{
     find_tool_providers,
     generate_regex,
     get_admin_statistics,
+    get_all_plugin_logs,
     get_application_time_zone,
     get_book,
     get_book_chapters,
@@ -54,6 +57,7 @@ use crate::api::handlers::{
     get_plugin_asset,
     get_plugin_config,
     get_plugin_detail,
+    get_plugin_logs,
     // Progress management
     get_recent_progress,
     get_scraper_sources,
@@ -145,8 +149,14 @@ pub fn build_api_routes(state: AppState) -> Router {
     api_route!(public_routes, "/stats", get(get_stats));
     api_route!(public_routes, "/health", get(health_check));
     public_routes = public_routes
-        .route("/api/v1/plugin-assets/:id/*path", get(get_plugin_asset))
-        .route("/api/plugin-assets/:id/*path", get(get_plugin_asset))
+        .route(
+            "/api/v1/plugin-assets/:clientGrant/:id/*path",
+            get(get_plugin_asset),
+        )
+        .route(
+            "/api/plugin-assets/:clientGrant/:id/*path",
+            get(get_plugin_asset),
+        )
         .route(
             "/api/v1/public/plugin-routes/*path",
             any(call_public_plugin_route),
@@ -272,6 +282,10 @@ pub fn build_api_routes(state: AppState) -> Router {
             "/api/v1/plugins/:id",
             get(get_plugin_detail).delete(uninstall_plugin),
         )
+        .route("/api/v1/plugins/:id/logs", get(get_plugin_logs))
+        .route("/api/v1/plugins/:id/logs/export", get(export_plugin_logs))
+        .route("/api/v1/plugin-logs", get(get_all_plugin_logs))
+        .route("/api/v1/plugin-logs/export", get(export_all_plugin_logs))
         .route(
             "/api/v1/plugins/install",
             post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),
@@ -381,6 +395,10 @@ pub fn build_api_routes(state: AppState) -> Router {
             "/api/plugins/:id",
             get(get_plugin_detail).delete(uninstall_plugin),
         )
+        .route("/api/plugins/:id/logs", get(get_plugin_logs))
+        .route("/api/plugins/:id/logs/export", get(export_plugin_logs))
+        .route("/api/plugin-logs", get(get_all_plugin_logs))
+        .route("/api/plugin-logs/export", get(export_all_plugin_logs))
         .route(
             "/api/plugins/install",
             post(install_plugin).layer(DefaultBodyLimit::max(50 * 1024 * 1024)),

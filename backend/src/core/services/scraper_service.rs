@@ -195,32 +195,18 @@ impl ScraperService {
         {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!(
-                    source_id = %source_id,
-                    error = %e,
-                    message_key = "scraper.plugin.failed",
-                    message_params = %serde_json::json!({
-                        "source_id": source_id,
-                        "error": e.to_string(),
-                    }),
-                    "Scraper plugin failed"
-                );
                 if source.is_some() {
-                    return Err(TingError::PluginExecutionError(format!(
-                        "Scraper '{}' failed: {}",
-                        source_id, e
-                    )));
+                    return Err(
+                        e.with_plugin_execution_context(format!("Scraper '{}' failed", source_id))
+                    );
                 }
-                tracing::info!("Trying another scraper as fallback");
+                tracing::debug!("Trying another scraper as fallback");
                 let fallback_source = self.try_fallback_scraper(&source_id).await?;
                 self.plugin_manager
                     .call_scraper(&fallback_source, ScraperMethod::Search, params)
                     .await
                     .map_err(|e| {
-                        TingError::PluginExecutionError(format!(
-                            "All scrapers failed. Last error: {}",
-                            e
-                        ))
+                        e.with_plugin_execution_context("All scrapers failed. Last error")
                     })?
             }
         };
@@ -319,31 +305,17 @@ impl ScraperService {
         {
             Ok(result) => result,
             Err(e) => {
-                tracing::error!(
-                    source_id = %source_id,
-                    error = %e,
-                    message_key = "scraper.plugin.failed",
-                    message_params = %serde_json::json!({
-                        "source_id": source_id,
-                        "error": e.to_string(),
-                    }),
-                    "Scraper plugin failed"
-                );
                 if source.is_some() {
-                    return Err(TingError::PluginExecutionError(format!(
-                        "Scraper '{}' failed: {}",
-                        source_id, e
-                    )));
+                    return Err(
+                        e.with_plugin_execution_context(format!("Scraper '{}' failed", source_id))
+                    );
                 }
                 let fallback_source = self.try_fallback_scraper(&source_id).await?;
                 self.plugin_manager
                     .call_scraper(&fallback_source, ScraperMethod::Search, params)
                     .await
                     .map_err(|e| {
-                        TingError::PluginExecutionError(format!(
-                            "All scrapers failed. Last error: {}",
-                            e
-                        ))
+                        e.with_plugin_execution_context("All scrapers failed. Last error")
                     })?
             }
         };
@@ -363,7 +335,7 @@ impl ScraperService {
             .find(|s| s.enabled && s.id != failed_source && !s.aggregate_auto_scrape);
         match fallback {
             Some(source) => {
-                tracing::info!("Using fallback scraper: {}", source.id);
+                tracing::debug!("Using fallback scraper: {}", source.id);
                 Ok(source.id)
             }
             None => Err(TingError::PluginNotFound(
@@ -445,7 +417,7 @@ impl ScraperService {
                     .collect();
             }
 
-            raw.split(|ch| matches!(ch, ',' | ';' | '\n'))
+            raw.split([',', ';', '\n'])
                 .map(|id| id.trim().to_string())
                 .filter(|id| !id.is_empty())
                 .collect()
@@ -567,8 +539,10 @@ impl ScraperService {
                 })
         });
 
-        let mut merge_config = crate::db::models::ScraperConfig::default();
-        merge_config.default_sources = candidate_source_ids;
+        let merge_config = crate::db::models::ScraperConfig {
+            default_sources: candidate_source_ids,
+            ..Default::default()
+        };
         let merged_metadata = self.merge_source_results(query, &merge_config, &source_results);
 
         let aggregate_context = json!({
@@ -595,9 +569,9 @@ impl ScraperService {
             .call_scraper(aggregate_source, ScraperMethod::Search, aggregate_context)
             .await
             .map_err(|e| {
-                TingError::PluginExecutionError(format!(
-                    "Aggregate scraper '{}' failed: {}",
-                    aggregate_source, e
+                e.with_plugin_execution_context(format!(
+                    "Aggregate scraper '{}' failed",
+                    aggregate_source
                 ))
             })?;
 
@@ -627,9 +601,9 @@ impl ScraperService {
             .call_scraper(source_id, ScraperMethod::Search, params)
             .await
             .map_err(|e| {
-                TingError::PluginExecutionError(format!(
-                    "Scraper '{}' failed while preparing aggregate candidates: {}",
-                    source_id, e
+                e.with_plugin_execution_context(format!(
+                    "Scraper '{}' failed while preparing aggregate candidates",
+                    source_id
                 ))
             })?;
 

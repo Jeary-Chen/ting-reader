@@ -10,6 +10,8 @@ use crate::api::models::{
     TaskQueueConfigResponse, TaskQueueMetrics, TasksQuery, UpdateApplicationTimeZoneRequest,
     UpdateConfigRequest, UpdateConfigResponse, UserActivityStatistics,
 };
+use crate::api::require_admin;
+use crate::auth::middleware::AuthUser;
 use crate::core::error::{Result, TingError};
 use crate::db::repository::Repository;
 use axum::{
@@ -25,8 +27,8 @@ use std::path::PathBuf;
 mod logs;
 
 pub use logs::{
-    clear_system_logs, export_system_logs, get_system_logs, ClearSystemLogsResponse,
-    ExportLogsQuery, LogsQuery, LogsResponse,
+    clear_system_logs, export_system_logs, get_system_logs, ClearSystemLogsResponse, LogsQuery,
+    LogsResponse,
 };
 
 /// Return the application-wide time zone. Reading is available to every
@@ -69,18 +71,36 @@ pub async fn update_application_time_zone(
 /// Handler for GET /api/v1/system/check-update - Check for updates via backend proxy
 pub async fn check_update(State(_state): State<AppState>) -> Result<impl IntoResponse> {
     let client = reqwest::Client::new();
-    let response = client
-        .get("https://www.tingreader.cn/api/fpk/docker")
+    let response = build_update_check_request(&client)
         .timeout(std::time::Duration::from_secs(10))
         .send()
         .await
+        .and_then(reqwest::Response::error_for_status)
         .map_err(|e| TingError::ExternalServiceError(format!("Failed to check update: {}", e)))?;
 
     let update_info: Value = response.json().await.map_err(|e| {
         TingError::ExternalServiceError(format!("Failed to parse update info: {}", e))
     })?;
 
-    Ok(Json(update_info))
+    Ok((
+        [
+            (
+                "Cache-Control",
+                "no-store, no-cache, max-age=0, must-revalidate",
+            ),
+            ("Pragma", "no-cache"),
+            ("Expires", "0"),
+        ],
+        Json(update_info),
+    ))
+}
+
+fn build_update_check_request(client: &reqwest::Client) -> reqwest::RequestBuilder {
+    client
+        .get("https://www.tingreader.cn/api/fpk/docker")
+        .query(&[("fresh", "1")])
+        .header("Cache-Control", "no-cache")
+        .header("Pragma", "no-cache")
 }
 
 /// Handler for GET /api/v1/tasks - List all tasks
@@ -684,7 +704,7 @@ fn format_prometheus_metrics(
         "ting_reader_requests_total {}\n",
         system.total_requests
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_response_time_ms Average response time in milliseconds\n");
     output.push_str("# TYPE ting_reader_response_time_ms gauge\n");
@@ -692,7 +712,7 @@ fn format_prometheus_metrics(
         "ting_reader_response_time_ms {}\n",
         system.avg_response_time_ms
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_errors_total Total number of errors\n");
     output.push_str("# TYPE ting_reader_errors_total counter\n");
@@ -700,12 +720,12 @@ fn format_prometheus_metrics(
         "ting_reader_errors_total {}\n",
         system.total_errors
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_error_rate Error rate (errors / total requests)\n");
     output.push_str("# TYPE ting_reader_error_rate gauge\n");
     output.push_str(&format!("ting_reader_error_rate {}\n", system.error_rate));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_uptime_seconds System uptime in seconds\n");
     output.push_str("# TYPE ting_reader_uptime_seconds counter\n");
@@ -713,7 +733,7 @@ fn format_prometheus_metrics(
         "ting_reader_uptime_seconds {}\n",
         system.uptime_seconds
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     // Plugin metrics
     output.push_str("# HELP ting_reader_plugin_calls_total Total number of plugin calls\n");
@@ -724,7 +744,7 @@ fn format_prometheus_metrics(
             plugin.plugin_id, plugin.plugin_name, plugin.total_calls
         ));
     }
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_plugin_success_rate Plugin success rate\n");
     output.push_str("# TYPE ting_reader_plugin_success_rate gauge\n");
@@ -734,7 +754,7 @@ fn format_prometheus_metrics(
             plugin.plugin_id, plugin.plugin_name, plugin.success_rate
         ));
     }
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str(
         "# HELP ting_reader_plugin_execution_time_ms Plugin execution time in milliseconds\n",
@@ -766,7 +786,7 @@ fn format_prometheus_metrics(
             ));
         }
     }
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_plugin_memory_bytes Plugin memory usage in bytes\n");
     output.push_str("# TYPE ting_reader_plugin_memory_bytes gauge\n");
@@ -778,7 +798,7 @@ fn format_prometheus_metrics(
             ));
         }
     }
-    output.push_str("\n");
+    output.push('\n');
 
     // Task queue metrics
     output.push_str("# HELP ting_reader_tasks_total Total number of tasks by status\n");
@@ -803,7 +823,7 @@ fn format_prometheus_metrics(
         "ting_reader_tasks_total{{status=\"cancelled\"}} {}\n",
         task_queue.cancelled_tasks
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_task_failure_rate Task failure rate\n");
     output.push_str("# TYPE ting_reader_task_failure_rate gauge\n");
@@ -811,7 +831,7 @@ fn format_prometheus_metrics(
         "ting_reader_task_failure_rate {}\n",
         task_queue.failure_rate
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str(
         "# HELP ting_reader_task_processing_time_ms Average task processing time in milliseconds\n",
@@ -821,7 +841,7 @@ fn format_prometheus_metrics(
         "ting_reader_task_processing_time_ms {}\n",
         task_queue.avg_processing_time_ms
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     // Database metrics
     output.push_str("# HELP ting_reader_db_connections Database connections\n");
@@ -834,7 +854,7 @@ fn format_prometheus_metrics(
         "ting_reader_db_connections{{state=\"idle\"}} {}\n",
         database.idle_connections
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str("# HELP ting_reader_db_queries_total Total number of database queries\n");
     output.push_str("# TYPE ting_reader_db_queries_total counter\n");
@@ -842,7 +862,7 @@ fn format_prometheus_metrics(
         "ting_reader_db_queries_total {}\n",
         database.total_queries
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output.push_str(
         "# HELP ting_reader_db_query_time_ms Average database query time in milliseconds\n",
@@ -852,7 +872,7 @@ fn format_prometheus_metrics(
         "ting_reader_db_query_time_ms {}\n",
         database.avg_query_time_ms
     ));
-    output.push_str("\n");
+    output.push('\n');
 
     output
 }
@@ -931,8 +951,11 @@ pub async fn get_config(State(state): State<AppState>) -> Result<impl IntoRespon
 /// Handler for PUT /api/v1/config - Update system configuration
 pub async fn update_config(
     State(state): State<AppState>,
+    user: AuthUser,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<impl IntoResponse> {
+    require_admin(&user)?;
+
     let original_config = state.config.read().await.clone();
     let mut new_config = original_config.clone();
 
@@ -1135,4 +1158,32 @@ pub async fn update_config(
         updated_fields,
         requires_restart,
     }))
+}
+
+#[cfg(test)]
+mod update_check_tests {
+    use super::build_update_check_request;
+
+    #[test]
+    fn update_request_forces_fresh_no_cache_fetch() {
+        let request = build_update_check_request(&reqwest::Client::new())
+            .build()
+            .expect("update request should build");
+
+        assert_eq!(request.url().query(), Some("fresh=1"));
+        assert_eq!(
+            request
+                .headers()
+                .get("Cache-Control")
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("Pragma")
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
+    }
 }

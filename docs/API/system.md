@@ -302,7 +302,7 @@
 
 ### GET /api/system/logs
 
-获取系统日志与任务日志。
+获取系统日志与任务日志。仅当前 Ting Reader 实例的管理员可访问；普通用户和外部插件作者没有日志读取权限。
 
 查询参数：
 
@@ -310,6 +310,11 @@
 | --- | --- | --- |
 | `level` | string | 日志级别过滤，如 `INFO`、`WARN`、`ERROR` |
 | `module` | string | 模块过滤，如 `audit`、`audit::login`、`audit::playback`、`audit::scan`、`audit::notification`、`all` |
+| `plugin_id` | string | 插件稳定 ID 或 `id@version`；匹配时会忽略版本差异 |
+| `source` | string | 插件日志来源，如 `code`、`lifecycle`、`runtime`、`gateway`、`security` |
+| `q` | string | 在消息、原始消息、模块和结构化字段中做不区分大小写的关键字搜索 |
+| `since` | RFC3339 string | 起始时间，包含边界 |
+| `until` | RFC3339 string | 结束时间，包含边界；不能早于 `since` |
 | `page` | number | 页码，默认 `1` |
 | `page_size` | number | 每页数量，默认 `50` |
 
@@ -346,10 +351,12 @@
 - 登录日志会记录 `real_ip`、`user_agent`、`device`。
 - 扫描完成日志会记录媒体库 ID、名称、类型、路径、新增/更新/删除数量。
 - `fields` 为结构化日志字段，不含 `message`。
+- 插件日志在同一个 `system.json` 及轮转文件中保存，不为插件创建可自行读取的独立日志文件。
+- 插件日志由宿主绑定 `event_id`、`plugin_id`、`plugin_instance_id`、`plugin_version`、`runtime` 和 `source`；插件传入的业务字段保存在 `fields.plugin_fields`，其中 `op` 会提升到顶层便于检索。
 
 ### DELETE /api/system/logs
 
-清空系统日志文件。
+清空系统日志文件。仅管理员可调用。
 
 响应：`200 OK`
 
@@ -361,7 +368,7 @@
 
 ### GET /api/system/logs/export
 
-导出系统日志文本。
+导出系统日志文本。仅管理员可调用；导出文件可能包含实例运行信息，提供给插件作者排查前应由管理员主动脱敏。
 
 查询参数：
 

@@ -1,10 +1,11 @@
 use super::{LibraryScanner, ScanMode, ScanResult, ScanStatus};
 use crate::core::error::{Result, TingError};
 use crate::db::models::{Book, Chapter, Library};
-use crate::db::repository::Repository;
+use crate::db::repository::{LibraryScanState, Repository};
 use chrono::{DateTime, Utc};
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
+use reqwest::header::{ETAG, IF_MODIFIED_SINCE, IF_NONE_MATCH, LAST_MODIFIED};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use tracing::{info, warn};
@@ -56,7 +57,19 @@ impl LibraryScanner {
         )
         .await;
 
-        let response = self
+        let cached_feed_state = if mode.is_full() {
+            None
+        } else {
+            self.scan_state_repo
+                .find(&library.id, &library.url, "rss_feed")
+                .await?
+        };
+        let cached_book_count = if cached_feed_state.is_some() {
+            self.book_repo.find_by_library(&library.id).await?.len()
+        } else {
+            0
+        };
+        let mut request = self
             .http_client
             .get(&library.url)
             .header(
@@ -66,10 +79,32 @@ impl LibraryScanner {
             .header(
                 "User-Agent",
                 "TingReader/1.0 (+https://github.com/ting-reader)",
-            )
+            );
+        if cached_book_count > 0 {
+            let state = cached_feed_state.as_ref().expect("RSS state was checked");
+            if let Some(etag) = state.etag.as_deref() {
+                request = request.header(IF_NONE_MATCH, etag);
+            }
+            if let Some(last_modified) = state.modified_at.as_deref() {
+                request = request.header(IF_MODIFIED_SINCE, last_modified);
+            }
+        }
+        let response = request
             .send()
             .await
             .map_err(|e| TingError::NetworkError(format!("Failed to fetch RSS feed: {}", e)))?;
+
+        if response.status() == reqwest::StatusCode::NOT_MODIFIED {
+            result.total_books = cached_book_count;
+            result.books_skipped = cached_book_count;
+            result.end_time = Some(std::time::Instant::now());
+            info!(
+                library_id = %library.id,
+                feed_url = %library.url,
+                "RSS feed was not modified"
+            );
+            return Ok(result);
+        }
 
         if !response.status().is_success() {
             return Err(TingError::NetworkError(format!(
@@ -78,11 +113,44 @@ impl LibraryScanner {
             )));
         }
 
+        let response_etag = response
+            .headers()
+            .get(ETAG)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let response_last_modified = response
+            .headers()
+            .get(LAST_MODIFIED)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
         let feed_bytes = response
             .bytes()
             .await
             .map_err(|e| TingError::NetworkError(format!("Failed to read RSS feed: {}", e)))?;
         let feed_xml = String::from_utf8_lossy(&feed_bytes);
+        let feed_fingerprint = hash_string(&feed_xml);
+        if cached_book_count > 0
+            && cached_feed_state
+                .as_ref()
+                .is_some_and(|state| state.fingerprint == feed_fingerprint)
+        {
+            let cached_state = cached_feed_state.as_ref().expect("RSS state was checked");
+            let mut feed_state =
+                LibraryScanState::new(&library.id, &library.url, "rss_feed", feed_fingerprint);
+            feed_state.etag = response_etag.or_else(|| cached_state.etag.clone());
+            feed_state.modified_at =
+                response_last_modified.or_else(|| cached_state.modified_at.clone());
+            self.scan_state_repo.upsert_many(vec![feed_state]).await?;
+            result.total_books = cached_book_count;
+            result.books_skipped = cached_book_count;
+            result.end_time = Some(std::time::Instant::now());
+            info!(
+                library_id = %library.id,
+                feed_url = %library.url,
+                "RSS feed body was unchanged"
+            );
+            return Ok(result);
+        }
         let base_url =
             Url::parse(&library.url).map_err(|e| TingError::ValidationError(e.to_string()))?;
         let mut feed = parse_rss_feed(&feed_xml, &base_url)?;
@@ -170,6 +238,15 @@ impl LibraryScanner {
             result.books_skipped = result.books_skipped.saturating_sub(1);
             result.books_updated = 1;
         }
+        if result.books_created > 0 || result.books_updated > 0 {
+            result.changed_book_ids.insert(book_id);
+        }
+
+        let mut feed_state =
+            LibraryScanState::new(&library.id, &library.url, "rss_feed", feed_fingerprint);
+        feed_state.etag = response_etag;
+        feed_state.modified_at = response_last_modified;
+        self.scan_state_repo.upsert_many(vec![feed_state]).await?;
 
         result.total_books = 1;
         result.end_time = Some(std::time::Instant::now());
@@ -252,7 +329,7 @@ impl LibraryScanner {
         };
 
         let status = if let Some(existing) = existing {
-            book.created_at = existing.created_at;
+            book.created_at = existing.created_at.clone();
             if existing.manual_corrected != 0 {
                 book.title = existing.title;
                 book.author = existing.author;
@@ -266,7 +343,6 @@ impl LibraryScanner {
                 book.skip_intro = existing.skip_intro;
                 book.skip_outro = existing.skip_outro;
                 book.manual_corrected = existing.manual_corrected;
-                self.book_repo.update(&book).await?;
                 ScanStatus::Skipped
             } else {
                 fill_rss_theme_color(
@@ -276,8 +352,12 @@ impl LibraryScanner {
                     &self.http_client,
                 )
                 .await;
-                self.book_repo.update(&book).await?;
-                ScanStatus::Updated
+                if rss_book_changed(&existing, &book) {
+                    self.book_repo.update(&book).await?;
+                    ScanStatus::Updated
+                } else {
+                    ScanStatus::Skipped
+                }
             }
         } else {
             fill_rss_theme_color(&mut book, None, None, &self.http_client).await;
@@ -333,6 +413,7 @@ impl LibraryScanner {
             let chapter_index = episode.episode_number.unwrap_or((index + 1) as i32);
 
             if let Some(mut chapter) = existing_by_hash.remove(&chapter_hash) {
+                let original = chapter.clone();
                 if chapter.manual_corrected == 0 {
                     chapter.title = Some(title);
                     chapter.chapter_index = Some(chapter_index);
@@ -342,9 +423,11 @@ impl LibraryScanner {
                 chapter.duration = episode.duration;
                 chapter.book_id = book_id.to_string();
                 chapter.hash = Some(chapter_hash);
-                self.chapter_repo.update(&chapter).await?;
+                if rss_chapter_changed(&original, &chapter) {
+                    self.chapter_repo.update(&chapter).await?;
+                    changed = true;
+                }
                 processed_ids.insert(chapter.id);
-                changed = true;
             } else {
                 let chapter = Chapter {
                     id: Uuid::new_v4().to_string(),
@@ -384,6 +467,30 @@ impl LibraryScanner {
     }
 }
 
+fn rss_book_changed(existing: &Book, candidate: &Book) -> bool {
+    existing.title != candidate.title
+        || existing.author != candidate.author
+        || existing.narrator != candidate.narrator
+        || existing.cover_url != candidate.cover_url
+        || existing.theme_color != candidate.theme_color
+        || existing.description != candidate.description
+        || existing.tags != candidate.tags
+        || existing.genre != candidate.genre
+        || existing.year != candidate.year
+        || existing.path != candidate.path
+        || existing.hash != candidate.hash
+}
+
+fn rss_chapter_changed(existing: &Chapter, candidate: &Chapter) -> bool {
+    existing.book_id != candidate.book_id
+        || existing.title != candidate.title
+        || existing.path != candidate.path
+        || existing.duration != candidate.duration
+        || existing.chapter_index != candidate.chapter_index
+        || existing.is_extra != candidate.is_extra
+        || existing.hash != candidate.hash
+}
+
 async fn fill_rss_theme_color(
     book: &mut Book,
     previous_cover_url: Option<&str>,
@@ -395,11 +502,9 @@ async fn fill_rss_theme_color(
         return;
     };
 
-    if previous_cover_url == Some(cover_url) {
-        if previous_theme_color.is_some() {
-            book.theme_color = previous_theme_color;
-            return;
-        }
+    if previous_cover_url == Some(cover_url) && previous_theme_color.is_some() {
+        book.theme_color = previous_theme_color;
+        return;
     }
 
     let cover_path = if cover_url.starts_with("//") {

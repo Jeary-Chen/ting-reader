@@ -174,7 +174,7 @@ impl DatabaseManager {
     pub fn backup(&self, backup_path: &Path) -> Result<()> {
         // Ensure parent directory exists
         if let Some(parent) = backup_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| TingError::IoError(e))?;
+            std::fs::create_dir_all(parent).map_err(TingError::IoError)?;
         }
 
         let src_conn = self.get_connection()?;
@@ -200,7 +200,7 @@ impl DatabaseManager {
         task::spawn_blocking(move || {
             // Ensure parent directory exists
             if let Some(parent) = backup_path.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| TingError::IoError(e))?;
+                std::fs::create_dir_all(parent).map_err(TingError::IoError)?;
             }
 
             let src_conn = pool.get().map_err(Self::pool_busy_error)?;

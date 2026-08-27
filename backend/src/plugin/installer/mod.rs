@@ -12,7 +12,9 @@ mod tests;
 use crate::core::error::{Result, TingError};
 use crate::plugin::fs_utils;
 use crate::plugin::tr_package;
-use crate::plugin::types::metadata::{parse_plugin_metadata_content, read_plugin_metadata};
+use crate::plugin::types::metadata::{
+    parse_plugin_metadata_content, read_plugin_metadata, validate_plugin_instance_id,
+};
 use crate::plugin::types::{PluginId, PluginMetadata};
 use rollback::InstallationBackup;
 use serde::{Deserialize, Serialize};
@@ -46,6 +48,8 @@ impl PluginInstaller {
         // Ensure directories exist
         fs::create_dir_all(&plugin_dir)?;
         fs::create_dir_all(&temp_dir)?;
+        let plugin_dir = fs::canonicalize(plugin_dir)?;
+        let temp_dir = fs::canonicalize(temp_dir)?;
 
         Ok(Self {
             plugin_dir,
@@ -86,7 +90,7 @@ impl PluginInstaller {
         // Step 3: Extract and install (Requirement 26.4)
         // Use ID instead of name for directory structure
         let plugin_id = format!("{}@{}", package.metadata.id, package.metadata.version);
-        let install_path = self.plugin_dir.join(&plugin_id);
+        let install_path = self.resolve_plugin_path(&plugin_id)?;
 
         // Create backup point for rollback
         let backup = InstallationBackup::new(&install_path)?;
@@ -223,7 +227,7 @@ impl PluginInstaller {
     pub fn uninstall_plugin(&self, plugin_id: &PluginId) -> Result<()> {
         info!("Uninstalling plugin: {}", plugin_id);
 
-        let plugin_path = self.plugin_dir.join(plugin_id);
+        let plugin_path = self.resolve_plugin_path(plugin_id)?;
 
         if !plugin_path.exists() {
             return Err(TingError::PluginNotFound(plugin_id.clone()));
@@ -234,5 +238,45 @@ impl PluginInstaller {
 
         info!("Plugin uninstalled: {}", plugin_id);
         Ok(())
+    }
+
+    fn resolve_plugin_path(&self, plugin_id: &str) -> Result<PathBuf> {
+        validate_plugin_instance_id(plugin_id)?;
+
+        let candidate = self.plugin_dir.join(plugin_id);
+        let parent = candidate.parent().ok_or_else(|| {
+            TingError::PluginLoadError(format!("Invalid plugin install path for {}", plugin_id))
+        })?;
+        let canonical_parent = fs::canonicalize(parent)?;
+        if canonical_parent != self.plugin_dir {
+            return Err(TingError::PluginLoadError(format!(
+                "Plugin path escapes install directory: {}",
+                candidate.display()
+            )));
+        }
+
+        match fs::symlink_metadata(&candidate) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(TingError::PluginLoadError(format!(
+                        "Plugin path must be a real directory: {}",
+                        candidate.display()
+                    )));
+                }
+
+                let canonical_candidate = fs::canonicalize(&candidate)?;
+                if canonical_candidate.parent() != Some(self.plugin_dir.as_path())
+                    || canonical_candidate == self.plugin_dir
+                {
+                    return Err(TingError::PluginLoadError(format!(
+                        "Plugin path escapes install directory: {}",
+                        candidate.display()
+                    )));
+                }
+                Ok(canonical_candidate)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(candidate),
+            Err(error) => Err(TingError::IoError(error)),
+        }
     }
 }

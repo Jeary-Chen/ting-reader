@@ -2,7 +2,7 @@ use super::runtime::WasmRuntime;
 use super::sandbox::Permission;
 use crate::core::error::{Result, TingError};
 use crate::plugin::scraper::{Chapter, ScraperPlugin, SearchResult};
-use crate::plugin::types::{Plugin, PluginContext, PluginId, PluginMetadata};
+use crate::plugin::types::{Plugin, PluginContext, PluginId, PluginLogContext, PluginMetadata};
 use crate::plugin::{
     plugin_host_user_from_invocation_args, PluginHostGatewayHandle, PluginHostUser,
 };
@@ -562,6 +562,9 @@ pub struct PluginState {
     /// Plugin instance id used for HostGateway permission and cache scoping
     pub(crate) plugin_id: PluginId,
 
+    /// Host-owned identity used to route WASM activity to the plugin log.
+    pub(crate) plugin_log_context: Option<PluginLogContext>,
+
     /// Manifest permissions used by HostGateway authorization
     pub(crate) permissions: Vec<Permission>,
 
@@ -589,6 +592,7 @@ impl PluginState {
             host_responses: HashMap::new(),
             allowed_domains: Vec::new(),
             plugin_id: String::new(),
+            plugin_log_context: None,
             permissions: Vec::new(),
             host_gateway: None,
             current_user: None,
@@ -609,6 +613,7 @@ impl PluginState {
             host_responses: HashMap::new(),
             allowed_domains: Vec::new(),
             plugin_id: String::new(),
+            plugin_log_context: None,
             permissions: Vec::new(),
             host_gateway: None,
             current_user: None,

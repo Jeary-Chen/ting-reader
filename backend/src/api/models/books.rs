@@ -140,6 +140,10 @@ pub struct UpdateBookRequest {
     pub tags: Option<String>,
     // V6
     pub chapter_regex: Option<String>,
+    /// Explicit metadata lock state from the detail editor. When omitted, a
+    /// manual metadata save enables the lock for backwards compatibility.
+    #[serde(default)]
+    pub manual_corrected: Option<bool>,
 }
 
 /// Response for book operations

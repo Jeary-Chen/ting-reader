@@ -183,6 +183,12 @@ pub struct ScraperConfig {
     /// Cloud drive mode: when enabled, adjust scanning behavior for WebDAV/local libraries
     #[serde(default)]
     pub cloud_mode: bool,
+    /// Whether periodic incremental synchronization is enabled for remote libraries.
+    #[serde(default)]
+    pub scheduled_sync_enabled: bool,
+    /// Periodic synchronization interval: hourly, daily, weekly, or monthly.
+    #[serde(default = "default_scheduled_sync_interval")]
+    pub scheduled_sync_interval: String,
 }
 
 impl Default for ScraperConfig {
@@ -202,6 +208,8 @@ impl Default for ScraperConfig {
             extract_extra_chapters: default_extract_extra_chapters(),
             disable_watcher: false,
             cloud_mode: false,
+            scheduled_sync_enabled: false,
+            scheduled_sync_interval: default_scheduled_sync_interval(),
         }
     }
 }
@@ -224,6 +232,10 @@ fn default_metadata_priority() -> Vec<String> {
         "audio_metadata".to_string(),
         "scraper".to_string(),
     ]
+}
+
+fn default_scheduled_sync_interval() -> String {
+    "daily".to_string()
 }
 
 #[cfg(test)]

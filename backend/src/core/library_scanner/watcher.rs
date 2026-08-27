@@ -2,7 +2,7 @@ use crate::core::config::Config;
 use crate::core::error::Result;
 use crate::core::local_paths::{path_to_display_string, resolve_existing_local_library_root};
 use crate::core::task_queue::TaskQueue;
-use crate::db::repository::LibraryRepository;
+use crate::db::repository::{LibraryRepository, LibraryScanState, LibraryScanStateRepository};
 use notify::event::ModifyKind;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use std::collections::HashMap;
@@ -14,22 +14,25 @@ use tracing::{error, info, warn};
 
 pub struct LibraryWatcher {
     library_repo: Arc<LibraryRepository>,
+    scan_state_repo: Arc<LibraryScanStateRepository>,
     task_queue: Arc<TaskQueue>,
     config: Config,
     // Map of library_id -> notify::RecommendedWatcher
     watchers: RwLock<HashMap<String, notify::RecommendedWatcher>>,
     // Map of library_id -> mpsc::Sender for debounce
-    debounce_senders: RwLock<HashMap<String, mpsc::Sender<()>>>,
+    debounce_senders: RwLock<HashMap<String, mpsc::Sender<Vec<String>>>>,
 }
 
 impl LibraryWatcher {
     pub fn new(
         library_repo: Arc<LibraryRepository>,
+        scan_state_repo: Arc<LibraryScanStateRepository>,
         task_queue: Arc<TaskQueue>,
         config: Config,
     ) -> Self {
         Self {
             library_repo,
+            scan_state_repo,
             task_queue,
             config,
             watchers: RwLock::new(HashMap::new()),
@@ -84,18 +87,30 @@ impl LibraryWatcher {
         let lib_id = library_id.to_string();
         let path_clone = path.to_string();
 
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::channel::<Vec<String>>(100);
 
         // Debounce logic task
         let task_queue = self.task_queue.clone();
+        let scan_state_repo = self.scan_state_repo.clone();
         let lib_id_clone = lib_id.clone();
 
         tokio::spawn(async move {
             loop {
-                // Wait for an event
-                if rx.recv().await.is_none() {
+                // Wait for an event and collect all affected directories during
+                // the debounce window.
+                let Some(initial_paths) = rx.recv().await else {
                     break;
+                };
+                let mut pending_paths = std::collections::HashSet::new();
+                if let Err(e) =
+                    persist_dirty_paths(&scan_state_repo, &lib_id_clone, &initial_paths).await
+                {
+                    warn!(
+                        "Failed to persist watcher paths for library {}: {}",
+                        lib_id_clone, e
+                    );
                 }
+                pending_paths.extend(initial_paths);
 
                 // Debounce: Wait 10 seconds. If more events come, reset timer.
                 let timeout = tokio::time::sleep(Duration::from_secs(10));
@@ -106,11 +121,13 @@ impl LibraryWatcher {
                             // Timeout expired, enqueue scan task
                             info!("Library watcher triggered scan for library {}", lib_id_clone);
 
+                            let scan_paths = pending_paths.into_iter().collect();
                             if let Err(e) = task_queue
-                                .enqueue_scan_library(
+                                .enqueue_scan_library_scoped(
                                     &lib_id_clone,
                                     &path_clone,
                                     crate::core::library_scanner::ScanMode::Incremental,
+                                    Some(scan_paths),
                                 )
                                 .await
                             {
@@ -119,9 +136,22 @@ impl LibraryWatcher {
                             break;
                         }
                         opt = rx.recv() => {
-                            if opt.is_none() {
+                            let Some(paths) = opt else {
                                 return; // Channel closed
+                            };
+                            if let Err(e) = persist_dirty_paths(
+                                &scan_state_repo,
+                                &lib_id_clone,
+                                &paths,
+                            )
+                            .await
+                            {
+                                warn!(
+                                    "Failed to persist watcher paths for library {}: {}",
+                                    lib_id_clone, e
+                                );
                             }
+                            pending_paths.extend(paths);
                             // Reset timer
                             timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(10));
                         }
@@ -156,7 +186,22 @@ impl LibraryWatcher {
                                 });
 
                                 if !should_ignore {
-                                    let _ = tx_clone.blocking_send(());
+                                    let scan_paths: Vec<String> = event
+                                        .paths
+                                        .iter()
+                                        .filter_map(|event_path| {
+                                            if event_path.is_dir() {
+                                                Some(event_path.to_string_lossy().to_string())
+                                            } else {
+                                                event_path.parent().map(|parent| {
+                                                    parent.to_string_lossy().to_string()
+                                                })
+                                            }
+                                        })
+                                        .collect();
+                                    if !scan_paths.is_empty() {
+                                        let _ = tx_clone.blocking_send(scan_paths);
+                                    }
                                 }
                             }
                             _ => {}
@@ -184,6 +229,42 @@ impl LibraryWatcher {
         self.watchers.write().await.insert(lib_id.clone(), watcher);
         self.debounce_senders.write().await.insert(lib_id, tx);
 
+        let mut pending_paths: Vec<String> = self
+            .scan_state_repo
+            .find_by_library_kind(library_id, "local_dirty")
+            .await?
+            .into_keys()
+            .collect();
+        let has_baseline = self
+            .scan_state_repo
+            .find(library_id, path, "local_baseline")
+            .await?
+            .is_some();
+        if has_baseline {
+            // File notification backends cannot report changes made while the
+            // process was stopped. Reconcile the root once after watcher
+            // startup, then subsequent scans consume only persisted events.
+            persist_dirty_paths(&self.scan_state_repo, library_id, &[path.to_string()]).await?;
+            pending_paths.push(path.to_string());
+        }
+        pending_paths.sort();
+        pending_paths.dedup();
+        if !pending_paths.is_empty() {
+            info!(
+                library_id = %library_id,
+                pending_paths = pending_paths.len(),
+                "Recovering persisted local library changes"
+            );
+            self.task_queue
+                .enqueue_scan_library_scoped(
+                    library_id,
+                    path,
+                    crate::core::library_scanner::ScanMode::Incremental,
+                    Some(pending_paths),
+                )
+                .await?;
+        }
+
         info!("Started watching library {} at {:?}", library_id, path_buf);
 
         Ok(())
@@ -197,4 +278,24 @@ impl LibraryWatcher {
         let mut senders = self.debounce_senders.write().await;
         senders.remove(library_id);
     }
+}
+
+async fn persist_dirty_paths(
+    scan_state_repo: &LibraryScanStateRepository,
+    library_id: &str,
+    paths: &[String],
+) -> Result<()> {
+    let generation = uuid::Uuid::new_v4().to_string();
+    let states = paths
+        .iter()
+        .filter(|path| !path.trim().is_empty())
+        .map(|path| {
+            let mut state = LibraryScanState::new(library_id, path, "local_dirty", &generation);
+            state.parent_path = PathBuf::from(path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().to_string());
+            state
+        })
+        .collect();
+    scan_state_repo.upsert_many(states).await
 }

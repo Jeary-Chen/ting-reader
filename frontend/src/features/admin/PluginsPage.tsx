@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 import apiClient from '../../core/api/client';
 import type { Plugin, StorePlugin } from '../../core/types';
+import { refreshClientExtensions } from '../../core/stores/pluginExtensionsStore';
 import PluginConfigDialog from '../../shared/modals/PluginConfigDialog';
 import {
   Puzzle,
@@ -22,6 +24,7 @@ import PluginCard, {
 
 const PluginsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<'installed' | 'store' | 'updates'>('installed');
   const [plugins, setPlugins] = useState<Plugin[]>([]);
   const [storePlugins, setStorePlugins] = useState<StorePlugin[]>([]);
@@ -132,7 +135,7 @@ const PluginsPage: React.FC = () => {
     setUploading(true);
     try {
       await uploadPluginPackage(false);
-      fetchPlugins();
+      await Promise.all([fetchPlugins(), refreshClientExtensions()]);
       alert(t('adminPlugins.installSuccess'));
     } catch (err: unknown) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -142,7 +145,7 @@ const PluginsPage: React.FC = () => {
         if (confirm(warning)) {
           try {
             await uploadPluginPackage(true);
-            fetchPlugins();
+            await Promise.all([fetchPlugins(), refreshClientExtensions()]);
             alert(t('adminPlugins.installSuccess'));
             return;
           } catch (retryErr: unknown) {
@@ -236,7 +239,7 @@ const PluginsPage: React.FC = () => {
               return;
             }
           }
-          await fetchPlugins();
+          await Promise.all([fetchPlugins(), refreshClientExtensions()]);
         } else {
           return;
         }
@@ -247,7 +250,7 @@ const PluginsPage: React.FC = () => {
     try {
       const installed = await installStorePlugin(pluginId, plugin?.name || pluginId);
       if (!installed) return;
-      fetchPlugins();
+      await Promise.all([fetchPlugins(), refreshClientExtensions()]);
       alert(t('adminPlugins.installSuccess'));
     } catch (err: unknown) {
       console.error('Failed to install plugin from store', err);
@@ -262,7 +265,7 @@ const PluginsPage: React.FC = () => {
   const handleReload = async (id: string) => {
     try {
       await apiClient.post(`/api/v1/plugins/${id}/reload`);
-      fetchPlugins();
+      await Promise.all([fetchPlugins(), refreshClientExtensions()]);
       alert(t('adminPlugins.reloadSuccess'));
     } catch (err: unknown) {
       console.error('Failed to reload plugin', err);
@@ -277,7 +280,7 @@ const PluginsPage: React.FC = () => {
 
     try {
       await apiClient.delete(`/api/v1/plugins/${id}`);
-      fetchPlugins();
+      await Promise.all([fetchPlugins(), refreshClientExtensions()]);
       alert(t('adminPlugins.uninstallSuccess'));
     } catch (err: unknown) {
       console.error('Failed to uninstall plugin', err);
@@ -494,6 +497,7 @@ const PluginsPage: React.FC = () => {
                   expanded={expandedDescriptions.has(plugin.id)}
                   onToggleDescription={toggleDescription}
                   onConfigure={data.config_schema ? () => setConfigPlugin(plugin) : undefined}
+                  onViewLogs={() => navigate(`/admin/plugins/${encodeURIComponent(plugin.id)}/logs`)}
                   onReload={() => handleReload(plugin.id)}
                   onUninstall={() => handleUninstall(plugin.id)}
                 />

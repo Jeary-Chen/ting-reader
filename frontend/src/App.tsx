@@ -20,10 +20,12 @@ import AdminLibraries from './features/admin/AdminLibraries';
 import AdminUsers from './features/admin/AdminUsers';
 import LogsPage from './features/admin/LogsPage';
 import PluginsPage from './features/admin/PluginsPage';
+import PluginLogsPage from './features/admin/PluginLogsPage';
 import CacheManagementPage from './features/mine/CacheManagementPage';
 import WidgetPage from './features/widget/WidgetPage';
 import { useAuthStore } from './core/stores/authStore';
 import { getGatewayBasePath } from './core/utils/runtimeUrl';
+import PluginPage from './shared/pluginExtensions/PluginPage';
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -61,6 +63,7 @@ function App() {
           <Route path="playlists" element={<MyPlaylistsPage />} />
           <Route path="playlists/:id" element={<PlaylistDetailPage />} />
           <Route path="personalization" element={<PersonalizationPage />} />
+          <Route path="plugin-pages/:pluginId/:capabilityId" element={<PluginPage />} />
           <Route path="notifications" element={
             <AdminRoute>
               <NotificationSettingsPage />
@@ -102,6 +105,11 @@ function App() {
           <Route path="admin/plugins" element={
             <AdminRoute>
               <PluginsPage />
+            </AdminRoute>
+          } />
+          <Route path="admin/plugins/:pluginId/logs" element={
+            <AdminRoute>
+              <PluginLogsPage />
             </AdminRoute>
           } />
           <Route path="admin/widget-config" element={

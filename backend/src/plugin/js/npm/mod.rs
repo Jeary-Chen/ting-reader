@@ -15,9 +15,12 @@ mod tests;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 use std::sync::{Arc, RwLock};
+use std::thread;
+use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
 use crate::core::error::TingError;
@@ -25,6 +28,137 @@ use crate::core::error::TingError;
 pub use cache::{CacheEntry, CacheStatistics};
 pub use package_json::PackageJson;
 pub use security::{NpmAuditResult, NpmDependency, NpmSecurityConfig, VulnerabilitySeverity};
+
+const TRUSTED_NPM_REGISTRY: &str = "https://registry.npmjs.org/";
+const NPM_VERSION_TIMEOUT: Duration = Duration::from_secs(5);
+const NPM_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_NPM_COMMAND_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const NPM_OUTPUT_TRUNCATED_MARKER: &[u8] = b"\n...[npm output truncated]\n";
+
+pub struct PackageJsonSpec<'a> {
+    pub plugin_dir: &'a Path,
+    pub plugin_name: &'a str,
+    pub plugin_version: &'a str,
+    pub description: Option<&'a str>,
+    pub author: Option<&'a str>,
+    pub license: Option<&'a str>,
+    pub npm_dependencies: &'a [NpmDependency],
+}
+
+fn read_bounded_command_output<R: Read>(mut reader: R) -> Vec<u8> {
+    let mut retained = Vec::with_capacity(MAX_NPM_COMMAND_OUTPUT_BYTES);
+    let mut buffer = [0_u8; 16 * 1024];
+    let mut truncated = false;
+    loop {
+        let read = match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => read,
+        };
+        let remaining = MAX_NPM_COMMAND_OUTPUT_BYTES.saturating_sub(retained.len());
+        if remaining > 0 {
+            retained.extend_from_slice(&buffer[..read.min(remaining)]);
+        }
+        truncated |= read > remaining;
+    }
+    if truncated {
+        let marker_start =
+            MAX_NPM_COMMAND_OUTPUT_BYTES.saturating_sub(NPM_OUTPUT_TRUNCATED_MARKER.len());
+        retained.truncate(marker_start);
+        retained.extend_from_slice(NPM_OUTPUT_TRUNCATED_MARKER);
+    }
+    retained
+}
+
+fn run_command_with_timeout(
+    command: &mut Command,
+    timeout: Duration,
+    operation: &str,
+) -> Result<Output> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(target_family = "unix")]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: This callback only creates a new process group in the child
+        // between fork and exec; it does not access shared application state.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) == 0 {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::last_os_error())
+                }
+            });
+        }
+    }
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("Failed to start {operation}"))?;
+    let mut stdout = child.stdout.take();
+    let mut stderr = child.stderr.take();
+    let stdout_reader = thread::spawn(move || {
+        stdout
+            .take()
+            .map(read_bounded_command_output)
+            .unwrap_or_default()
+    });
+    let stderr_reader = thread::spawn(move || {
+        stderr
+            .take()
+            .map(read_bounded_command_output)
+            .unwrap_or_default()
+    });
+
+    let deadline = Instant::now() + timeout;
+    let mut timed_out = false;
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .with_context(|| format!("Failed to wait for {operation}"))?
+        {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            timed_out = true;
+            terminate_process_tree(&mut child);
+            break child
+                .wait()
+                .with_context(|| format!("Failed to reap timed out {operation}"))?;
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if timed_out {
+        anyhow::bail!("{operation} timed out after {} seconds", timeout.as_secs());
+    }
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn terminate_process_tree(child: &mut std::process::Child) {
+    #[cfg(target_family = "windows")]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(target_family = "unix")]
+    {
+        // SAFETY: npm is spawned into its own process group above, so the
+        // negative PID targets only that command tree.
+        unsafe {
+            libc::kill(-(child.id() as i32), libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
+}
 
 /// Dependency installation log entry
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -85,6 +219,22 @@ impl NpmManager {
         self.log_dir = Some(log_dir);
     }
 
+    fn build_install_command(&self, plugin_dir: &Path) -> Command {
+        let mut command = Command::new(&self.npm_path);
+        command
+            .arg("install")
+            .arg("--omit=dev")
+            .arg("--ignore-scripts=true")
+            .arg("--package-lock=false")
+            .arg("--fund=false")
+            .arg(format!("--registry={TRUSTED_NPM_REGISTRY}"))
+            .current_dir(plugin_dir);
+        if !self.security_config.enable_audit {
+            command.arg("--audit=false");
+        }
+        command
+    }
+
     /// Parse npm dependencies from plugin manifest metadata (static method)
     pub fn parse_dependencies(plugin_json: &Value) -> Vec<NpmDependency> {
         let mut dependencies = Vec::new();
@@ -128,16 +278,16 @@ impl NpmManager {
     }
 
     /// Generate package.json for a plugin
-    pub fn generate_package_json(
-        &self,
-        plugin_dir: &Path,
-        plugin_name: &str,
-        plugin_version: &str,
-        description: Option<&str>,
-        author: Option<&str>,
-        license: Option<&str>,
-        npm_dependencies: &[NpmDependency],
-    ) -> Result<PathBuf> {
+    pub fn generate_package_json(&self, spec: PackageJsonSpec<'_>) -> Result<PathBuf> {
+        let PackageJsonSpec {
+            plugin_dir,
+            plugin_name,
+            plugin_version,
+            description,
+            author,
+            license,
+            npm_dependencies,
+        } = spec;
         package_json::generate_package_json(
             plugin_dir,
             plugin_name,
@@ -174,6 +324,14 @@ impl NpmManager {
             return Err(TingError::PluginLoadError(error_msg).into());
         }
 
+        let package_json_metadata = std::fs::symlink_metadata(&package_json_path)
+            .context("Failed to inspect plugin package.json")?;
+        if package_json_metadata.file_type().is_symlink() || !package_json_metadata.is_file() {
+            return Err(TingError::PluginLoadError(
+                "Plugin package.json must be a real file".to_string(),
+            )
+            .into());
+        }
         let package_json = PackageJson::read_from_file(&package_json_path)?;
         let dependencies: Vec<NpmDependency> = package_json
             .dependencies
@@ -188,30 +346,18 @@ impl NpmManager {
             return Err(e);
         }
 
+        self.prepare_trusted_install_files(plugin_dir, &package_json)?;
+
         self.check_npm_available()?;
 
-        if self.security_config.enforce_version_lock {
-            let package_lock_path = plugin_dir.join("package-lock.json");
-            if !package_lock_path.exists() {
-                warn!("package-lock.json not found, version locking cannot be enforced");
-            } else {
-                info!("Using existing package-lock.json for version locking");
-            }
-        }
-
         debug!("Executing: npm install in {}", plugin_dir.display());
-        let mut cmd = Command::new(&self.npm_path);
-        cmd.arg("install")
-            .arg("--production")
-            .arg("--no-fund")
-            .current_dir(plugin_dir);
-        if !self.security_config.enable_audit {
-            cmd.arg("--no-audit");
-        }
+        let mut cmd = self.build_install_command(plugin_dir);
 
-        let output = cmd.output().with_context(|| {
-            format!("Failed to execute npm install in {}", plugin_dir.display())
-        })?;
+        let output = run_command_with_timeout(
+            &mut cmd,
+            NPM_OPERATION_TIMEOUT,
+            &format!("npm install in {}", plugin_dir.display()),
+        )?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -252,7 +398,19 @@ impl NpmManager {
                     Some(result)
                 }
                 Err(e) => {
-                    warn!("npm audit failed: {}", e);
+                    let error_msg = format!("npm audit could not be completed: {e}");
+                    if self.security_config.fail_on_audit_vulnerabilities {
+                        error!("{}", error_msg);
+                        self.log_installation(
+                            plugin_name,
+                            &dependencies,
+                            false,
+                            Some(&error_msg),
+                            None,
+                        )?;
+                        return Err(TingError::PluginLoadError(error_msg).into());
+                    }
+                    warn!("{}", error_msg);
                     None
                 }
             }
@@ -278,89 +436,24 @@ impl NpmManager {
             return Ok(());
         }
 
+        self.validate_dependencies(dependencies)?;
+
         info!(
-            "Installing {} dependencies for plugin '{}' with caching",
+            "Installing complete graph for {} dependencies in plugin '{}'",
             dependencies.len(),
             plugin_name
         );
 
-        if self.cache_dir.is_none() {
-            debug!("Cache not enabled, falling back to regular installation");
-            return self.install_dependencies_with_name(plugin_dir, plugin_name);
-        }
-
-        let node_modules_path = self.get_node_modules_path(plugin_dir);
-        if !node_modules_path.exists() {
-            std::fs::create_dir_all(&node_modules_path)?;
-        }
-
-        let mut uncached_deps = Vec::new();
-        for dep in dependencies {
-            if cache::is_cached(
-                &self.cache_dir,
-                &self.cache_registry,
-                &dep.name,
-                &dep.version,
-            ) {
-                let target_path = node_modules_path.join(&dep.name);
-                match cache::link_from_cache(
-                    &self.cache_registry,
-                    &self.cache_stats,
-                    &dep.name,
-                    &dep.version,
-                    plugin_name,
-                    &target_path,
-                ) {
-                    Ok(_) => info!("Linked cached dependency: {}@{}", dep.name, dep.version),
-                    Err(e) => {
-                        warn!(
-                            "Failed to link cached dependency {}@{}: {}",
-                            dep.name, dep.version, e
-                        );
-                        uncached_deps.push(dep.clone());
-                    }
-                }
-            } else {
-                uncached_deps.push(dep.clone());
-            }
-        }
-
-        if !uncached_deps.is_empty() {
-            info!("Installing {} uncached dependencies", uncached_deps.len());
-            let temp_package_json = PackageJson::from_plugin_metadata(
-                plugin_name,
-                "1.0.0",
-                None,
-                None,
-                None,
-                &uncached_deps,
+        if self.cache_dir.is_some() {
+            debug!(
+                "Custom top-level package cache restore is disabled; npm will resolve the complete transitive dependency graph"
             );
-            temp_package_json.write_to_file(&plugin_dir.join("package.json"))?;
-            self.install_dependencies_with_name(plugin_dir, plugin_name)?;
-
-            for dep in &uncached_deps {
-                let installed_path = node_modules_path.join(&dep.name);
-                if installed_path.exists() {
-                    if let Err(e) = cache::add_to_cache(
-                        &self.cache_dir,
-                        &self.cache_registry,
-                        &self.cache_stats,
-                        &dep.name,
-                        &dep.version,
-                        plugin_name,
-                        &installed_path,
-                    ) {
-                        warn!("Failed to cache dependency {}: {}", dep.name, e);
-                    }
-                }
-            }
         }
 
-        info!(
-            "All dependencies installed successfully for plugin: {}",
-            plugin_name
-        );
-        Ok(())
+        // A top-level package directory is not a complete npm dependency graph: npm may
+        // hoist transitive packages beside it. Always let npm rebuild node_modules so a
+        // cache hit cannot produce runtime `module not found` failures.
+        self.install_dependencies_with_name(plugin_dir, plugin_name)
     }
 
     // ── node_modules helpers ──
@@ -417,10 +510,9 @@ impl NpmManager {
     // ── Private helpers ──
 
     fn check_npm_available(&self) -> Result<()> {
-        let output = Command::new(&self.npm_path)
-            .arg("--version")
-            .output()
-            .context("Failed to execute npm --version")?;
+        let mut command = Command::new(&self.npm_path);
+        command.arg("--version");
+        let output = run_command_with_timeout(&mut command, NPM_VERSION_TIMEOUT, "npm --version")?;
         if !output.status.success() {
             return Err(TingError::PluginLoadError(
                 "npm is not available or not in PATH".to_string(),
@@ -435,37 +527,80 @@ impl NpmManager {
     }
 
     fn validate_dependencies(&self, dependencies: &[NpmDependency]) -> Result<()> {
-        if self.security_config.whitelist.is_empty() {
-            return Ok(());
+        for dependency in dependencies {
+            dependency.validate().map_err(|error| {
+                TingError::PluginLoadError(format!(
+                    "Invalid npm dependency {}@{}: {}",
+                    dependency.name, dependency.version, error
+                ))
+            })?;
         }
 
-        let mut blocked = Vec::new();
-        for dep in dependencies {
-            if !self.security_config.whitelist.contains(&dep.name) {
-                warn!("Dependency '{}' is not in whitelist", dep.name);
-                blocked.push(dep.name.clone());
+        if !self.security_config.whitelist.is_empty() {
+            let mut blocked = Vec::new();
+            for dep in dependencies {
+                if !self.security_config.whitelist.contains(&dep.name) {
+                    warn!("Dependency '{}' is not in whitelist", dep.name);
+                    blocked.push(dep.name.clone());
+                }
             }
-        }
 
-        if !blocked.is_empty() {
-            return Err(TingError::PluginLoadError(format!(
-                "The following dependencies are not whitelisted: {}",
-                blocked.join(", ")
-            ))
-            .into());
+            if !blocked.is_empty() {
+                return Err(TingError::PluginLoadError(format!(
+                    "The following dependencies are not whitelisted: {}",
+                    blocked.join(", ")
+                ))
+                .into());
+            }
         }
 
         Ok(())
     }
 
+    fn prepare_trusted_install_files(
+        &self,
+        plugin_dir: &Path,
+        package_json: &PackageJson,
+    ) -> Result<()> {
+        for filename in [".npmrc", "package-lock.json", "npm-shrinkwrap.json"] {
+            let path = plugin_dir.join(filename);
+            if std::fs::symlink_metadata(&path).is_ok() {
+                return Err(TingError::PluginLoadError(format!(
+                    "Plugin npm install rejected untrusted file: {filename}"
+                ))
+                .into());
+            }
+        }
+
+        let node_modules = plugin_dir.join("node_modules");
+        if let Ok(metadata) = std::fs::symlink_metadata(&node_modules) {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(TingError::PluginLoadError(
+                    "Plugin node_modules must be a real directory".to_string(),
+                )
+                .into());
+            }
+        }
+
+        // Rewriting through the strict model removes scripts and other untrusted npm fields.
+        package_json.write_to_file(&plugin_dir.join("package.json"))?;
+        Ok(())
+    }
+
     fn run_npm_audit(&self, plugin_dir: &Path) -> Result<NpmAuditResult> {
         info!("Running npm audit in: {}", plugin_dir.display());
-        let output = Command::new(&self.npm_path)
+        let mut command = Command::new(&self.npm_path);
+        command
             .arg("audit")
             .arg("--json")
-            .current_dir(plugin_dir)
-            .output()
-            .context("Failed to execute npm audit")?;
+            .arg("--ignore-scripts=true")
+            .arg(format!("--registry={TRUSTED_NPM_REGISTRY}"))
+            .current_dir(plugin_dir);
+        let output = run_command_with_timeout(
+            &mut command,
+            NPM_OPERATION_TIMEOUT,
+            &format!("npm audit in {}", plugin_dir.display()),
+        )?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let audit_json: Value =
@@ -478,7 +613,7 @@ impl NpmManager {
             if let Some(vulns) = metadata.get("vulnerabilities") {
                 for severity in &["low", "moderate", "high", "critical"] {
                     if let Some(count) = vulns.get(*severity).and_then(|v| v.as_u64()) {
-                        let sev = VulnerabilitySeverity::from_str(severity).unwrap();
+                        let sev = VulnerabilitySeverity::parse(severity).unwrap();
                         vulnerabilities.insert(sev, count as usize);
                         total += count as usize;
                     }

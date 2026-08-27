@@ -22,6 +22,8 @@ pub mod decryption_cache;
 pub mod error;
 #[path = "app/fnos.rs"]
 pub mod fnos;
+#[path = "library_scanner/scheduler.rs"]
+pub mod library_sync_scheduler;
 #[path = "library_scanner/watcher.rs"]
 pub mod library_watcher;
 #[path = "storage/local_paths.rs"]

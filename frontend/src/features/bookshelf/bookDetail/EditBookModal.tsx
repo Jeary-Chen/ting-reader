@@ -18,6 +18,7 @@ interface Props {
   genResult: RegexResult | null;
   chapterGroupOrder: 'asc' | 'desc';
   onChangeEditData: (next: Partial<Book>) => void;
+  onChangeMetadataLock: (locked: boolean) => void;
   onChangeChapterGroupOrder: (order: 'asc' | 'desc') => void;
   onShowRegexGenerator: () => void;
   onHideRegexGenerator: () => void;
@@ -30,6 +31,7 @@ interface Props {
   onDelete: () => void;
   onSave: () => void;
   onWriteMetadata: () => void;
+  showWriteMetadata?: boolean;
 }
 
 const EditBookModal: React.FC<Props> = ({
@@ -41,6 +43,7 @@ const EditBookModal: React.FC<Props> = ({
   genResult,
   chapterGroupOrder,
   onChangeEditData,
+  onChangeMetadataLock,
   onChangeChapterGroupOrder,
   onShowRegexGenerator,
   onHideRegexGenerator,
@@ -53,6 +56,7 @@ const EditBookModal: React.FC<Props> = ({
   onDelete,
   onSave,
   onWriteMetadata,
+  showWriteMetadata = true,
 }) => {
   const { t } = useTranslation();
   const [locationExpanded, setLocationExpanded] = React.useState(false);
@@ -153,6 +157,19 @@ const EditBookModal: React.FC<Props> = ({
           <div className="flex items-center justify-between mb-4 sm:mb-6">
             <h2 className="text-xl sm:text-2xl font-bold dark:text-white">{t('bookshelf.editBookMetadata')}</h2>
           </div>
+
+          <label className="mb-4 sm:mb-6 flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/70 px-3 py-3 dark:border-primary-900/40 dark:bg-primary-900/20">
+            <input
+              type="checkbox"
+              checked={editData.manual_corrected === true}
+              onChange={e => onChangeMetadataLock(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-primary-600"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-bold text-slate-700 dark:text-slate-200">{t('bookshelf.metadataLock')}</span>
+              <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{t('bookshelf.metadataLockHelp')}</span>
+            </span>
+          </label>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             <div className="space-y-3 sm:space-y-4">
@@ -329,14 +346,16 @@ const EditBookModal: React.FC<Props> = ({
             </button>
             <div className="flex-1" />
             <div className="flex gap-2 sm:gap-3">
-              <button
-                onClick={onWriteMetadata}
-                className="flex-1 sm:flex-none px-2.5 sm:px-6 py-2.5 sm:py-3 font-bold text-primary-600 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 rounded-xl transition-all flex items-center justify-center gap-1.5 sm:gap-2 text-xs sm:text-base whitespace-nowrap"
-                title={t('bookshelf.writeMetadataTitle')}
-              >
-                <FileSignature size={16} className="sm:w-5 sm:h-5" />
-                {t('bookshelf.writeFile')}
-              </button>
+              {showWriteMetadata && (
+                <button
+                  onClick={onWriteMetadata}
+                  className="flex-1 sm:flex-none px-2.5 sm:px-6 py-2.5 sm:py-3 font-bold text-primary-600 bg-primary-50 hover:bg-primary-100 dark:bg-primary-900/20 dark:hover:bg-primary-900/30 rounded-xl transition-all flex items-center justify-center gap-1.5 sm:gap-2 text-xs sm:text-base whitespace-nowrap"
+                  title={t('bookshelf.writeMetadataTitle')}
+                >
+                  <FileSignature size={16} className="sm:w-5 sm:h-5" />
+                  {t('bookshelf.writeFile')}
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all text-xs sm:text-base whitespace-nowrap"

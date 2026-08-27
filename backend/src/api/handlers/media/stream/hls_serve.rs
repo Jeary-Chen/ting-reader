@@ -25,7 +25,7 @@ pub async fn get_hls_playlist(
         if playlist_path.exists() {
             let content = tokio::fs::read_to_string(&playlist_path)
                 .await
-                .map_err(|e| TingError::IoError(e))?;
+                .map_err(TingError::IoError)?;
 
             return Ok((
                 StatusCode::OK,
@@ -99,7 +99,7 @@ pub async fn get_hls_segment(
 
     let content = tokio::fs::read(&segment_path)
         .await
-        .map_err(|e| TingError::IoError(e))?;
+        .map_err(TingError::IoError)?;
 
     Ok((
         StatusCode::OK,

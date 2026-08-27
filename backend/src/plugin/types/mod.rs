@@ -343,6 +343,59 @@ impl PluginContext {
     }
 }
 
+/// Host-bound identity attached to plugin-originated log events.
+///
+/// Plugins receive a logger that already owns this context, so they cannot
+/// choose another plugin identity, version, runtime, or source when writing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginLogContext {
+    pub plugin_id: String,
+    pub plugin_instance_id: String,
+    pub plugin_name: String,
+    pub plugin_version: String,
+    pub runtime: String,
+    pub source: PluginLogSource,
+}
+
+impl PluginLogContext {
+    pub fn from_metadata(metadata: &PluginMetadata, source: PluginLogSource) -> Self {
+        Self {
+            plugin_id: metadata.id.clone(),
+            plugin_instance_id: metadata.instance_id(),
+            plugin_name: metadata.name.clone(),
+            plugin_version: metadata.version.clone(),
+            runtime: metadata
+                .runtime
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            source,
+        }
+    }
+}
+
+/// Stable origin labels used by structured plugin log events.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginLogSource {
+    Code,
+    Lifecycle,
+    Runtime,
+    Gateway,
+    Security,
+}
+
+impl PluginLogSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Lifecycle => "lifecycle",
+            Self::Runtime => "runtime",
+            Self::Gateway => "gateway",
+            Self::Security => "security",
+        }
+    }
+}
+
 /// Plugin logger trait
 pub trait PluginLogger: Send + Sync {
     fn debug(&self, message: &str);

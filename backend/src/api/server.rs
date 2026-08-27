@@ -223,6 +223,14 @@ impl ApiServer {
             task_queue_clone.start().await;
         });
 
+        let sync_scheduler = Arc::new(
+            crate::core::library_sync_scheduler::LibrarySyncScheduler::new(
+                library_repo.clone(),
+                task_queue.clone(),
+            ),
+        );
+        tokio::spawn(sync_scheduler.start());
+
         // Wrap config in Arc<RwLock> for shared mutable access
         let config_arc = Arc::new(tokio::sync::RwLock::new(config.clone()));
 
@@ -236,24 +244,29 @@ impl ApiServer {
                 .map_err(|e| anyhow::anyhow!("Failed to create plugin cache: {}", e))?,
         );
         let plugin_host_gateway = Arc::new(crate::plugin::PluginHostGateway::new(
-            book_repo.clone(),
-            library_repo.clone(),
-            chapter_repo.clone(),
-            progress_repo.clone(),
-            playlist_repo.clone(),
-            favorite_repo.clone(),
-            settings_repo.clone(),
-            task_queue.clone(),
-            plugin_manager.clone(),
-            plugin_cache.clone(),
-            Arc::new(encryption_key),
-            config.clone(),
+            crate::plugin::PluginHostGatewayDependencies {
+                book_repo: book_repo.clone(),
+                library_repo: library_repo.clone(),
+                chapter_repo: chapter_repo.clone(),
+                progress_repo: progress_repo.clone(),
+                playlist_repo: playlist_repo.clone(),
+                favorite_repo: favorite_repo.clone(),
+                settings_repo: settings_repo.clone(),
+                task_queue: task_queue.clone(),
+                plugin_manager: plugin_manager.clone(),
+                plugin_cache: plugin_cache.clone(),
+                encryption_key: Arc::new(encryption_key),
+                config: config.clone(),
+            },
         ));
         plugin_manager.set_host_gateway(&plugin_host_gateway);
 
         // Create library watcher
         let library_watcher = Arc::new(crate::core::library_watcher::LibraryWatcher::new(
             library_repo.clone(),
+            Arc::new(crate::db::repository::LibraryScanStateRepository::new(
+                db.clone(),
+            )),
             task_queue.clone(),
             config.clone(),
         ));
@@ -410,7 +423,7 @@ impl ApiServer {
                         let latency_ms = u64::try_from(latency.as_millis()).unwrap_or(u64::MAX);
                         match classification {
                             ServerErrorsFailureClass::StatusCode(status_code) => {
-                                tracing::error!(
+                                tracing::debug!(
                                     parent: span,
                                     status_code = status_code.as_u16(),
                                     latency_ms = latency_ms,

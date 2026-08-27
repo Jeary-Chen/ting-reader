@@ -14,7 +14,7 @@ const packageJson = JSON.parse(
 const appBase = process.env.VITE_APP_BASE_URL || './'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   define: {
     __APP_VERSION__: JSON.stringify(packageJson.version ?? 'unknown'),
   },
@@ -27,7 +27,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       useCredentials: true,
-      base: './',
+      // vite-plugin-pwa matches dev requests literally, so a relative base
+      // makes /manifest.webmanifest and its virtual module fall through to HTML.
+      base: command === 'serve' && appBase === './' ? '/' : appBase,
       buildBase: './',
       includeAssets: ['favicon.ico', 'pwa-64.png', 'pwa-128.png', 'pwa-192.png', 'pwa-256.png', 'pwa-512.png', 'pwa-*-maskable.png'],
       devOptions: {
@@ -181,10 +183,10 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3000,
+    port: 5173,
     host: true,
   },
   optimizeDeps: {
     include: ['react-window']
   }
-})
+}))

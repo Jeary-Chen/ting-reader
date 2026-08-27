@@ -38,6 +38,9 @@ pub enum TingError {
     #[error("Plugin execution error: {0}")]
     PluginExecutionError(String),
 
+    #[error("Plugin execution error: {0}")]
+    LoggedPluginExecutionError(String),
+
     #[error("Plugin dependency error: {0}")]
     DependencyError(String),
 
@@ -130,6 +133,7 @@ impl TingError {
             | TingError::DatabaseError(_)
             | TingError::PluginLoadError(_)
             | TingError::PluginExecutionError(_)
+            | TingError::LoggedPluginExecutionError(_)
             | TingError::DependencyError(_)
             | TingError::IoError(_)
             | TingError::NetworkError(_)
@@ -149,6 +153,7 @@ impl TingError {
             TingError::PluginNotFound(_) => "PluginNotFound",
             TingError::PluginLoadError(_) => "PluginLoadError",
             TingError::PluginExecutionError(_) => "PluginExecutionError",
+            TingError::LoggedPluginExecutionError(_) => "PluginExecutionError",
             TingError::DependencyError(_) => "DependencyError",
             TingError::InvalidRequest(_) => "InvalidRequest",
             TingError::AuthenticationError(_) => "AuthenticationError",
@@ -178,6 +183,26 @@ impl TingError {
                 | TingError::Timeout(_)
                 | TingError::ResourceLimitExceeded(_)
         )
+    }
+
+    pub fn mark_plugin_execution_logged(self) -> Self {
+        match self {
+            TingError::LoggedPluginExecutionError(_) => self,
+            TingError::PluginExecutionError(message) => {
+                TingError::LoggedPluginExecutionError(message)
+            }
+            error => error,
+        }
+    }
+
+    pub fn with_plugin_execution_context(self, context: impl AsRef<str>) -> Self {
+        let context = context.as_ref();
+        match self {
+            TingError::LoggedPluginExecutionError(message) => {
+                TingError::LoggedPluginExecutionError(format!("{context}: {message}"))
+            }
+            error => TingError::PluginExecutionError(format!("{context}: {error}")),
+        }
     }
 }
 
@@ -336,25 +361,37 @@ impl IntoResponse for TingError {
                     "Permission denied"
                 );
             }
+            // PluginManager already recorded these failures with the host-bound plugin identity.
+            TingError::LoggedPluginExecutionError(_) => {}
+            TingError::PluginExecutionError(_) => {
+                tracing::error!(
+                    target: "ting_reader::api::plugin",
+                    error_type = self.error_type(),
+                    error = %error_message,
+                    trace_id = %error_response.trace_id,
+                    status_code = %status_code,
+                    message_key = "http.error.plugin",
+                    message_params = %log_params,
+                    "Plugin request failed"
+                );
+            }
             // All other errors are actual system errors
             _ => {
                 // Check if it's a database lock error (should be warning, not error)
-                if let TingError::DatabaseError(ref db_err) = self {
-                    if let rusqlite::Error::SqliteFailure(ref err, _) = db_err {
-                        if err.code == rusqlite::ErrorCode::DatabaseBusy
-                            || err.code == rusqlite::ErrorCode::DatabaseLocked
-                        {
-                            tracing::warn!(
-                                error_type = self.error_type(),
-                                error = %error_message,
-                                trace_id = %error_response.trace_id,
-                                status_code = %status_code,
-                                message_key = "http.error.database_busy",
-                                message_params = %log_params,
-                                "Database busy"
-                            );
-                            return (status_code, Json(error_response)).into_response();
-                        }
+                if let TingError::DatabaseError(rusqlite::Error::SqliteFailure(err, _)) = self {
+                    if err.code == rusqlite::ErrorCode::DatabaseBusy
+                        || err.code == rusqlite::ErrorCode::DatabaseLocked
+                    {
+                        tracing::warn!(
+                            error_type = self.error_type(),
+                            error = %error_message,
+                            trace_id = %error_response.trace_id,
+                            status_code = %status_code,
+                            message_key = "http.error.database_busy",
+                            message_params = %log_params,
+                            "Database busy"
+                        );
+                        return (status_code, Json(error_response)).into_response();
                     }
                 }
 
@@ -464,6 +501,20 @@ mod tests {
         assert!(TingError::Timeout("test".into()).is_retryable());
         assert!(!TingError::InvalidRequest("test".into()).is_retryable());
         assert!(!TingError::PermissionDenied("test".into()).is_retryable());
+    }
+
+    #[test]
+    fn logged_plugin_error_preserves_public_error_type() {
+        let error = TingError::PluginExecutionError("plugin failed".to_string())
+            .mark_plugin_execution_logged();
+        assert!(matches!(error, TingError::LoggedPluginExecutionError(_)));
+        assert_eq!(error.error_type(), "PluginExecutionError");
+        assert_eq!(error.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let timeout =
+            TingError::Timeout("plugin timed out".to_string()).mark_plugin_execution_logged();
+        assert!(matches!(timeout, TingError::Timeout(_)));
+        assert_eq!(timeout.status_code(), StatusCode::REQUEST_TIMEOUT);
     }
 
     #[test]

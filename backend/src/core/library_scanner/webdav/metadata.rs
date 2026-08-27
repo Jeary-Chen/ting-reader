@@ -33,7 +33,7 @@ impl LibraryScanner {
             .to_lowercase();
         if ext == "strm" {
             let decoded_url = self.decode_url_path(file_url);
-            let filename = decoded_url.split('/').last().unwrap_or("chapter");
+            let filename = decoded_url.split('/').next_back().unwrap_or("chapter");
             let title = filename
                 .strip_suffix(".strm")
                 .unwrap_or(filename)
@@ -255,7 +255,7 @@ impl LibraryScanner {
                     let mut duration = 0;
                     let mut cover_url = None;
 
-                    let ext = file_url.split('.').last().unwrap_or("").to_lowercase();
+                    let ext = file_url.split('.').next_back().unwrap_or("").to_lowercase();
                     let mut use_ffprobe = false;
 
                     // 策略：优先使用格式插件处理所有格式（包括 MP3/M4A/WMA/FLAC 等）
@@ -614,13 +614,13 @@ impl LibraryScanner {
                                         };
 
                                         // Only write if not exists
-                                        if !target_path.exists() {
-                                            if std::fs::write(&target_path, &picture.data).is_ok() {
-                                                debug!(
-                                                    "Saved WebDAV cover from ID3 to {:?}",
-                                                    target_path
-                                                );
-                                            }
+                                        if !target_path.exists()
+                                            && std::fs::write(&target_path, &picture.data).is_ok()
+                                        {
+                                            debug!(
+                                                "Saved WebDAV cover from ID3 to {:?}",
+                                                target_path
+                                            );
                                         }
                                         final_cover_url =
                                             Some(target_path.to_string_lossy().replace('\\', "/"));

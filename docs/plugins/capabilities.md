@@ -11,7 +11,7 @@ capabilities:
   - id: assistant.panel
     kind: ui_extension
     invoke: openAssistant
-    slot: global.floating_action
+    slots: [app.sidebar_page, global.floating_action]
     title:
       zh: 书单助手
       en: Booklist Assistant
@@ -21,6 +21,9 @@ capabilities:
     render:
       mode: web_container
       entry: ui/assistant.html
+      bridge:
+        capabilities: [assistant.tools]
+        host_methods: [user_settings.get]
 
   - id: metadata.search
     kind: metadata_provider
@@ -81,18 +84,21 @@ permissions:
 
 ## 3. UI 入口、图标和菜单
 
-`ui_extension` 的 `slot` 决定入口出现在哪里。Web 前端会读取 `title`、`icon`、`priority` 和 `render` 来生成入口菜单；`global.floating_action` 会出现在右下角插件入口菜单中。
+`ui_extension` 的 `slot` 或 `slots` 决定入口出现在哪里。Web 和 Flutter 客户端会读取 `title`、`icon`、`priority` 和 `render` 来生成入口；`app.sidebar_page` 位于侧边栏底部，`global.floating_action` 位于现有右下角插件工具菜单。用户可以在个性化设置中关闭右下角菜单，侧边栏页面不受该开关影响。
 
 ```yaml
 capabilities:
   - id: assistant.panel
     kind: ui_extension
-    slot: global.floating_action
+    slots: [app.sidebar_page, global.floating_action]
     title: { zh: 书单助手, en: Booklist Assistant }
     icon: message-circle
     render:
       mode: web_container
       entry: ui/assistant.html
+      bridge:
+        capabilities: [assistant.tools]
+        host_methods: [user_settings.get]
 
   - id: quick.note
     kind: ui_extension
@@ -104,13 +110,12 @@ capabilities:
 
 | slot | 显示位置 |
 | --- | --- |
+| `app.sidebar_page` | 桌面侧边栏底部的插件页面；侧边栏折叠后仅显示图标 |
 | `global.floating_action` | 全局右下角插件入口菜单 |
-| `global.panel` | 全局插件面板入口，可作为 floating action 的 fallback |
-| `settings.section` | 设置页插件配置区域 |
+| `global.panel` | 全局右下角插件面板入口 |
 | `book.detail_action` | 书籍详情页动作入口 |
-| `reader.toolbar_action` | 阅读器工具栏动作 |
-| `reader.side_panel` | 阅读器侧边面板 |
-| `reader.document_viewer` | 文档阅读器扩展 |
+
+`reader.toolbar_action`、`reader.side_panel` 和 `reader.document_viewer` 已停止渲染。客户端仍能解析这些值以兼容旧 manifest，但不会为它们创建入口；迁移时请改为 `app.sidebar_page`、`global.floating_action` 或 `book.detail_action`。
 
 | render.mode | 说明 |
 | --- | --- |
@@ -126,22 +131,31 @@ capabilities:
 ```yaml
 icon: { type: lucide, name: settings }
 icon: { type: emoji, value: "✨" }
-icon: { type: image, src: "https://example.com/plugin-icon.png" }
+icon: { type: image, src: "assets/plugin-icon.png" }
 ```
 
-Web 支持 `http/https`、`data:image/...` 和 `/` 路径，Flutter 支持 `http/https` 和 `assets/`。图片建议保持正方形透明底。
+图片图标只允许插件包内安全的 `assets/...` 相对路径，Web 和 Flutter 都通过 `GET /api/v1/plugin-assets/:client_grant/:plugin_id/*path` 解析，单文件最大 64 MiB。`client_grant` 由 `GET /api/v1/plugin-capabilities` 为 `ui_extension` / `client_extension` 注册项返回，绑定当前用户、插件和 UI capability，并会过期；受信客户端必须把它作为不透明秘密保管。grant 是资产 URL 的路径段，插件 UI 如从自身资源地址观察到该值，也不得解析、记录、持久化或外传。远程 URL、`data:` URL、站点根路径、空路径、`.` 和 `..` 会被拒绝并回退到默认插件图标，避免第三方跟踪、内容替换和网关根路径错误。图片建议保持正方形透明底；能用 lucide 或 emoji 时优先使用它们。
 
 ## 4. Web 容器运行细节
 
-`web_container` 的 `render.entry` 会通过插件资产接口加载。静态资源建议放在 `ui/` 或 `assets/` 下，并使用相对路径引用 CSS、JS 和图片。
+`web_container` 的 `render.entry` 会通过插件资产接口加载。静态资源建议放在 `ui/` 或 `assets/` 下，并使用相对路径引用 CSS、JS 和图片。入口必须是插件包内的安全相对路径，不能包含绝对路径、反斜杠或 `..`。
 
-外部链接写普通浏览器标记即可：
+Web 容器运行在不含 `allow-same-origin` 的 sandbox 中，并注入严格 CSP：禁止直接联网、嵌套 frame、worker、对象和顶层导航。`capability.invoke` 默认只能调用当前 UI capability；如页面确实需要调用同插件的工具 capability，必须在 `render.bridge.capabilities` 中逐项声明。`host.invoke` 默认全部拒绝，必须在 `render.bridge.host_methods` 中逐项声明。客户端和后端都会重新校验来源 UI 与白名单，后端还会继续检查插件权限和当前用户权限。
 
-```html
-<a href="https://example.com/register" target="_blank" rel="noopener noreferrer">注册服务</a>
+```yaml
+render:
+  mode: web_container
+  entry: ui/assistant.html
+  bridge:
+    allow_capability_invoke: true
+    capabilities:
+      - assistant.tools
+    host_methods:
+      - user_settings.get
+      - progress.recent
 ```
 
-Web 端 iframe 允许弹窗逃离 sandbox；Flutter 端会拦截非插件资产的 `http/https` 导航、`target="_blank"` 和 `window.open()`，再交给系统浏览器打开。插件不要依赖 `window.open()` 返回值判断是否打开成功。
+Web 端不允许插件 iframe 逃离 sandbox 或创建不受控弹窗。Web 与 Flutter 的每个插件文档都有独立 `bridgeToken` 和宿主预先创建的 `MessagePort`；请求必须通过 `window.__TING_PLUGIN_BRIDGE__.postMessage()` 发出并携带匹配的 `bridge_token`。`bridgeToken` 只用于当前文档握手，不是服务端签发的 `client_grant` / `ui_grant`。受信客户端会在 capability 与 HostGateway HTTP 转发中附加匹配 grant，后端再次校验用户、插件、来源 UI 和有效期。文档刷新或跳转会丢失原端口，只知道旧 token 不能接管 bridge。Web 与 Flutter 都只允许真实用户点击产生的 HTTP(S) 外链请求，并在宿主界面显示目标地址、等待用户明确确认后才打开；插件不应依赖 `window.open()` 返回值或把外链、弹窗作为核心流程。
 
 ## 5. 能力与权限要配套
 

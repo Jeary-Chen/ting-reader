@@ -334,9 +334,7 @@ fn match_route_path(pattern: &str, path: &str) -> Option<RoutePathMatch> {
             });
         }
 
-        let Some(path_segment) = path_segments.get(path_index) else {
-            return None;
-        };
+        let path_segment = path_segments.get(path_index)?;
 
         if let Some(dynamic) = parse_dynamic_segment(pattern_segment) {
             let value = dynamic.capture(path_segment)?;

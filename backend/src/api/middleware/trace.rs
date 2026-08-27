@@ -1,4 +1,9 @@
-use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
+use axum::{
+    extract::Request,
+    http::{HeaderValue, Uri},
+    middleware::Next,
+    response::Response,
+};
 use tracing::{info_span, Instrument};
 use uuid::Uuid;
 
@@ -20,7 +25,7 @@ pub async fn trace_id_middleware(request: Request, next: Next) -> Response {
 
     // Extract request information for logging
     let method = request.method().clone();
-    let uri = request.uri().clone();
+    let request_target = request_target_for_logs(request.uri());
     let version = request.version();
 
     // Create a tracing span with the trace ID
@@ -29,7 +34,7 @@ pub async fn trace_id_middleware(request: Request, next: Next) -> Response {
         "http_request",
         trace_id = %trace_id,
         method = %method,
-        uri = %uri,
+        uri = %request_target,
         version = ?version,
     );
 
@@ -68,6 +73,28 @@ pub async fn trace_id_middleware(request: Request, next: Next) -> Response {
     Response::from_parts(parts, body)
 }
 
+fn request_target_for_logs(uri: &Uri) -> String {
+    let mut segments = uri
+        .path()
+        .split('/')
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if let Some(index) = segments
+        .iter()
+        .position(|segment| segment == "plugin-assets")
+    {
+        if let Some(grant) = segments.get_mut(index + 1) {
+            *grant = "<redacted-grant>".to_string();
+        }
+    }
+    let path = segments.join("/");
+    if uri.query().is_some() {
+        format!("{path}?<redacted-query>")
+    } else {
+        path
+    }
+}
+
 /// Extension type for storing trace ID in request extensions
 #[derive(Clone, Debug)]
 pub struct TraceId(pub String);
@@ -77,10 +104,11 @@ impl TraceId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    /// Get the trace ID as a String
-    pub fn to_string(&self) -> String {
-        self.0.clone()
+impl std::fmt::Display for TraceId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
     }
 }
 
@@ -126,6 +154,24 @@ mod tests {
 
         // Verify it's a valid UUID
         assert!(Uuid::parse_str(trace_id_str).is_ok());
+    }
+
+    #[test]
+    fn request_target_redacts_plugin_grants_and_query_values() {
+        let uri: Uri = "/api/v1/plugin-assets/signed-secret/demo/ui/index.html?token=secret"
+            .parse()
+            .unwrap();
+
+        assert_eq!(
+            request_target_for_logs(&uri),
+            "/api/v1/plugin-assets/<redacted-grant>/demo/ui/index.html?<redacted-query>"
+        );
+    }
+
+    #[test]
+    fn request_target_keeps_safe_paths_without_query() {
+        let uri: Uri = "/api/v1/books".parse().unwrap();
+        assert_eq!(request_target_for_logs(&uri), "/api/v1/books");
     }
 
     #[tokio::test]

@@ -32,10 +32,18 @@ use axum::{
     Json,
 };
 use base64::Engine;
+use chrono::Utc;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::path::{Component, Path as FsPath, PathBuf};
+use tokio_util::io::ReaderStream;
 use uuid::Uuid;
+
+const MAX_PLUGIN_ASSET_BYTES: u64 = 64 * 1024 * 1024;
+const PLUGIN_CLIENT_GRANT_TTL_SECONDS: i64 = 7 * 24 * 60 * 60;
+const PLUGIN_ASSET_CSP: &str = "default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'none'; child-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox";
 
 fn is_admin_user(user: &AuthUser) -> bool {
     user.role == "admin"
@@ -52,8 +60,119 @@ fn require_plugin_visible(metadata: &PluginMetadata, user: &AuthUser) -> Result<
     Ok(())
 }
 
+fn require_plugin_system_write(user: &AuthUser) -> Result<()> {
+    require_admin(user)
+}
+
 fn registration_visible_to_user(registration: &RegisteredCapability, is_admin: bool) -> bool {
     plugin_visible_to_user(registration.admin_only, is_admin)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PluginClientGrantClaims {
+    sub: String,
+    plugin_id: String,
+    capability_id: String,
+    exp: usize,
+    grant_type: String,
+}
+
+async fn plugin_client_grant_secret(state: &AppState) -> String {
+    if let Some(key_manager) = &state.jwt_key_manager {
+        key_manager.get_signing_secret().await
+    } else {
+        state.jwt_secret.as_ref().clone()
+    }
+}
+
+async fn issue_plugin_client_grant(
+    state: &AppState,
+    user: &AuthUser,
+    plugin_id: &str,
+    capability_id: &str,
+) -> Result<String> {
+    let expiration = Utc::now()
+        .checked_add_signed(chrono::Duration::seconds(PLUGIN_CLIENT_GRANT_TTL_SECONDS))
+        .ok_or_else(|| TingError::AuthenticationError("Failed to calculate grant expiry".into()))?
+        .timestamp() as usize;
+    let claims = PluginClientGrantClaims {
+        sub: user.id.clone(),
+        plugin_id: plugin_id.to_string(),
+        capability_id: capability_id.to_string(),
+        exp: expiration,
+        grant_type: "plugin_client".to_string(),
+    };
+    let secret = plugin_client_grant_secret(state).await;
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|error| {
+        TingError::AuthenticationError(format!("Failed to issue plugin client grant: {error}"))
+    })
+}
+
+async fn require_plugin_client_grant(
+    state: &AppState,
+    user: &AuthUser,
+    grant: &str,
+    plugin_id: &str,
+    capability_id: Option<&str>,
+) -> Result<PluginClientGrantClaims> {
+    let claims = decode_plugin_client_grant(state, grant).await?;
+    if claims.sub != user.id
+        || claims.plugin_id != plugin_id
+        || capability_id.is_some_and(|expected| claims.capability_id != expected)
+    {
+        return Err(TingError::PermissionDenied(
+            "Plugin client grant does not match this request".to_string(),
+        ));
+    }
+    Ok(claims)
+}
+
+async fn decode_plugin_client_grant(
+    state: &AppState,
+    grant: &str,
+) -> Result<PluginClientGrantClaims> {
+    if grant.len() > 4096 {
+        return Err(TingError::PermissionDenied(
+            "Invalid plugin client grant".to_string(),
+        ));
+    }
+    let secrets = if let Some(key_manager) = &state.jwt_key_manager {
+        key_manager.get_validation_secrets().await
+    } else {
+        vec![state.jwt_secret.as_ref().clone()]
+    };
+    decode_plugin_client_grant_with_secrets(grant, &secrets)
+}
+
+fn decode_plugin_client_grant_with_secrets(
+    grant: &str,
+    secrets: &[String],
+) -> Result<PluginClientGrantClaims> {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+    let claims = secrets
+        .iter()
+        .find_map(|secret| {
+            decode::<PluginClientGrantClaims>(
+                grant,
+                &DecodingKey::from_secret(secret.as_bytes()),
+                &validation,
+            )
+            .ok()
+            .map(|token| token.claims)
+        })
+        .ok_or_else(|| TingError::PermissionDenied("Invalid plugin client grant".into()))?;
+    if claims.grant_type != "plugin_client" {
+        return Err(TingError::PermissionDenied(
+            "Invalid plugin client grant".to_string(),
+        ));
+    }
+    Ok(claims)
 }
 
 /// Handler for GET /api/v1/plugins - List plugins visible to the current user
@@ -168,6 +287,8 @@ pub async fn install_plugin(
     user: AuthUser,
     mut multipart: Multipart,
 ) -> Result<Response> {
+    require_plugin_system_write(&user)?;
+
     let temp_dir = std::env::temp_dir().join("ting-reader-uploads");
     if !temp_dir.exists() {
         tokio::fs::create_dir_all(&temp_dir)
@@ -310,6 +431,8 @@ pub async fn reload_plugin(
     user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    require_plugin_system_write(&user)?;
+
     let metadata = state
         .plugin_manager
         .get_plugin(&id)
@@ -329,6 +452,8 @@ pub async fn uninstall_plugin(
     user: AuthUser,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
+    require_plugin_system_write(&user)?;
+
     let metadata = state
         .plugin_manager
         .get_plugin(&id)
@@ -385,6 +510,8 @@ pub async fn update_plugin_config(
     Path(id): Path<String>,
     Json(req): Json<UpdatePluginConfigRequest>,
 ) -> Result<impl IntoResponse> {
+    require_plugin_system_write(&user)?;
+
     let metadata = state
         .plugin_manager
         .get_plugin(&id)
@@ -426,13 +553,33 @@ pub async fn list_plugin_capabilities(
         state.plugin_manager.list_capabilities().await
     };
 
-    Ok(Json(
-        capabilities
-            .into_iter()
-            .filter(|registration| registration_visible_to_user(registration, is_admin))
-            .map(plugin_capability_registration_response)
-            .collect::<Vec<_>>(),
-    ))
+    let mut responses = Vec::new();
+    for registration in capabilities
+        .into_iter()
+        .filter(|registration| registration_visible_to_user(registration, is_admin))
+    {
+        let is_ui_capability = registration.capability.kind == "ui_extension"
+            || registration.capability.kind == "client_extension";
+        let client_grant = if is_ui_capability {
+            Some(
+                issue_plugin_client_grant(
+                    &state,
+                    &user,
+                    &registration.plugin_id,
+                    &registration.capability.id,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        responses.push(plugin_capability_registration_response(
+            registration,
+            client_grant,
+        ));
+    }
+
+    Ok(Json(responses))
 }
 
 /// Handler for GET /api/v1/plugin-capabilities/content-processors.
@@ -451,7 +598,7 @@ pub async fn find_content_processors(
         processors
             .into_iter()
             .filter(|processor| registration_visible_to_user(&processor.registration, is_admin))
-            .map(|processor| plugin_capability_registration_response(processor.registration))
+            .map(|processor| plugin_capability_registration_response(processor.registration, None))
             .collect::<Vec<_>>(),
     ))
 }
@@ -499,7 +646,7 @@ pub async fn find_task_handlers(
         handlers
             .into_iter()
             .filter(|handler| registration_visible_to_user(&handler.registration, is_admin))
-            .map(|handler| plugin_capability_registration_response(handler.registration))
+            .map(|handler| plugin_capability_registration_response(handler.registration, None))
             .collect::<Vec<_>>(),
     ))
 }
@@ -520,18 +667,20 @@ pub async fn find_event_handlers(
         handlers
             .into_iter()
             .filter(|handler| registration_visible_to_user(&handler.registration, is_admin))
-            .map(|handler| plugin_capability_registration_response(handler.registration))
+            .map(|handler| plugin_capability_registration_response(handler.registration, None))
             .collect::<Vec<_>>(),
     ))
 }
 
 fn plugin_capability_registration_response(
     registration: RegisteredCapability,
+    client_grant: Option<String>,
 ) -> PluginCapabilityRegistrationResponse {
     PluginCapabilityRegistrationResponse {
         plugin_id: registration.plugin_id,
         plugin_name: registration.plugin_name,
         admin_only: registration.admin_only,
+        client_grant,
         capability: registration.capability,
     }
 }
@@ -540,6 +689,94 @@ fn plugin_capability_not_found(plugin_id: &str, capability_id: &str) -> TingErro
     TingError::NotFound(format!(
         "Capability {} not found for plugin {}",
         capability_id, plugin_id
+    ))
+}
+
+fn ui_bridge(capability: &PluginCapability) -> Option<&serde_json::Map<String, Value>> {
+    capability
+        .extra
+        .get("render")?
+        .as_object()?
+        .get("bridge")?
+        .as_object()
+}
+
+fn find_ui_bridge_capability(
+    metadata: &PluginMetadata,
+    ui_capability_id: &str,
+) -> Result<PluginCapability> {
+    let capability = metadata
+        .effective_capabilities()
+        .into_iter()
+        .find(|capability| capability.id == ui_capability_id)
+        .ok_or_else(|| plugin_capability_not_found(&metadata.id, ui_capability_id))?;
+    if capability.kind != "ui_extension" && capability.kind != "client_extension" {
+        return Err(TingError::PermissionDenied(
+            "Bridge source must be a UI capability".to_string(),
+        ));
+    }
+    Ok(capability)
+}
+
+fn require_ui_bridge_capability(
+    metadata: &PluginMetadata,
+    ui_capability_id: &str,
+    target_capability_id: &str,
+) -> Result<()> {
+    let source = find_ui_bridge_capability(metadata, ui_capability_id)?;
+    let bridge = ui_bridge(&source);
+    if bridge
+        .and_then(|bridge| bridge.get("allow_capability_invoke"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return Err(TingError::PermissionDenied(
+            "Capability invocation is disabled for this view".to_string(),
+        ));
+    }
+
+    let declared = bridge
+        .and_then(|bridge| bridge.get("capabilities"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|id| id.trim() == target_capability_id);
+    if target_capability_id != source.id && !declared {
+        return Err(TingError::PermissionDenied(
+            "Capability is not allowed for this view".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_ui_bridge_host_method(
+    metadata: &PluginMetadata,
+    ui_capability_id: &str,
+    method: &str,
+) -> Result<()> {
+    let source = find_ui_bridge_capability(metadata, ui_capability_id)?;
+    let declared = ui_bridge(&source)
+        .and_then(|bridge| bridge.get("host_methods"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|candidate| candidate.trim() == method);
+    if !declared {
+        return Err(TingError::PermissionDenied(
+            "Host method is not allowed for this view".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn require_unbridged_client_capability(capability: &PluginCapability) -> Result<()> {
+    if capability.kind == "content_processor" {
+        return Ok(());
+    }
+    Err(TingError::PermissionDenied(
+        "Client capability invocation requires a declared UI bridge".to_string(),
     ))
 }
 
@@ -561,6 +798,21 @@ pub async fn invoke_plugin_capability(
         .into_iter()
         .find(|capability| capability.id == capability_id)
         .ok_or_else(|| plugin_capability_not_found(&id, &capability_id))?;
+
+    if let Some(ui_capability_id) = req.ui_capability_id.as_deref() {
+        let ui_grant = req.ui_grant.as_deref().ok_or_else(|| {
+            TingError::PermissionDenied("UI capability invocation requires a client grant".into())
+        })?;
+        require_plugin_client_grant(&state, &user, ui_grant, &id, Some(ui_capability_id)).await?;
+        require_ui_bridge_capability(&metadata, ui_capability_id, &capability_id)?;
+    } else {
+        if req.ui_grant.is_some() {
+            return Err(TingError::PermissionDenied(
+                "A client grant requires ui_capability_id".to_string(),
+            ));
+        }
+        require_unbridged_client_capability(&capability)?;
+    }
 
     let invoke_method = capability
         .invoke
@@ -624,11 +876,22 @@ pub async fn call_public_plugin_route(
     .await
 }
 
-/// Handler for GET /api/v1/plugin-assets/:id/*path - Serve sandboxed plugin UI assets.
+/// Handler for GET /api/v1/plugin-assets/:client_grant/:id/*path.
 pub async fn get_plugin_asset(
     State(state): State<AppState>,
-    Path((id, asset_path)): Path<(String, String)>,
+    Path((client_grant, id, asset_path)): Path<(String, String, String)>,
 ) -> Result<Response> {
+    let claims = decode_plugin_client_grant(&state, &client_grant).await?;
+    if claims.plugin_id != id {
+        return Err(TingError::PermissionDenied(
+            "Plugin client grant does not match this asset request".to_string(),
+        ));
+    }
+    let asset_user = state
+        .user_repo
+        .find_by_id(&claims.sub)
+        .await?
+        .ok_or_else(|| TingError::PermissionDenied("Plugin asset user no longer exists".into()))?;
     let plugin_info = state
         .plugin_manager
         .list_plugins()
@@ -636,11 +899,21 @@ pub async fn get_plugin_asset(
         .into_iter()
         .find(|plugin| plugin.id == id)
         .ok_or_else(|| TingError::PluginNotFound(id.clone()))?;
-    if plugin_info.state == PluginState::Failed {
+    if !plugin_assets_available(plugin_info.state) {
         return Err(TingError::PermissionDenied(format!(
-            "Plugin assets are unavailable for failed plugin {}",
+            "Plugin assets are unavailable for inactive plugin {}",
             id
         )));
+    }
+    let metadata = state
+        .plugin_manager
+        .get_plugin(&id)
+        .map_err(|_| TingError::PluginNotFound(id.clone()))?;
+    find_ui_bridge_capability(&metadata, &claims.capability_id)?;
+    if metadata.admin_only && asset_user.role != "admin" {
+        return Err(TingError::PermissionDenied(
+            "Administrator access is required for this plugin asset".to_string(),
+        ));
     }
 
     let plugin_root = state.plugin_manager.get_plugin_package_path(&id).await?;
@@ -670,22 +943,52 @@ pub async fn get_plugin_asset(
             asset_path
         )));
     }
+    if metadata.len() > MAX_PLUGIN_ASSET_BYTES {
+        return Err(TingError::InvalidRequest(format!(
+            "Plugin asset exceeds the {} MiB response limit: {}",
+            MAX_PLUGIN_ASSET_BYTES / (1024 * 1024),
+            asset_path
+        )));
+    }
 
     let content_type = mime_guess::from_path(&canonical_asset)
         .first_or_octet_stream()
         .to_string();
-    let body = tokio::fs::read(&canonical_asset)
+    let file = tokio::fs::File::open(&canonical_asset)
         .await
         .map_err(TingError::IoError)?;
+    let body = Body::from_stream(ReaderStream::new(file));
 
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
-        .header("Content-Type", content_type)
-        .header("Cache-Control", "public, max-age=300")
-        .body(Body::from(body))
-        .map_err(|e| {
-            TingError::PluginExecutionError(format!("Plugin asset response failed: {}", e))
-        })
+        .header("Content-Type", &content_type)
+        .header("Content-Length", metadata.len().to_string())
+        .header("Cache-Control", "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .header("X-Frame-Options", "DENY")
+        .header("Referrer-Policy", "no-referrer")
+        .header("Content-Security-Policy", PLUGIN_ASSET_CSP);
+    if let Some(disposition) = plugin_document_disposition(&content_type) {
+        response = response.header("Content-Disposition", disposition);
+    }
+
+    response.body(body).map_err(|e| {
+        TingError::PluginExecutionError(format!("Plugin asset response failed: {}", e))
+    })
+}
+
+fn plugin_document_disposition(content_type: &str) -> Option<&'static str> {
+    match content_type.split(';').next().unwrap_or_default().trim() {
+        "text/html" => Some("attachment; filename=plugin-ui.html"),
+        "application/xhtml+xml" | "application/xml" | "text/xml" => {
+            Some("attachment; filename=plugin-document.xml")
+        }
+        _ => None,
+    }
+}
+
+fn plugin_assets_available(state: PluginState) -> bool {
+    matches!(state, PluginState::Active | PluginState::Executing)
 }
 
 /// Handler for POST /api/v1/plugin-route-signatures - Generate a signed public plugin route URL.
@@ -782,6 +1085,15 @@ pub async fn invoke_plugin_host(
         .get_plugin(&req.plugin_id)
         .map_err(|_| TingError::PluginNotFound(req.plugin_id.clone()))?;
     require_plugin_visible(&metadata, &user)?;
+    require_plugin_client_grant(
+        &state,
+        &user,
+        &req.ui_grant,
+        &req.plugin_id,
+        Some(&req.ui_capability_id),
+    )
+    .await?;
+    require_ui_bridge_host_method(&metadata, &req.ui_capability_id, &req.method)?;
 
     let host_user = PluginHostUser {
         id: user.id.clone(),
@@ -1237,8 +1549,6 @@ pub async fn scraper_search(
     State(state): State<AppState>,
     Json(request): Json<ScraperSearchRequest>,
 ) -> Result<impl IntoResponse> {
-    tracing::info!("Received scraper search request: {:?}", request);
-
     let page = request.page.unwrap_or(1);
     let page_size = request.page_size.unwrap_or(20);
     let mut search_params = request.search_params.unwrap_or_default();
@@ -1278,6 +1588,7 @@ pub async fn get_store_plugins(
 ) -> Result<impl IntoResponse> {
     let is_admin = is_admin_user(&user);
     let plugins = if query.refresh.unwrap_or(false) {
+        require_plugin_system_write(&user)?;
         state.plugin_manager.refresh_store_plugins().await?
     } else {
         state.plugin_manager.get_store_plugins().await?
@@ -1295,7 +1606,11 @@ pub struct StorePluginsQuery {
 }
 
 /// Handler for POST /api/v1/store/cache/clear - Clear plugin store cache
-pub async fn clear_plugin_cache(State(state): State<AppState>) -> Result<impl IntoResponse> {
+pub async fn clear_plugin_cache(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> Result<impl IntoResponse> {
+    require_plugin_system_write(&user)?;
     state.plugin_manager.clear_store_cache().await;
     Ok(Json(serde_json::json!({
         "message": "Plugin cache cleared successfully"
@@ -1308,6 +1623,8 @@ pub async fn install_store_plugin(
     user: AuthUser,
     Json(req): Json<InstallStorePluginRequest>,
 ) -> Result<Response> {
+    require_plugin_system_write(&user)?;
+
     if let Some(plugin) = state
         .plugin_manager
         .get_store_plugins()
@@ -1365,6 +1682,67 @@ mod tests {
     use super::*;
     use axum::body::to_bytes;
     use serde_json::json;
+
+    fn test_user(role: &str) -> AuthUser {
+        AuthUser {
+            user_id: "user-1".to_string(),
+            id: "user-1".to_string(),
+            username: "alice".to_string(),
+            role: role.to_string(),
+        }
+    }
+
+    #[test]
+    fn plugin_system_writes_require_admin_role() {
+        let error = require_plugin_system_write(&test_user("user")).unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+
+        require_plugin_system_write(&test_user("admin")).unwrap();
+    }
+
+    #[test]
+    fn plugin_client_grants_require_a_valid_signature_type_and_expiry() {
+        let secret = "test-plugin-grant-secret".to_string();
+        let claims = PluginClientGrantClaims {
+            sub: "user-1".to_string(),
+            plugin_id: "demo@1.0.0".to_string(),
+            capability_id: "demo.panel".to_string(),
+            exp: (Utc::now() + chrono::Duration::minutes(5)).timestamp() as usize,
+            grant_type: "plugin_client".to_string(),
+        };
+        let grant = encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap();
+
+        let decoded =
+            decode_plugin_client_grant_with_secrets(&grant, &["old-secret".to_string(), secret])
+                .unwrap();
+        assert_eq!(decoded.sub, "user-1");
+        assert_eq!(decoded.capability_id, "demo.panel");
+
+        assert!(
+            decode_plugin_client_grant_with_secrets(&grant, &["wrong-secret".to_string()]).is_err()
+        );
+
+        let wrong_type = PluginClientGrantClaims {
+            grant_type: "access".to_string(),
+            ..claims
+        };
+        let wrong_type_grant = encode(
+            &Header::new(Algorithm::HS256),
+            &wrong_type,
+            &EncodingKey::from_secret("test-plugin-grant-secret".as_bytes()),
+        )
+        .unwrap();
+        assert!(decode_plugin_client_grant_with_secrets(
+            &wrong_type_grant,
+            &["test-plugin-grant-secret".to_string()]
+        )
+        .is_err());
+    }
 
     #[test]
     fn plugin_route_path_strips_api_prefixes() {
@@ -1618,6 +1996,125 @@ mod tests {
         );
         assert!(normalize_plugin_asset_path("data/secret.json").is_err());
         assert!(normalize_plugin_asset_path("ui/../plugin.yml").is_err());
+    }
+
+    #[test]
+    fn plugin_document_assets_are_forced_to_download() {
+        assert!(plugin_document_disposition("text/html; charset=utf-8").is_some());
+        assert!(plugin_document_disposition("application/xhtml+xml").is_some());
+        assert!(plugin_document_disposition("image/svg+xml").is_none());
+        assert!(plugin_document_disposition("text/css").is_none());
+    }
+
+    #[test]
+    fn plugin_assets_are_only_served_for_active_runtime_states() {
+        assert!(plugin_assets_available(PluginState::Active));
+        assert!(plugin_assets_available(PluginState::Executing));
+        assert!(!plugin_assets_available(PluginState::Discovered));
+        assert!(!plugin_assets_available(PluginState::Unloaded));
+        assert!(!plugin_assets_available(PluginState::Failed));
+    }
+
+    fn bridge_test_metadata() -> PluginMetadata {
+        parse_plugin_metadata_content(
+            r#"
+id: bridge-test
+name: Bridge Test
+version: 1.0.0
+author: Ting Reader
+description: Bridge policy test
+entry_point: index.js
+runtime: javascript
+capabilities:
+  - id: assistant.panel
+    kind: ui_extension
+    render:
+      mode: web_container
+      entry: ui/index.html
+      bridge:
+        capabilities: [assistant.tools]
+        host_methods: [books.list, user_settings.get]
+  - id: disabled.panel
+    kind: client_extension
+    render:
+      mode: web_container
+      entry: ui/disabled.html
+      bridge:
+        allow_capability_invoke: false
+  - id: assistant.tools
+    kind: tool_provider
+  - id: background.task
+    kind: task_handler
+"#,
+            "bridge-test.yml",
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn ui_bridge_allows_current_and_declared_capabilities_only() {
+        let metadata = bridge_test_metadata();
+
+        require_ui_bridge_capability(&metadata, "assistant.panel", "assistant.panel").unwrap();
+        require_ui_bridge_capability(&metadata, "assistant.panel", "assistant.tools").unwrap();
+
+        let error = require_ui_bridge_capability(&metadata, "assistant.panel", "background.task")
+            .unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+    }
+
+    #[test]
+    fn ui_bridge_can_disable_capability_invocation() {
+        let metadata = bridge_test_metadata();
+
+        let error = require_ui_bridge_capability(&metadata, "disabled.panel", "disabled.panel")
+            .unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+    }
+
+    #[test]
+    fn ui_bridge_allows_only_declared_host_methods() {
+        let metadata = bridge_test_metadata();
+
+        require_ui_bridge_host_method(&metadata, "assistant.panel", "books.list").unwrap();
+        let error = require_ui_bridge_host_method(&metadata, "assistant.panel", "database.update")
+            .unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+    }
+
+    #[test]
+    fn ui_bridge_rejects_non_ui_sources() {
+        let metadata = bridge_test_metadata();
+
+        let error = require_ui_bridge_capability(&metadata, "background.task", "background.task")
+            .unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+    }
+
+    #[test]
+    fn unbridged_client_invocation_only_allows_content_processors() {
+        let capability = |id: &str, kind: &str| PluginCapability {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            invoke: None,
+            extra: Default::default(),
+        };
+        let content_processor = capability("document.processor", "content_processor");
+        assert!(require_unbridged_client_capability(&content_processor).is_ok());
+
+        for kind in [
+            "tool_provider",
+            "task_handler",
+            "event_handler",
+            "metadata_provider",
+            "ui_extension",
+        ] {
+            let target = capability("unsafe.direct", kind);
+            assert!(
+                require_unbridged_client_capability(&target).is_err(),
+                "unexpectedly allowed unbridged {kind}"
+            );
+        }
     }
 
     #[tokio::test]

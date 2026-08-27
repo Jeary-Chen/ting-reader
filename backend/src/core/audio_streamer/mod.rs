@@ -399,7 +399,7 @@ impl AudioStreamer {
         // Get file size
         let file_size = std::fs::metadata(file_path)
             .map(|m| m.len())
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
 
         // Determine content type
         let format = self.detect_format(file_path)?;
@@ -417,18 +417,18 @@ impl AudioStreamer {
         // Read file data
         let mut file = tokio::fs::File::open(file_path)
             .await
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
 
         // Seek to start position
         file.seek(SeekFrom::Start(start))
             .await
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
 
         // Read the requested range
         let mut buffer = vec![0u8; content_length as usize];
         file.read_exact(&mut buffer)
             .await
-            .map_err(|e| TingError::IoError(e))?;
+            .map_err(TingError::IoError)?;
 
         info!(
             "Streaming audio: {:?}, range: {:?}, size: {}",

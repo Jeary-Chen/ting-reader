@@ -6,6 +6,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+use anyhow::{bail, Result};
+use semver::Version;
+
+const MAX_NPM_PACKAGE_NAME_LEN: usize = 214;
+const MAX_NPM_VERSION_SPEC_LEN: usize = 128;
+
 /// npm dependency specification
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NpmDependency {
@@ -17,6 +23,79 @@ impl NpmDependency {
     pub fn new(name: String, version: String) -> Self {
         Self { name, version }
     }
+
+    pub fn validate(&self) -> Result<()> {
+        validate_registry_package_name(&self.name)?;
+        validate_registry_version_range(&self.version)
+    }
+}
+
+pub(super) fn validate_registry_package_name(name: &str) -> Result<()> {
+    if name.is_empty() || name.len() > MAX_NPM_PACKAGE_NAME_LEN {
+        bail!("npm package name must be 1-{MAX_NPM_PACKAGE_NAME_LEN} bytes");
+    }
+    if name.trim() != name || name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        bail!("npm package name must be lowercase and cannot contain whitespace");
+    }
+
+    let valid_segment = |segment: &str| {
+        !segment.is_empty()
+            && segment.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"._-".contains(&byte)
+            })
+            && segment
+                .as_bytes()
+                .first()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+            && segment
+                .as_bytes()
+                .last()
+                .is_some_and(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+    };
+
+    if let Some(scoped) = name.strip_prefix('@') {
+        let mut parts = scoped.split('/');
+        let scope = parts.next().unwrap_or_default();
+        let package = parts.next().unwrap_or_default();
+        if parts.next().is_some() || !valid_segment(scope) || !valid_segment(package) {
+            bail!("invalid scoped npm package name '{name}'");
+        }
+    } else if name.contains('/') || !valid_segment(name) {
+        bail!("invalid npm package name '{name}'");
+    }
+
+    Ok(())
+}
+
+pub(super) fn validate_registry_version_range(version: &str) -> Result<()> {
+    if version.is_empty() || version.len() > MAX_NPM_VERSION_SPEC_LEN || version.trim() != version {
+        bail!("npm version must be a non-empty exact SemVer without surrounding whitespace");
+    }
+
+    let lower = version.to_ascii_lowercase();
+    const FORBIDDEN_PREFIXES: &[&str] = &[
+        "file:",
+        "link:",
+        "git:",
+        "git+",
+        "http:",
+        "https:",
+        "workspace:",
+        "npm:",
+    ];
+    if FORBIDDEN_PREFIXES
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
+        || version.contains('/')
+        || version.contains('\\')
+        || version.contains(':')
+    {
+        bail!("npm dependency versions must be exact registry SemVer versions");
+    }
+
+    Version::parse(version)
+        .map(|_| ())
+        .map_err(|error| anyhow::anyhow!("invalid exact npm registry SemVer '{version}': {error}"))
 }
 
 /// Vulnerability severity levels
@@ -29,7 +108,7 @@ pub enum VulnerabilitySeverity {
 }
 
 impl VulnerabilitySeverity {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "low" => Some(Self::Low),
             "moderate" => Some(Self::Moderate),

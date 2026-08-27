@@ -23,7 +23,23 @@ export const getRuntimeUrl = (path: string, activeUrl?: string | null) => {
   return `${baseUrl}${normalizedPath}`;
 };
 
-export const getRuntimeAssetUrl = (path: string) => getRuntimeUrl(path);
+export const getRuntimeAssetUrl = (path: string) => {
+  if (/^(?:https?:|data:|blob:)/i.test(path)) return path;
+
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const gatewayBasePath = getGatewayBasePath();
+  if (gatewayBasePath) return `${gatewayBasePath}${normalizedPath}`;
+
+  const configuredBase = import.meta.env.BASE_URL || '/';
+  if (/^https?:\/\//i.test(configuredBase)) {
+    return new URL(normalizedPath.slice(1), configuredBase).toString();
+  }
+  if (configuredBase.startsWith('/')) {
+    return `${configuredBase.replace(/\/$/, '')}${normalizedPath}`;
+  }
+
+  return normalizedPath;
+};
 
 export const getRuntimePath = (path: string) => {
   const gatewayBasePath = getGatewayBasePath();

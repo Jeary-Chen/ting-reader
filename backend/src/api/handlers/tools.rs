@@ -36,11 +36,9 @@ pub async fn generate_regex(Json(req): Json<GenerateRegexRequest>) -> Result<imp
     // 2. Find title range
     // Search for title AFTER the number if possible
     let search_start = num_range.as_ref().map(|r| r.end).unwrap_or(0);
-    let mut title_range = if let Some(idx) = filename[search_start..].find(&title_str) {
-        Some((search_start + idx)..(search_start + idx + title_str.len()))
-    } else {
-        None
-    };
+    let mut title_range = filename[search_start..]
+        .find(&title_str)
+        .map(|idx| (search_start + idx)..(search_start + idx + title_str.len()));
 
     if title_range.is_none() {
         // Search from beginning if not found after

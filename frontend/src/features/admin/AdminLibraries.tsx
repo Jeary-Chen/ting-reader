@@ -16,7 +16,8 @@ import {
   ChevronDown,
   RotateCcw,
   Rss,
-  Globe
+  Globe,
+  Clock3
 } from 'lucide-react';
 import HelpHint from '../../shared/ui/HelpHint';
 import ScraperConfigurator from './ScraperConfigurator';
@@ -29,6 +30,8 @@ const DEFAULT_SCRAPER_CONFIG = JSON.stringify({
   metadata_writing_enabled: false,
   disable_watcher: false,
   cloud_mode: false,
+  scheduled_sync_enabled: false,
+  scheduled_sync_interval: 'daily',
 }, null, 2);
 
 interface StorageRoot {
@@ -295,9 +298,14 @@ const AdminLibraries: React.FC = () => {
         payload.root_path = formData.root_path;
       }
 
-      if (formData.type !== 'rss' && formData.scraper_config) {
+      if (formData.scraper_config) {
         try {
-          payload.scraper_config = JSON.parse(formData.scraper_config);
+          const scraperConfig = JSON.parse(formData.scraper_config) as Record<string, unknown>;
+          if (formData.type === 'webdav') {
+            scraperConfig.nfo_writing_enabled = false;
+            scraperConfig.metadata_writing_enabled = false;
+          }
+          payload.scraper_config = scraperConfig;
         } catch {
           alert(t('adminLibraries.jsonInvalid'));
           return;
@@ -347,6 +355,32 @@ const AdminLibraries: React.FC = () => {
     } finally {
       setScanning(null);
     }
+  };
+
+  const parsedFormConfig = (() => {
+    try {
+      return formData.scraper_config ? JSON.parse(formData.scraper_config) as Record<string, unknown> : {};
+    } catch {
+      return {};
+    }
+  })();
+  const scheduledSyncEnabled = parsedFormConfig.scheduled_sync_enabled === true;
+  const scheduledSyncInterval = typeof parsedFormConfig.scheduled_sync_interval === 'string'
+    ? parsedFormConfig.scheduled_sync_interval
+    : 'daily';
+  const updateFormConfig = (updates: Record<string, unknown>) => {
+    setFormData((current) => {
+      let config: Record<string, unknown>;
+      try {
+        config = current.scraper_config ? JSON.parse(current.scraper_config) : {};
+      } catch {
+        config = {};
+      }
+      return {
+        ...current,
+        scraper_config: JSON.stringify({...config, ...updates}, null, 2),
+      };
+    });
   };
 
   const handleDelete = async (id: string) => {
@@ -790,6 +824,39 @@ const AdminLibraries: React.FC = () => {
                   </div>
                 )}
 
+                {(formData.type === 'webdav' || formData.type === 'rss') && (
+                  <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Clock3 size={17} className="text-primary-500" />
+                      <label htmlFor="scheduled-sync" className="text-sm font-bold text-slate-600 dark:text-slate-400">
+                        {t('adminLibraries.scheduledSync')}
+                      </label>
+                      <HelpHint text={t('adminLibraries.scheduledSyncHelp')} />
+                    </div>
+                    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+                      <input
+                        id="scheduled-sync"
+                        type="checkbox"
+                        checked={scheduledSyncEnabled}
+                        onChange={(event) => updateFormConfig({scheduled_sync_enabled: event.target.checked})}
+                        className="h-4 w-4 cursor-pointer rounded text-primary-600 focus:ring-primary-500"
+                      />
+                      <select
+                        aria-label={t('adminLibraries.syncFrequency')}
+                        value={scheduledSyncInterval}
+                        disabled={!scheduledSyncEnabled}
+                        onChange={(event) => updateFormConfig({scheduled_sync_interval: event.target.value})}
+                        className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 outline-none focus:ring-2 focus:ring-primary-500 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                      >
+                        <option value="hourly">{t('adminLibraries.hourly')}</option>
+                        <option value="daily">{t('adminLibraries.daily')}</option>
+                        <option value="weekly">{t('adminLibraries.weekly')}</option>
+                        <option value="monthly">{t('adminLibraries.monthly')}</option>
+                      </select>
+                    </div>
+                  </div>
+                )}
+
                 {formData.type !== 'rss' && (
                 <div className="space-y-4 pt-2 border-t border-slate-100 dark:border-slate-800">
                   <div className="flex items-center justify-between">
@@ -797,16 +864,18 @@ const AdminLibraries: React.FC = () => {
                       <label className="text-sm font-bold text-slate-600 dark:text-slate-400">{t('adminLibraries.scraperConfig')}</label>
                       <HelpHint text={t('adminLibraries.scraperHelp')} />
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setShowJsonEditor(!showJsonEditor)}
-                      className="text-xs text-primary-600 font-bold hover:underline"
-                    >
-                      {showJsonEditor ? t('adminLibraries.simpleMode') : t('adminLibraries.advancedMode')}
-                    </button>
+                    {formData.type !== 'webdav' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowJsonEditor(!showJsonEditor)}
+                        className="text-xs text-primary-600 font-bold hover:underline"
+                      >
+                        {showJsonEditor ? t('adminLibraries.simpleMode') : t('adminLibraries.advancedMode')}
+                      </button>
+                    )}
                   </div>
 
-                  {!showJsonEditor ? (
+                  {!showJsonEditor || formData.type === 'webdav' ? (
                     <ScraperConfigurator
                       configStr={formData.scraper_config}
                       sources={scraperSources}

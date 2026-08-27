@@ -4,7 +4,6 @@ use super::super::shared::{
 };
 use super::super::{LibraryScanner, MetadataSource, ScanStatus};
 use crate::core::error::Result;
-use crate::core::nfo_manager::BookMetadata;
 use crate::db::repository::Repository;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -12,25 +11,70 @@ use std::path::PathBuf;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+fn configured_metadata_rank(config: &crate::db::models::ScraperConfig, source: &str) -> usize {
+    let default_priority = ["local_metadata", "audio_metadata", "scraper"];
+    if config.metadata_priority.is_empty() {
+        default_priority
+            .iter()
+            .position(|candidate| *candidate == source)
+            .unwrap_or(usize::MAX - 1)
+    } else {
+        config
+            .metadata_priority
+            .iter()
+            .position(|candidate| candidate == source)
+            .unwrap_or(usize::MAX - 1)
+    }
+}
+
+fn choose_metadata_value<T>(
+    local: Option<T>,
+    audio: Option<T>,
+    local_rank: usize,
+    audio_rank: usize,
+) -> (Option<T>, usize) {
+    match (local, audio) {
+        (Some(_), Some(audio)) if audio_rank < local_rank => (Some(audio), audio_rank),
+        (Some(local), Some(_)) => (Some(local), local_rank),
+        (Some(local), None) => (Some(local), local_rank),
+        (None, Some(audio)) => (Some(audio), audio_rank),
+        (None, None) => (None, usize::MAX),
+    }
+}
+
+pub(super) struct WebDavBookContext<'a> {
+    pub(super) library: &'a crate::db::models::Library,
+    pub(super) dir_url: &'a str,
+    pub(super) file_urls: &'a [String],
+    pub(super) metadata_files: &'a [String],
+    pub(super) scraper_config: &'a crate::db::models::ScraperConfig,
+    pub(super) full_scan: bool,
+    pub(super) existing_info: Option<(String, i32, Option<String>)>,
+    pub(super) fallback_title_override: Option<&'a str>,
+}
+
 impl LibraryScanner {
     pub(super) async fn process_webdav_book(
         &self,
-        library: &crate::db::models::Library,
-        dir_url: &str,
-        file_urls: &[String],
-        metadata_files: &[String],
-        _task_id: Option<&str>,
-        scraper_config: &crate::db::models::ScraperConfig,
-        existing_info: Option<(String, i32, Option<String>)>,
-        fallback_title_override: Option<&str>,
+        context: WebDavBookContext<'_>,
     ) -> Result<(String, ScanStatus)> {
+        let WebDavBookContext {
+            library,
+            dir_url,
+            file_urls,
+            metadata_files,
+            scraper_config,
+            full_scan,
+            existing_info,
+            fallback_title_override,
+        } = context;
         // Derive title from directory name
         // Decode URL to handle percent-encoded characters (e.g. Chinese)
         let decoded_url = self.decode_url_path(dir_url);
         let dir_name_title = decoded_url
             .trim_end_matches('/')
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or("Unknown Book")
             .to_string();
         let (cleaned_dir_name, _) = self.text_cleaner.clean_chapter_title(&dir_name_title, None);
@@ -55,16 +99,7 @@ impl LibraryScanner {
             std::fs::create_dir_all(&temp_book_dir).ok();
         }
 
-        // Extended metadata fields for WebDAV (to be written to metadata.json)
-        let mut subtitle: Option<String> = None;
         let mut published_year: Option<String> = None;
-        let mut published_date: Option<String> = None;
-        let mut publisher: Option<String> = None;
-        let mut isbn: Option<String> = None;
-        let mut asin: Option<String> = None;
-        let mut language: Option<String> = None;
-        let mut explicit: bool = false;
-        let mut abridged: bool = false;
         let mut json_tags: Vec<String> = Vec::new();
         let mut json_series: Vec<String> = Vec::new();
         let mut chapter_title_template: Option<String> = None;
@@ -111,37 +146,27 @@ impl LibraryScanner {
                 }
 
                 // 只在第一个文件或缺失时提取基本元数据
-                if index == 0 || album.is_empty() {
-                    if !a.is_empty() {
-                        album = a;
-                    }
+                if (index == 0 || album.is_empty()) && !a.is_empty() {
+                    album = a;
                 }
-                if index == 0 || title.is_empty() {
-                    if !t.is_empty() {
-                        title = t;
-                    }
+                if (index == 0 || title.is_empty()) && !t.is_empty() {
+                    title = t;
                 }
-                if index == 0 || author.is_none() {
-                    if au.is_some() {
-                        author = au;
-                    }
+                if (index == 0 || author.is_none()) && au.is_some() {
+                    author = au;
                 }
-                if index == 0 || narrator.is_none() {
-                    if n.is_some() {
-                        narrator = n;
-                    }
+                if (index == 0 || narrator.is_none()) && n.is_some() {
+                    narrator = n;
                 }
                 if index == 0 {
                     duration = d;
                 }
 
                 // 封面：如果还没有找到，继续尝试
-                if scraper_config.extract_audio_cover && cover_url.is_none() {
-                    if c.is_some() {
-                        cover_url = c;
-                        if index > 0 {
-                            tracing::info!("Found cover in WebDAV file #{}", index + 1);
-                        }
+                if scraper_config.extract_audio_cover && cover_url.is_none() && c.is_some() {
+                    cover_url = c;
+                    if index > 0 {
+                        tracing::info!("Found cover in WebDAV file #{}", index + 1);
                     }
                 }
 
@@ -160,6 +185,20 @@ impl LibraryScanner {
         } else {
             (String::new(), String::new(), None, None, None, 0)
         };
+        let audio_album = (!meta_album.trim().is_empty()).then_some(meta_album.clone());
+        let audio_author = meta_author.clone();
+        let audio_narrator = meta_narrator.clone();
+        let audio_cover_url = meta_cover_url.clone();
+        let mut local_album: Option<String> = None;
+        let mut local_author: Option<String> = None;
+        let mut local_narrator: Option<String> = None;
+        let mut local_cover_url: Option<String> = None;
+        let mut local_description: Option<String> = None;
+        let mut local_genre: Option<String> = None;
+
+        let has_metadata_json = metadata_files
+            .iter()
+            .any(|url| url.split('/').next_back().unwrap_or_default() == "metadata.json");
 
         // Try to fetch and parse metadata.json and book.nfo from WebDAV
         // We do this by downloading them to temp_book_dir
@@ -168,9 +207,12 @@ impl LibraryScanner {
             let key = self.encryption_key.as_deref().unwrap_or(&[0u8; 32]);
 
             for meta_url in metadata_files {
-                let filename = meta_url.split('/').last().unwrap_or_default();
+                let filename = meta_url.split('/').next_back().unwrap_or_default();
                 if filename == "metadata.json" || filename == "book.nfo" {
                     let temp_path = temp_book_dir.join(filename);
+                    // Do not let a sidecar cached by an earlier scan survive after
+                    // it has been removed from the remote folder.
+                    let _ = tokio::fs::remove_file(&temp_path).await;
                     if let Ok((mut reader, _)) = storage
                         .get_webdav_reader(library, meta_url, None, key)
                         .await
@@ -186,40 +228,39 @@ impl LibraryScanner {
         // Read metadata.json if downloaded
         let mut json_chapters: Option<Vec<crate::core::metadata_writer::AudiobookshelfChapter>> =
             None;
-        if let Ok(Some(json_meta)) =
-            crate::core::metadata_writer::read_metadata_json(&temp_book_dir)
-        {
-            if let Some(t) = json_meta.title {
-                meta_album = t;
-            }
-            if !json_meta.authors.is_empty() {
-                meta_author = Some(json_meta.authors[0].clone());
-            }
-            if !json_meta.narrators.is_empty() {
-                meta_narrator = Some(json_meta.narrators[0].clone());
-            }
-            if !json_meta.series.is_empty() {
-                json_series = json_meta.series;
-            }
-            if !json_meta.tags.is_empty() {
-                json_tags = json_meta.tags;
-            }
+        if has_metadata_json {
+            if let Ok(Some(json_meta)) =
+                crate::core::metadata_writer::read_metadata_json(&temp_book_dir)
+            {
+                if let Some(t) = json_meta.title {
+                    if !t.trim().is_empty() {
+                        local_album = Some(t);
+                    }
+                }
+                if !json_meta.authors.is_empty() {
+                    local_author = Some(json_meta.authors[0].clone());
+                }
+                if !json_meta.narrators.is_empty() {
+                    local_narrator = Some(json_meta.narrators[0].clone());
+                }
+                if !json_meta.series.is_empty() {
+                    json_series = json_meta.series;
+                }
+                if !json_meta.tags.is_empty() {
+                    json_tags = json_meta.tags;
+                }
+                if !json_meta.genres.is_empty() {
+                    local_genre = Some(json_meta.genres.join(","));
+                }
+                local_description = json_meta.description;
 
-            // Store chapters for later use
-            if !json_meta.chapters.is_empty() {
-                json_chapters = Some(json_meta.chapters);
-            }
+                // Store chapters for later use
+                if !json_meta.chapters.is_empty() {
+                    json_chapters = Some(json_meta.chapters);
+                }
 
-            // Extended
-            subtitle = json_meta.subtitle;
-            published_year = json_meta.published_year;
-            published_date = json_meta.published_date;
-            publisher = json_meta.publisher;
-            isbn = json_meta.isbn;
-            asin = json_meta.asin;
-            language = json_meta.language;
-            explicit = json_meta.explicit;
-            abridged = json_meta.abridged;
+                published_year = json_meta.published_year;
+            }
         }
 
         // Read book.nfo if downloaded (merge, lower priority than json usually, but let's check)
@@ -228,17 +269,23 @@ impl LibraryScanner {
         let nfo_path = temp_book_dir.join("book.nfo");
         if nfo_path.exists() {
             if let Ok(nfo_meta) = self.nfo_manager.read_book_nfo(&nfo_path) {
-                if meta_album.is_empty() && !nfo_meta.title.is_empty() {
-                    meta_album = nfo_meta.title;
+                if local_album.is_none() && !nfo_meta.title.is_empty() {
+                    local_album = Some(nfo_meta.title);
                 }
-                if meta_author.is_none() && !nfo_meta.author.is_none() {
-                    meta_author = nfo_meta.author;
+                if local_author.is_none() && nfo_meta.author.is_some() {
+                    local_author = nfo_meta.author;
                 }
-                if meta_narrator.is_none() && !nfo_meta.narrator.is_none() {
-                    meta_narrator = nfo_meta.narrator;
+                if local_narrator.is_none() && nfo_meta.narrator.is_some() {
+                    local_narrator = nfo_meta.narrator;
                 }
-                if meta_cover_url.is_none() && !nfo_meta.cover_url.is_none() {
-                    meta_cover_url = nfo_meta.cover_url;
+                if local_cover_url.is_none() && nfo_meta.cover_url.is_some() {
+                    local_cover_url = nfo_meta.cover_url;
+                }
+                if local_description.is_none() {
+                    local_description = nfo_meta.intro;
+                }
+                if local_genre.is_none() && !nfo_meta.genre.items.is_empty() {
+                    local_genre = Some(nfo_meta.genre.items.join(","));
                 }
             }
         }
@@ -246,13 +293,13 @@ impl LibraryScanner {
         // Also check if there's a local cover image directly in the webdav folder
         // Download it to temp_book_dir so the proxy can serve it as a local file.
         // Storing the raw WebDAV URL doesn't work because the frontend/proxy lacks WebDAV auth.
-        if meta_cover_url.is_none() {
+        if local_cover_url.is_none() {
             if let Some(storage) = &self.storage_service {
                 let key = self.encryption_key.as_deref().unwrap_or(&[0u8; 32]);
                 for meta_url in metadata_files {
                     let filename = meta_url
                         .split('/')
-                        .last()
+                        .next_back()
                         .unwrap_or_default()
                         .to_lowercase();
                     if [
@@ -265,7 +312,7 @@ impl LibraryScanner {
                     .contains(&filename.as_str())
                     {
                         // Download cover image to temp_book_dir
-                        let original_ext = meta_url.split('.').last().unwrap_or("jpg");
+                        let original_ext = meta_url.split('.').next_back().unwrap_or("jpg");
                         let temp_cover_path = temp_book_dir.join(format!("cover.{}", original_ext));
                         if !temp_cover_path.exists() {
                             if let Ok((mut reader, _)) = storage
@@ -284,7 +331,7 @@ impl LibraryScanner {
                             }
                         }
                         if temp_cover_path.exists() {
-                            meta_cover_url =
+                            local_cover_url =
                                 Some(temp_cover_path.to_string_lossy().replace('\\', "/"));
                         }
                         break;
@@ -293,10 +340,38 @@ impl LibraryScanner {
             }
         }
 
+        let local_rank = configured_metadata_rank(scraper_config, "local_metadata");
+        let audio_rank = configured_metadata_rank(scraper_config, "audio_metadata");
+        let scraper_rank = configured_metadata_rank(scraper_config, "scraper");
+        let (selected_album, title_rank) =
+            choose_metadata_value(local_album, audio_album, local_rank, audio_rank);
+        let (selected_author, author_rank) =
+            choose_metadata_value(local_author, audio_author, local_rank, audio_rank);
+        let (selected_narrator, narrator_rank) =
+            choose_metadata_value(local_narrator, audio_narrator, local_rank, audio_rank);
+        let (selected_cover, cover_rank) =
+            choose_metadata_value(local_cover_url, audio_cover_url, local_rank, audio_rank);
+        meta_album = selected_album.unwrap_or_default();
+        meta_author = selected_author;
+        meta_narrator = selected_narrator;
+        meta_cover_url = selected_cover;
+        let description_rank = if local_description.is_some() {
+            local_rank
+        } else {
+            usize::MAX
+        };
+        let tags_rank = if json_tags.is_empty() {
+            usize::MAX
+        } else {
+            local_rank
+        };
+
         let mut book_title;
         let source;
 
-        // Title Selection Logic: Priority Local Metadata > ID3 > Fallback
+        // Title selection follows the library setting. metadata.json participates
+        // as the local metadata source, but the filename option remains an
+        // explicit user override.
         if scraper_config.use_filename_as_title {
             book_title = fallback_title_override
                 .filter(|value| !value.trim().is_empty())
@@ -335,15 +410,15 @@ impl LibraryScanner {
             author: meta_author.or(Some("Unknown".to_string())),
             narrator: meta_narrator,
             cover_url: meta_cover_url,
-            description: None,
+            description: local_description,
             created_at: chrono::Utc::now().to_rfc3339(),
             path: path.clone(),
             hash: path_hash.clone(),
             theme_color: None,
             skip_intro: 0,
             skip_outro: 0,
-            tags: None,
-            genre: None,
+            tags: (!json_tags.is_empty()).then(|| json_tags.join(",")),
+            genre: local_genre,
             year: published_year.as_ref().and_then(|y| y.parse::<i32>().ok()),
             manual_corrected: if manual_corrected { 1 } else { 0 },
             match_pattern: None,
@@ -375,7 +450,7 @@ impl LibraryScanner {
                         let decoded_file_url = self.decode_url_path(file_url);
                         let filename = decoded_file_url
                             .split('/')
-                            .last()
+                            .next_back()
                             .unwrap_or("chapter")
                             .to_string();
                         let title = filename
@@ -416,75 +491,55 @@ impl LibraryScanner {
                     .await
                 {
                     Ok(detail) => {
-                        if !detail.title.is_empty() {
-                            // Overwrite if ID3 is empty OR if we are using Fallback source (Directory Name)
-                            // Requirement: "If using directory name as book name, then scraped data > ID3 data"
-                            if source == MetadataSource::Fallback || meta_album.trim().is_empty() {
-                                book.title = Some(detail.title);
-                            }
+                        if !scraper_config.use_filename_as_title
+                            && !detail.title.is_empty()
+                            && (source == MetadataSource::Fallback || scraper_rank < title_rank)
+                        {
+                            book.title = Some(detail.title);
                         }
 
-                        if !detail.author.is_empty() {
-                            // Overwrite if Fallback source (Directory Name) OR if current is Unknown/None
-                            if source == MetadataSource::Fallback
-                                || book.author.as_deref() == Some("Unknown")
+                        if !detail.author.is_empty()
+                            && (book.author.as_deref() == Some("Unknown")
                                 || book.author.is_none()
-                            {
-                                book.author = Some(detail.author);
-                            }
+                                || scraper_rank < author_rank)
+                        {
+                            book.author = Some(detail.author);
                         }
 
-                        if !detail.intro.is_empty() {
-                            if source == MetadataSource::Fallback || book.description.is_none() {
-                                book.description = Some(detail.intro);
-                            }
+                        if !detail.intro.is_empty()
+                            && (book.description.is_none() || scraper_rank < description_rank)
+                        {
+                            book.description = Some(detail.intro);
                         }
 
-                        if detail.cover_url.is_some() {
-                            if source == MetadataSource::Fallback || book.cover_url.is_none() {
-                                book.cover_url = detail.cover_url;
-                            }
+                        if detail.cover_url.is_some()
+                            && (book.cover_url.is_none() || scraper_rank < cover_rank)
+                        {
+                            book.cover_url = detail.cover_url;
                         }
 
-                        if detail.narrator.is_some() {
-                            if source == MetadataSource::Fallback || book.narrator.is_none() {
-                                book.narrator = detail.narrator;
-                            }
+                        if detail.narrator.is_some()
+                            && (book.narrator.is_none() || scraper_rank < narrator_rank)
+                        {
+                            book.narrator = detail.narrator;
                         }
 
-                        if !detail.tags.is_empty() {
-                            if source == MetadataSource::Fallback || book.tags.is_none() {
-                                book.tags = Some(detail.tags.join(","));
-                            }
+                        if !detail.tags.is_empty()
+                            && (book.tags.is_none() || scraper_rank < tags_rank)
+                        {
+                            book.tags = Some(detail.tags.join(","));
                         }
 
-                        // Capture extended metadata for metadata.json
-                        if detail.subtitle.is_some() {
-                            subtitle = detail.subtitle;
-                        }
-                        if detail.published_year.is_some() {
-                            published_year = detail.published_year;
-                        }
-                        if detail.published_date.is_some() {
-                            published_date = detail.published_date;
-                        }
-                        if detail.publisher.is_some() {
-                            publisher = detail.publisher;
-                        }
-                        if detail.isbn.is_some() {
-                            isbn = detail.isbn;
-                        }
-                        if detail.asin.is_some() {
-                            asin = detail.asin;
-                        }
-                        if detail.language.is_some() {
-                            language = detail.language;
-                        }
-                        if detail.explicit {
-                            explicit = true;
-                        }
-                        if detail.abridged {
-                            abridged = true;
+                        // Fill the year from the scraper only when local metadata
+                        // is missing or the configured priority prefers scraping.
+                        if let Some(year) = detail
+                            .published_year
+                            .as_deref()
+                            .and_then(|value| value.parse::<i32>().ok())
+                        {
+                            if book.year.is_none() || scraper_rank < local_rank {
+                                book.year = Some(year);
+                            }
                         }
                         chapter_title_template = detail.chapter_title_template;
                         if !detail.chapter_titles.is_empty() {
@@ -597,7 +652,7 @@ impl LibraryScanner {
                 .iter()
                 .map(|file_url| {
                     let decoded_file_url = self.decode_url_path(file_url);
-                    let filename = decoded_file_url.split('/').last().unwrap_or_default();
+                    let filename = decoded_file_url.split('/').next_back().unwrap_or_default();
                     std::path::Path::new(filename)
                         .file_stem()
                         .and_then(|stem| stem.to_str())
@@ -628,7 +683,7 @@ impl LibraryScanner {
             let decoded_file_url = self.decode_url_path(file_url);
             let filename = decoded_file_url
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("chapter")
                 .to_string();
             let ai_chapter_title = ai_chapter_titles
@@ -797,15 +852,17 @@ impl LibraryScanner {
             }
         }
 
-        // Handle deleted chapters
-        if let Ok(existing_chapters) = self.chapter_repo.find_by_book(&book_id).await {
-            for ch in existing_chapters {
-                if !processed_chapter_ids.contains(&ch.id) {
-                    info!("Removing missing chapter from DB: {:?}", ch.path);
-                    if let Err(e) = self.chapter_repo.delete(&ch.id).await {
-                        warn!("Failed to delete missing chapter {}: {}", ch.id, e);
-                    } else {
-                        chapters_changed = true;
+        // Only a full scan has enough information to prove a remote chapter was deleted.
+        if full_scan {
+            if let Ok(existing_chapters) = self.chapter_repo.find_by_book(&book_id).await {
+                for ch in existing_chapters {
+                    if !processed_chapter_ids.contains(&ch.id) {
+                        info!("Removing missing chapter from DB: {:?}", ch.path);
+                        if let Err(e) = self.chapter_repo.delete(&ch.id).await {
+                            warn!("Failed to delete missing chapter {}: {}", ch.id, e);
+                        } else {
+                            chapters_changed = true;
+                        }
                     }
                 }
             }
@@ -904,108 +961,9 @@ impl LibraryScanner {
             }
         }
 
-        // Fetch all chapters to generate metadata.json correctly with cumulative times
-        let chapters = self.chapter_repo.find_by_book(&book_id).await?;
-        let abs_chapters = crate::core::metadata_writer::build_audiobookshelf_chapters(chapters);
-
-        // Write metadata.json to temp dir for WebDAV book
-        if scraper_config.metadata_writing_enabled {
-            // Try to preserve existing tags from temp dir if metadata.json exists
-            if let Ok(Some(existing_meta)) =
-                crate::core::metadata_writer::read_metadata_json(&temp_book_dir)
-            {
-                if !existing_meta.tags.is_empty() {
-                    json_tags = existing_meta.tags;
-                }
-            }
-
-            let extended_meta = crate::core::metadata_writer::ExtendedMetadata {
-                subtitle: subtitle.clone(),
-                published_year,
-                published_date,
-                publisher,
-                isbn,
-                asin,
-                language,
-                explicit,
-                abridged,
-                tags: json_tags,
-            };
-
-            // Get series for this book
-            let series_list = self
-                .series_repo
-                .find_series_by_book(&book_id)
-                .await
-                .unwrap_or_default();
-            let mut series_titles = Vec::new();
-            for series in series_list {
-                let formatted_title =
-                    if let Ok(books) = self.series_repo.find_books_by_series(&series.id).await {
-                        if let Some((_, order)) = books.iter().find(|(b, _)| b.id == book_id) {
-                            format!("{} #{}", series.title, order)
-                        } else {
-                            series.title.clone()
-                        }
-                    } else {
-                        series.title.clone()
-                    };
-
-                if !series_titles.contains(&formatted_title) {
-                    series_titles.push(formatted_title);
-                }
-            }
-
-            let metadata_json = crate::core::metadata_writer::AudiobookshelfMetadata::new(
-                &book,
-                abs_chapters,
-                extended_meta,
-                series_titles,
-            );
-
-            if let Err(e) =
-                crate::core::metadata_writer::write_metadata_json(&temp_book_dir, &metadata_json)
-            {
-                warn!(
-                    "Failed to write metadata.json for WebDAV book {}: {}",
-                    book_title, e
-                );
-            }
-        }
-
-        // Write NFO to temp dir for WebDAV book
-        if scraper_config.nfo_writing_enabled {
-            let mut metadata = BookMetadata::new(
-                book.title.clone().unwrap_or_default(),
-                "ting-reader".to_string(),
-                book.id.clone(),
-                0,
-            );
-            metadata.author = book.author.clone();
-            metadata.narrator = book.narrator.clone();
-            metadata.intro = book.description.clone();
-            metadata.cover_url = book.cover_url.clone();
-            metadata.subtitle = subtitle; // Pass subtitle to NFO if available
-
-            if let Some(tags_str) = &book.tags {
-                metadata.tags.items = tags_str
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
-
-            if let Err(e) = self
-                .nfo_manager
-                .write_book_nfo_to_dir(&temp_book_dir, &metadata)
-            {
-                warn!(
-                    "Failed to write NFO for WebDAV book {}: {}",
-                    book.title.unwrap_or_default(),
-                    e
-                );
-            }
-        }
+        // WebDAV libraries are read-only for metadata sidecars. Existing
+        // metadata.json/book.nfo files were read above, but scanning never
+        // writes them back or mutates the remote library.
 
         let final_status = match status {
             ScanStatus::Created => ScanStatus::Created,

@@ -13,7 +13,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use tracing::{debug, info, warn};
 
-type WebDavFileEntry = (String, Option<chrono::DateTime<chrono::Utc>>);
+type WebDavFileEntry = (
+    String,
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<String>,
+);
 
 impl LibraryScanner {
     /// Scan a WebDAV library
@@ -30,13 +34,15 @@ impl LibraryScanner {
             ));
         }
 
-        let mut scan_result = ScanResult::default();
-        scan_result.start_time = Some(std::time::Instant::now());
+        let mut scan_result = ScanResult {
+            start_time: Some(std::time::Instant::now()),
+            ..Default::default()
+        };
         self.update_progress_key(task_id, "scan.webdav.scanning", serde_json::json!({}))
             .await;
 
         // 1. List files recursively
-        let files = self.list_webdav_files(library, task_id).await?;
+        let files = self.list_webdav_files(library, task_id, mode).await?;
 
         let supported_extensions = self.get_supported_extensions().await;
 
@@ -48,7 +54,7 @@ impl LibraryScanner {
         // so that cover images, metadata.json, book.nfo etc. are available during processing.
         const METADATA_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "json", "nfo"];
 
-        for (file_url, last_mod) in files {
+        for (file_url, last_mod, validator) in files {
             // Check extension
             if let Some(ext_pos) = file_url.rfind('.') {
                 let ext = file_url[ext_pos + 1..].to_lowercase();
@@ -61,7 +67,7 @@ impl LibraryScanner {
                         dir_groups
                             .entry(parent)
                             .or_default()
-                            .push((file_url, last_mod));
+                            .push((file_url, last_mod, validator));
                     }
                 }
             }
@@ -82,6 +88,20 @@ impl LibraryScanner {
 
         // Pre-fetch all books for lookup and deletion handling
         let prefetched = self.prefetch_books(&library.id).await;
+        let chapter_counts = if mode.is_full() {
+            HashMap::new()
+        } else {
+            self.chapter_repo
+                .count_by_library(&library.id)
+                .await
+                .unwrap_or_default()
+        };
+        let cached_book_states = self
+            .scan_state_repo
+            .find_by_library_kind(&library.id, "webdav_book")
+            .await
+            .unwrap_or_default();
+        let scan_config_fingerprint = webdav_scan_config_fingerprint(scraper_config);
 
         let mut book_path_map: HashMap<String, (String, i32, Option<String>)> = HashMap::new();
         let mut book_hash_map: HashMap<String, (String, i32, Option<String>)> = HashMap::new();
@@ -97,7 +117,9 @@ impl LibraryScanner {
         }
 
         let mut found_book_ids: HashSet<String> = HashSet::new();
+        let mut live_book_state_paths: HashSet<String> = HashSet::new();
         let mut absorbed_range_book_ids: HashMap<String, String> = HashMap::new();
+        let mut pending_book_states = Vec::new();
         let last_scanned = if mode.is_full() {
             None
         } else if let Some(ref date_str) = library.last_scanned_at {
@@ -108,34 +130,40 @@ impl LibraryScanner {
             None
         };
 
-        for (dir_url, mut file_entries) in dir_groups {
-            // Check cancellation
-            self.check_cancellation(task_id).await?;
-
+        for (dir_url, file_entries) in dir_groups {
             processed_count += 1;
+            let report_progress = processed_count == 1
+                || processed_count % 16 == 0
+                || processed_count == total_groups;
+            if report_progress {
+                self.check_cancellation(task_id).await?;
+            }
             // Extract directory name from URL for logging
             let dir_name = self.webdav_url_name(&dir_url);
 
-            self.update_progress_key(
-                task_id,
-                "scan.item.processing",
-                serde_json::json!({
-                    "current": processed_count,
-                    "total": total_groups,
-                    "name": dir_name,
-                }),
-            )
-            .await;
-
-            // Sort file entries naturally by URL
-            file_entries.sort_by(|a, b| natord::compare(&a.0, &b.0));
+            if report_progress {
+                self.update_progress_key(
+                    task_id,
+                    "scan.item.processing",
+                    serde_json::json!({
+                        "current": processed_count,
+                        "total": total_groups,
+                        "name": dir_name,
+                    }),
+                )
+                .await;
+            }
 
             // Extract just URLs for processing
             let mut file_urls: Vec<String> = Vec::new();
             let mut metadata_files: Vec<String> = Vec::new();
 
-            for (url, _) in file_entries.iter() {
-                let ext = url.split('.').last().unwrap_or_default().to_lowercase();
+            for (url, _, _) in file_entries.iter() {
+                let ext = url
+                    .split('.')
+                    .next_back()
+                    .unwrap_or_default()
+                    .to_lowercase();
                 if ["json", "nfo", "jpg", "png", "jpeg", "webp"].contains(&ext.as_str()) {
                     metadata_files.push(url.clone());
                 } else {
@@ -147,6 +175,7 @@ impl LibraryScanner {
             if file_urls.is_empty() {
                 continue;
             }
+            live_book_state_paths.insert(dir_url.clone());
 
             // Calculate directory hash for lookup
             let mut hasher = Sha256::new();
@@ -169,20 +198,48 @@ impl LibraryScanner {
                 }
             }
 
+            let existing_lock_state = existing_info
+                .as_ref()
+                .map(|(_, manual_corrected, _)| *manual_corrected)
+                .unwrap_or(0);
+            let state_config_fingerprint =
+                format!("{}:lock={}", scan_config_fingerprint, existing_lock_state);
+            let directory_fingerprint = webdav_directory_fingerprint(&file_entries);
+            if let (Some((book_id, _, _)), Some(directory_fingerprint)) =
+                (existing_info.as_ref(), directory_fingerprint.as_ref())
+            {
+                if cached_book_states.get(&dir_url).is_some_and(|state| {
+                    state.fingerprint == *directory_fingerprint
+                        && state.config_fingerprint.as_deref()
+                            == Some(state_config_fingerprint.as_str())
+                }) {
+                    scan_result.total_books += 1;
+                    scan_result.books_skipped += 1;
+                    found_book_ids.insert(book_id.clone());
+                    continue;
+                }
+            }
+
+            // Natural ordering is needed only when this book will enter title
+            // checks or chapter reconciliation. Cache hits above stay linear.
+            file_urls.sort_by(|a, b| natord::compare(a, b));
+            metadata_files.sort_by(|a, b| natord::compare(a, b));
+
             // Incremental Check: Skip if book exists and no files modified since last scan
             if let (Some((id, _, _)), Some(last_scan_time)) = (&existing_info, last_scanned) {
                 // Check if file count changed (new files added or removed)
                 let current_file_count = file_urls.len();
-                let existing_chapters =
-                    self.chapter_repo.find_by_book(id).await.unwrap_or_default();
-                let existing_chapter_count = existing_chapters.len();
+                let existing_chapter_count = chapter_counts
+                    .get(id)
+                    .map(|counts| counts.total)
+                    .unwrap_or_default();
 
                 // Determine latest modification time in this directory
-                let max_mtime = file_entries.iter().filter_map(|(_, mtime)| *mtime).max();
+                let max_mtime = file_entries.iter().filter_map(|(_, mtime, _)| *mtime).max();
 
                 let mtime_count = file_entries
                     .iter()
-                    .filter(|(_, mtime)| mtime.is_some())
+                    .filter(|(_, mtime, _)| mtime.is_some())
                     .count();
 
                 info!(
@@ -203,6 +260,11 @@ impl LibraryScanner {
                 if current_file_count == existing_chapter_count {
                     if let Some(latest) = max_mtime {
                         if latest <= last_scan_time {
+                            // Only load chapter rows when the cheap timestamp/count
+                            // checks say the book is otherwise unchanged and a
+                            // title-rule recheck may actually be needed.
+                            let existing_chapters =
+                                self.chapter_repo.find_by_book(id).await.unwrap_or_default();
                             let should_reprocess_chapter_titles = self
                                 .book_repo
                                 .find_by_id(id)
@@ -229,18 +291,17 @@ impl LibraryScanner {
                                 scan_result.total_books += 1;
                                 scan_result.books_skipped += 1;
                                 found_book_ids.insert(id.clone());
-                                if let Some(series_info) = inferred_series.get(&dir_url) {
-                                    if let Err(e) = self
-                                        .link_book_to_inferred_series(&library.id, id, series_info)
-                                        .await
-                                    {
-                                        warn!(
-                                            url = %dir_url,
-                                            book_id = %id,
-                                            error = %e,
-                                            "Failed to link skipped WebDAV book to inferred series"
-                                        );
-                                    }
+                                if let Some(directory_fingerprint) = directory_fingerprint.as_ref()
+                                {
+                                    let mut state = crate::db::repository::LibraryScanState::new(
+                                        &library.id,
+                                        &dir_url,
+                                        "webdav_book",
+                                        directory_fingerprint,
+                                    );
+                                    state.config_fingerprint =
+                                        Some(state_config_fingerprint.clone());
+                                    pending_book_states.push(state);
                                 }
                                 info!(book_id = %id, url = %dir_url, "Skipping up-to-date WebDAV book");
                                 continue;
@@ -264,18 +325,18 @@ impl LibraryScanner {
             }
 
             match self
-                .process_webdav_book(
+                .process_webdav_book(processing::WebDavBookContext {
                     library,
-                    &dir_url,
-                    &file_urls,
-                    &metadata_files,
-                    task_id,
+                    dir_url: &dir_url,
+                    file_urls: &file_urls,
+                    metadata_files: &metadata_files,
                     scraper_config,
+                    full_scan: mode.is_full(),
                     existing_info,
-                    coalesced_range_dirs
+                    fallback_title_override: coalesced_range_dirs
                         .get(&dir_url)
                         .and_then(|range_dirs| range_dirs.title_override.as_deref()),
-                )
+                })
                 .await
             {
                 Ok((book_id, status)) => {
@@ -285,28 +346,45 @@ impl LibraryScanner {
                         ScanStatus::Updated => scan_result.books_updated += 1,
                         ScanStatus::Skipped => scan_result.books_skipped += 1,
                     }
+                    if status != ScanStatus::Skipped {
+                        scan_result.changed_book_ids.insert(book_id.clone());
+                    }
                     found_book_ids.insert(book_id.clone());
-                    if let Some(series_info) = inferred_series.get(&dir_url) {
-                        if let Err(e) = self
-                            .link_book_to_inferred_series(&library.id, &book_id, series_info)
-                            .await
-                        {
-                            warn!(
-                                url = %dir_url,
-                                book_id = %book_id,
-                                error = %e,
-                                "Failed to link WebDAV book to inferred series"
-                            );
+                    if let Some(directory_fingerprint) = directory_fingerprint {
+                        let mut state = crate::db::repository::LibraryScanState::new(
+                            &library.id,
+                            &dir_url,
+                            "webdav_book",
+                            directory_fingerprint,
+                        );
+                        state.config_fingerprint = Some(state_config_fingerprint);
+                        pending_book_states.push(state);
+                    }
+                    if status != ScanStatus::Skipped {
+                        if let Some(series_info) = inferred_series.get(&dir_url) {
+                            if let Err(e) = self
+                                .link_book_to_inferred_series(&library.id, &book_id, series_info)
+                                .await
+                            {
+                                warn!(
+                                    url = %dir_url,
+                                    book_id = %book_id,
+                                    error = %e,
+                                    "Failed to link WebDAV book to inferred series"
+                                );
+                            }
                         }
                     }
-                    if let Some(child_dirs) = coalesced_range_dirs.get(&dir_url) {
-                        for child_dir in &child_dirs.child_dirs {
-                            if let Some((child_book_id, manual_corrected, _)) =
-                                book_path_map.get(child_dir)
-                            {
-                                if child_book_id != &book_id && *manual_corrected == 0 {
-                                    absorbed_range_book_ids
-                                        .insert(child_book_id.clone(), book_id.clone());
+                    if status != ScanStatus::Skipped {
+                        if let Some(child_dirs) = coalesced_range_dirs.get(&dir_url) {
+                            for child_dir in &child_dirs.child_dirs {
+                                if let Some((child_book_id, manual_corrected, _)) =
+                                    book_path_map.get(child_dir)
+                                {
+                                    if child_book_id != &book_id && *manual_corrected == 0 {
+                                        absorbed_range_book_ids
+                                            .insert(child_book_id.clone(), book_id.clone());
+                                    }
                                 }
                             }
                         }
@@ -322,8 +400,9 @@ impl LibraryScanner {
                 }
             }
 
-            // Periodic garbage collection
-            self.plugin_manager.garbage_collect_all().await;
+            if processed_count % 25 == 0 {
+                self.plugin_manager.garbage_collect_all().await;
+            }
         }
 
         if let Some(merge_service) = &self.merge_service {
@@ -347,9 +426,22 @@ impl LibraryScanner {
             }
         }
 
-        // 3. Handle deletions via shared helper (no path-exists check for WebDAV)
+        // The listing helper returns only after it has reconstructed an
+        // authoritative complete view (from sync deltas, cached ETag subtrees,
+        // or a full traversal). Deletions are therefore safe in either mode.
         self.handle_book_deletions(&mut scan_result, &prefetched, &found_book_ids, false)
             .await;
+        let deleted_book_states = cached_book_states
+            .keys()
+            .filter(|path| !live_book_state_paths.contains(*path))
+            .cloned()
+            .collect();
+        self.scan_state_repo
+            .delete_many(&library.id, "webdav_book", deleted_book_states)
+            .await?;
+        self.scan_state_repo
+            .upsert_many(pending_book_states)
+            .await?;
 
         // Final garbage collection after scan
         self.plugin_manager.garbage_collect_all().await;
@@ -415,7 +507,7 @@ impl LibraryScanner {
             let decoded_file_url = self.decode_url_path(file_url);
             let filename = decoded_file_url
                 .split('/')
-                .last()
+                .next_back()
                 .unwrap_or("chapter")
                 .to_string();
 
@@ -609,6 +701,48 @@ impl LibraryScanner {
     }
 }
 
+fn webdav_directory_fingerprint(entries: &[WebDavFileEntry]) -> Option<String> {
+    if entries
+        .iter()
+        .any(|(_, modified, validator)| modified.is_none() && validator.is_none())
+    {
+        return None;
+    }
+
+    // Each entry is hashed independently, then combined commutatively. URLs
+    // are unique within a directory, so this is a stable multiset digest in
+    // O(F) without sorting every unchanged remote book.
+    let mut aggregate = [0u8; 32];
+    for (url, modified, validator) in entries {
+        let mut entry_hasher = Sha256::new();
+        entry_hasher.update(url.as_bytes());
+        entry_hasher.update([0]);
+        entry_hasher.update(
+            modified
+                .map(|value| value.timestamp_nanos_opt().unwrap_or_default())
+                .unwrap_or_default()
+                .to_le_bytes(),
+        );
+        entry_hasher.update(validator.as_deref().unwrap_or_default().as_bytes());
+        let digest = entry_hasher.finalize();
+        for (target, value) in aggregate.iter_mut().zip(digest) {
+            *target ^= value;
+        }
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update((entries.len() as u64).to_le_bytes());
+    hasher.update(aggregate);
+    Some(format!("{:x}", hasher.finalize()))
+}
+
+fn webdav_scan_config_fingerprint(config: &crate::db::models::ScraperConfig) -> String {
+    let serialized = serde_json::to_vec(config).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    hasher.update(serialized);
+    format!("{:x}", hasher.finalize())
+}
+
 fn webdav_parent_url(url: &str) -> Option<String> {
     let trimmed = url.trim_end_matches('/');
     let slash_index = trimmed.rfind('/')?;
@@ -616,4 +750,51 @@ fn webdav_parent_url(url: &str) -> Option<String> {
         return None;
     }
     Some(trimmed[..slash_index].to_string())
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::webdav_directory_fingerprint;
+
+    #[test]
+    fn directory_fingerprint_is_order_independent() {
+        let first = vec![
+            (
+                "https://example.test/book/001.mp3".to_string(),
+                None,
+                Some("etag-1".to_string()),
+            ),
+            (
+                "https://example.test/book/002.mp3".to_string(),
+                None,
+                Some("etag-2".to_string()),
+            ),
+        ];
+        let mut reversed = first.clone();
+        reversed.reverse();
+
+        assert_eq!(
+            webdav_directory_fingerprint(&first),
+            webdav_directory_fingerprint(&reversed)
+        );
+    }
+
+    #[test]
+    fn directory_fingerprint_changes_with_validator() {
+        let before = vec![(
+            "https://example.test/book/001.mp3".to_string(),
+            None,
+            Some("etag-1".to_string()),
+        )];
+        let after = vec![(
+            "https://example.test/book/001.mp3".to_string(),
+            None,
+            Some("etag-2".to_string()),
+        )];
+
+        assert_ne!(
+            webdav_directory_fingerprint(&before),
+            webdav_directory_fingerprint(&after)
+        );
+    }
 }

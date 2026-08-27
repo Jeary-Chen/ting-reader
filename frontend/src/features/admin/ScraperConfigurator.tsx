@@ -134,7 +134,10 @@ const ScraperConfigurator: React.FC<Props> = ({ configStr, sources, onChange, li
     <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
       {/* Settings Toggles */}
       <div className="space-y-2 mb-4">
-        {/* NFO Toggle - Show for all libraries */}
+        {/* WebDAV libraries are read-only and never write sidecar metadata. */}
+        {libraryType !== 'webdav' && (
+          <>
+        {/* NFO Toggle */}
         <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
           <input
             type="checkbox"
@@ -151,7 +154,7 @@ const ScraperConfigurator: React.FC<Props> = ({ configStr, sources, onChange, li
           </div>
         </div>
 
-        {/* Metadata JSON Toggle - Show for all libraries */}
+        {/* Metadata JSON Toggle */}
         <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">
           <input
             type="checkbox"
@@ -167,6 +170,8 @@ const ScraperConfigurator: React.FC<Props> = ({ configStr, sources, onChange, li
             <HelpHint text={t('scraperConfig.writeMetadataJsonHelp')} />
           </div>
         </div>
+          </>
+        )}
 
         {/* Prefer Audio Title - Show for all libraries */}
         <div className="flex items-center gap-3 p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm">

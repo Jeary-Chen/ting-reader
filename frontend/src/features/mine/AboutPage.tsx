@@ -65,7 +65,13 @@ const AboutPage: React.FC = () => {
     if (checkingBackendUpdate || !backendVersion) return;
     setCheckingBackendUpdate(true);
     try {
-      const { data } = await apiClient.get("/api/system/check-update");
+      const { data } = await apiClient.get<UpdateInfo>("/api/system/check-update", {
+        params: { fresh: "1" },
+        headers: {
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
       const remoteVersion = data.version.replace(/^v/, "");
       const currentVersion = backendVersion.replace(/^v/, "");
 

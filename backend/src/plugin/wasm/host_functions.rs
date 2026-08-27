@@ -4,6 +4,8 @@
 //! that let WASM plugins make HTTP requests via a blocking reqwest client.
 
 use super::plugin::PluginState;
+use crate::plugin::logger::{emit_plugin_log, PluginLogLevel};
+use crate::plugin::types::PluginLogSource;
 use std::time::Duration;
 use wasmtime::*;
 
@@ -38,9 +40,9 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Err(_) => return -2,
                 };
 
-                tracing::info!("Plugin requested URL: {}", url);
+                log_http_request(caller.data(), "GET", url);
                 if !is_network_allowed(&caller.data().allowed_domains, url) {
-                    tracing::warn!(url = %url, "WASM plugin network access denied");
+                    log_network_denied(caller.data(), "GET", url);
                     return ERR_PERMISSION_DENIED;
                 }
 
@@ -74,13 +76,7 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Err(_) => return -6,
                 };
 
-                if let Ok(body_str) = std::str::from_utf8(&body) {
-                    tracing::info!(
-                        "Plugin received response (length={}): {:.200}...",
-                        body.len(),
-                        body_str
-                    );
-                }
+                log_http_response(caller.data(), &body);
 
                 let handle = (caller.data().http_responses.len() as u32) + 1;
                 caller.data_mut().http_responses.insert(handle, body);
@@ -114,9 +110,9 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                 };
                 let req_body = data[body_ptr as usize..(body_ptr + body_len) as usize].to_vec();
 
-                tracing::info!("Plugin POST request URL: {}", url);
+                log_http_request(caller.data(), "POST", url);
                 if !is_network_allowed(&caller.data().allowed_domains, url) {
-                    tracing::warn!(url = %url, "WASM plugin network access denied");
+                    log_network_denied(caller.data(), "POST", url);
                     return ERR_PERMISSION_DENIED;
                 }
 
@@ -153,13 +149,7 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Ok(Err(e)) => return e,
                     Err(_) => return -6,
                 };
-                if let Ok(body_str) = std::str::from_utf8(&body) {
-                    tracing::info!(
-                        "Plugin received response (length={}): {:.200}...",
-                        body.len(),
-                        body_str
-                    );
-                }
+                log_http_response(caller.data(), &body);
                 let handle = (caller.data().http_responses.len() as u32) + 1;
                 caller.data_mut().http_responses.insert(handle, body);
                 handle as i32
@@ -197,9 +187,9 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Err(_) => return -2,
                 };
 
-                tracing::info!("Plugin GET (auth) request URL: {}", url);
+                log_http_request(caller.data(), "GET", url);
                 if !is_network_allowed(&caller.data().allowed_domains, url) {
-                    tracing::warn!(url = %url, "WASM plugin network access denied");
+                    log_network_denied(caller.data(), "GET", url);
                     return ERR_PERMISSION_DENIED;
                 }
 
@@ -235,13 +225,7 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Ok(Err(e)) => return e,
                     Err(_) => return -6,
                 };
-                if let Ok(body_str) = std::str::from_utf8(&body) {
-                    tracing::info!(
-                        "Plugin received response (length={}): {:.200}...",
-                        body.len(),
-                        body_str
-                    );
-                }
+                log_http_response(caller.data(), &body);
                 let handle = (caller.data().http_responses.len() as u32) + 1;
                 caller.data_mut().http_responses.insert(handle, body);
                 handle as i32
@@ -294,9 +278,9 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     vec![]
                 };
 
-                tracing::info!("Plugin custom request URL: {} Method: {}", url, method);
+                log_http_request(caller.data(), method, url);
                 if !is_network_allowed(&caller.data().allowed_domains, url) {
-                    tracing::warn!(url = %url, "WASM plugin network access denied");
+                    log_network_denied(caller.data(), method, url);
                     return ERR_PERMISSION_DENIED;
                 }
 
@@ -354,13 +338,7 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
                     Ok(Err(e)) => return e,
                     Err(_) => return -6,
                 };
-                if let Ok(body_str) = std::str::from_utf8(&body) {
-                    tracing::info!(
-                        "Plugin received response (length={}): {:.200}...",
-                        body.len(),
-                        body_str
-                    );
-                }
+                log_http_response(caller.data(), &body);
                 let handle = (caller.data().http_responses.len() as u32) + 1;
                 caller.data_mut().http_responses.insert(handle, body);
                 handle as i32
@@ -527,6 +505,81 @@ pub fn add_host_functions(linker: &mut Linker<PluginState>) -> Result<(), anyhow
     Ok(())
 }
 
+fn emit_wasm_plugin_log(
+    state: &PluginState,
+    source: PluginLogSource,
+    level: PluginLogLevel,
+    message: &str,
+    fields: &serde_json::Value,
+) {
+    let Some(context) = state.plugin_log_context.as_ref() else {
+        return;
+    };
+    let mut context = context.clone();
+    context.source = source;
+    emit_plugin_log(&context, level, message, Some(fields));
+}
+
+fn log_http_request(state: &PluginState, method: &str, url: &str) {
+    let fields = serde_json::json!({
+        "op": "wasm.http.request",
+        "method": method,
+        "url": url,
+    });
+    let message = format!("Plugin {} request URL: {}", method, url);
+    emit_wasm_plugin_log(
+        state,
+        PluginLogSource::Gateway,
+        PluginLogLevel::Info,
+        &message,
+        &fields,
+    );
+}
+
+fn log_network_denied(state: &PluginState, method: &str, url: &str) {
+    let fields = serde_json::json!({
+        "op": "wasm.http.request",
+        "method": method,
+        "url": url,
+        "status": "denied",
+    });
+    emit_wasm_plugin_log(
+        state,
+        PluginLogSource::Security,
+        PluginLogLevel::Warn,
+        "WASM plugin network access denied",
+        &fields,
+    );
+}
+
+fn log_http_response(state: &PluginState, body: &[u8]) {
+    let preview = std::str::from_utf8(body)
+        .ok()
+        .map(|body| body.chars().take(200).collect::<String>());
+    let message = preview.as_ref().map_or_else(
+        || format!("Plugin received binary response (length={})", body.len()),
+        |preview| {
+            format!(
+                "Plugin received response (length={}): {}...",
+                body.len(),
+                preview
+            )
+        },
+    );
+    let fields = serde_json::json!({
+        "op": "wasm.http.response",
+        "body_length": body.len(),
+        "body_preview": preview,
+    });
+    emit_wasm_plugin_log(
+        state,
+        PluginLogSource::Gateway,
+        PluginLogLevel::Info,
+        &message,
+        &fields,
+    );
+}
+
 fn read_wasm_bytes(
     caller: &mut Caller<'_, PluginState>,
     ptr: i32,
@@ -619,6 +672,71 @@ fn domain_matches(domain: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone, Default)]
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for CapturedGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for CapturedWriter {
+        type Writer = CapturedGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedGuard(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn wasm_http_activity_uses_plugin_log_target() {
+        let writer = CapturedWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .json()
+            .with_writer(writer.clone())
+            .finish();
+        let mut state = PluginState::default();
+        state.plugin_log_context = Some(crate::plugin::types::PluginLogContext {
+            plugin_id: "scraper-id".to_string(),
+            plugin_instance_id: "scraper-id@1.0.0".to_string(),
+            plugin_name: "Scraper".to_string(),
+            plugin_version: "1.0.0".to_string(),
+            runtime: "wasm".to_string(),
+            source: PluginLogSource::Gateway,
+        });
+
+        tracing::subscriber::with_default(subscriber, || {
+            log_http_request(&state, "GET", "https://example.com/search");
+        });
+
+        let output = String::from_utf8(writer.0.lock().unwrap().clone()).unwrap();
+        let event: serde_json::Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(
+            event.get("target").and_then(serde_json::Value::as_str),
+            Some("ting_reader::plugin::logger")
+        );
+        let fields = event.get("fields").unwrap();
+        assert_eq!(
+            fields.get("plugin_id").and_then(serde_json::Value::as_str),
+            Some("scraper-id")
+        );
+        assert!(fields
+            .get("plugin_fields")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| value.contains("wasm.http.request")));
+    }
 
     #[test]
     fn wasm_network_permission_denies_when_no_domains_declared() {

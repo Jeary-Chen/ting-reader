@@ -25,6 +25,8 @@ export type SignPluginRouteResponse = {
 
 export type InvokePluginHostRequest = {
   plugin_id: string;
+  ui_capability_id: string;
+  ui_grant: string;
   method: string;
   params?: unknown;
 };
@@ -90,10 +92,12 @@ export const invokePluginCapability = async <T = unknown>(
   pluginId: string,
   capabilityId: string,
   params: unknown = {},
+  uiCapabilityId?: string,
+  uiGrant?: string,
 ) => {
   const response = await apiClient.post<PluginCapabilityInvokeResult<T>>(
     `/api/v1/plugins/${encodeURIComponent(pluginId)}/capabilities/${encodeURIComponent(capabilityId)}/invoke`,
-    { params },
+    { params, ui_capability_id: uiCapabilityId, ui_grant: uiGrant },
   );
   return response.data.result;
 };

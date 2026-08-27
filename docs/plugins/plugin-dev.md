@@ -14,7 +14,7 @@ Ting Reader 插件开发的关键是：在 `plugin.yml` 声明 capability 和 pe
 不同运行时调用的是同一组系统能力，只是桥接方式不同：
 
 1. JavaScript 后台方法使用 `Ting.host.invoke(method, params)`。
-2. `web_container` UI 使用 `postMessage` 发送 `method: "host.invoke"`，客户端再转发到 `/api/v1/plugin-host/invoke`。
+2. `web_container` UI 使用 `postMessage` 发送 `method: "host.invoke"`，但只能调用当前 capability 的 `render.bridge.host_methods` 白名单；客户端转发后，后端还会再次校验权限。
 3. WASM 使用 `ting_env.host_invoke`，再通过 `host_response_size` 和 `host_read_body` 读取 JSON 结果。
 4. Native 动态库通过 `plugin_set_host_api` 接收 Host API，再调用 `host_invoke(method, params_json, result_json)`。
 
@@ -36,12 +36,15 @@ capabilities:
   - id: assistant.panel
     kind: ui_extension
     invoke: openAssistant
-    slot: global.floating_action
+    slots: [app.sidebar_page, global.floating_action]
     title: { zh: AI 助手, en: AI Assistant }
     icon: message-circle
     render:
       mode: web_container
       entry: ui/index.html
+      bridge:
+        capabilities: [books.tools]
+        host_methods: [user_settings.get]
 
   - id: books.tools
     kind: tool_provider
@@ -74,7 +77,7 @@ permissions:
 - 运行时文件不决定插件类型，`capabilities[].kind` 才决定插件能做什么。
 - 所有 HostGateway 调用都需要在 `permissions` 中声明对应权限；缺权限、缺用户上下文或越权访问都会被拒绝。
 
-详细 kind、slot、render mode、HTTP route、任务、事件和 UI 图标写法，请看：[插件能力声明](./capabilities.md)。HostGateway 方法参数、响应格式、Web 容器桥接、WASM/Native 错误码和权限表，请看：[HostGateway 能力调用详解](./hostgateway.md)。
+详细 kind、slot、render mode、HTTP route、任务、事件和 UI 图标写法，请看：[插件能力声明](./capabilities.md)。HostGateway 方法参数、响应格式、Web 容器桥接、WASM/Native 错误码和权限表，请看：[HostGateway 能力调用详解](./hostgateway.md)。从旧播放器入口和旧日志写法升级时，按[插件入口与日志迁移规范](./ui-logging-migration.md)逐项迁移。
 
 ## 4. 选择运行时
 
@@ -142,3 +145,5 @@ trpack verify dist/my-plugin.signed.tr
 安装器会检查 `.tr` 包格式、manifest、文件表、签名元数据、服务端版本要求、依赖插件和发布者身份。当前安装路径只接受有效 `.tr` 包；未签名包会被拒绝，未受信但签名有效的包需要用户确认后才能安装。同一个插件 id 如果来自不同发布者身份，需要先卸载旧插件再安装。
 
 不要把源码目录直接复制到服务端插件安装目录作为发布方式。安装 `.tr` 时宿主会写入 `.trpack/package.json` 和 `.trpack/signature.json`；启动发现插件时会重新校验这些元数据、文件大小和 sha256。直接改安装目录里的文件可能导致签名校验失败或启动时被跳过。开发调试后应重新 `trpack build`/`sign` 并通过插件管理页重装或升级。
+
+JavaScript 插件的 `npm_dependencies` 只允许标准 registry 包名和精确 SemVer 版本。发布包不要包含 `.npmrc`、`package-lock.json`、`npm-shrinkwrap.json`，也不要依赖 npm 生命周期脚本；完整约束和迁移方式见 [JavaScript 运行时开发指南](./js_runtime_guide.md#npm-依赖)。

@@ -231,6 +231,12 @@ pub struct UpdatePluginConfigResponse {
 /// Request body for invoking a declared plugin capability.
 #[derive(Debug, Deserialize)]
 pub struct InvokePluginCapabilityRequest {
+    /// UI capability that initiated this invocation. Required for all
+    /// client-triggered capabilities except the core document processor path.
+    pub ui_capability_id: Option<String>,
+    /// Server-signed grant binding the authenticated user, plugin instance,
+    /// and UI capability. Required whenever ui_capability_id is present.
+    pub ui_grant: Option<String>,
     /// Parameters passed to the plugin capability handler.
     #[serde(default)]
     pub params: serde_json::Value,
@@ -277,6 +283,10 @@ pub struct SignPluginRouteResponse {
 pub struct InvokePluginHostRequest {
     /// Plugin instance ID, usually metadata.id@version.
     pub plugin_id: String,
+    /// UI capability whose bridge declaration authorizes this method.
+    pub ui_capability_id: String,
+    /// Server-signed grant for the declared UI capability.
+    pub ui_grant: String,
     /// Stable HostGateway method name, e.g. books.list.
     pub method: String,
     /// Method parameters.
@@ -308,6 +318,9 @@ pub struct PluginCapabilityRegistrationResponse {
     /// Whether the plugin is only visible/callable by admin users.
     #[serde(default)]
     pub admin_only: bool,
+    /// Scoped signed grant used for this UI capability's assets and bridge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_grant: Option<String>,
     /// Declared capability.
     pub capability: PluginCapability,
 }

@@ -145,7 +145,7 @@ mod tests {
     fn test_decrypt_too_short_data_fails() {
         let key = test_key();
         // Create a base64 string that's too short (less than 12 bytes when decoded)
-        let short_data = general_purpose::STANDARD.encode(&[0u8; 5]);
+        let short_data = general_purpose::STANDARD.encode([0u8; 5]);
         let result = decrypt(&short_data, &key);
 
         assert!(result.is_err());

@@ -205,7 +205,7 @@ impl JwtKeyManager {
                 [],
                 |row| row.get(0),
             )
-            .map_err(|e| TingError::DatabaseError(e))?;
+            .map_err(TingError::DatabaseError)?;
 
         // 反序列化加密的密钥对
         let encrypted: EncryptedJwtKeyPair = serde_json::from_str(&encrypted_json)
@@ -236,7 +236,7 @@ impl JwtKeyManager {
             "INSERT OR REPLACE INTO system_settings (key, value, updated_at) VALUES ('jwt_keys', ?, CURRENT_TIMESTAMP)",
             [encrypted_json],
         )
-        .map_err(|e| TingError::DatabaseError(e))?;
+        .map_err(TingError::DatabaseError)?;
 
         Ok(())
     }

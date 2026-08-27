@@ -13,13 +13,10 @@ const defaultSlots: ClientExtensionSlot[] = ["global.panel"];
 const isClientExtensionSlot = (value: unknown): value is ClientExtensionSlot =>
   typeof value === "string" &&
   [
+    "app.sidebar_page",
     "global.floating_action",
     "global.panel",
-    "settings.section",
     "book.detail_action",
-    "reader.toolbar_action",
-    "reader.side_panel",
-    "reader.document_viewer",
   ].includes(value);
 
 const isRenderMode = (value: unknown): value is ClientExtensionRenderMode =>
@@ -42,9 +39,16 @@ const normalizeSlots = (extra: UiExtensionCapabilityExtra) => {
   const declaredSlots = [
     ...(Array.isArray(extra.slots) ? extra.slots : []),
     extra.slot,
-  ];
+  ].filter((slot) => typeof slot === "string");
   const slots = declaredSlots.filter(isClientExtensionSlot);
-  return slots.length > 0 ? slots : defaultSlots;
+  if (slots.length > 0) return slots;
+
+  // Explicit legacy or unknown declarations must not silently become global panels.
+  if (declaredSlots.length > 0) {
+    return [];
+  }
+
+  return defaultSlots;
 };
 
 const normalizeContexts = (extra: UiExtensionCapabilityExtra) =>
@@ -54,7 +58,10 @@ const normalizeContexts = (extra: UiExtensionCapabilityExtra) =>
       )
     : [];
 
-const localizedText = (value: unknown): string | undefined => {
+const localizedText = (
+  value: unknown,
+  locale?: string,
+): string | undefined => {
   if (typeof value === "string") {
     const trimmed = value.trim();
     return trimmed || undefined;
@@ -62,7 +69,11 @@ const localizedText = (value: unknown): string | undefined => {
   if (!value || typeof value !== "object") return undefined;
 
   const record = value as Record<string, unknown>;
+  const normalizedLocale = locale?.replace("_", "-");
+  const language = normalizedLocale?.split("-")[0];
   const candidates = [
+    normalizedLocale ? record[normalizedLocale] : undefined,
+    language ? record[language] : undefined,
     record["zh-CN"],
     record.zh,
     record["en-US"],
@@ -80,6 +91,7 @@ const localizedText = (value: unknown): string | undefined => {
 export const createClientExtensionDescriptor = (
   registration: CapabilityRegistrationLike,
   slot: ClientExtensionSlot,
+  locale?: string,
 ): ClientExtensionDescriptor => {
   const extra = capabilityExtra(registration);
   const render = renderConfig(extra);
@@ -95,10 +107,12 @@ export const createClientExtensionDescriptor = (
     id: `${registration.plugin_id}:${registration.capability.id}:${slot}`,
     pluginId: registration.plugin_id,
     pluginName: registration.plugin_name,
+    clientGrant: registration.client_grant,
     slot,
     renderMode,
     render,
-    title: localizedText(extra.title) || localizedText(extra.label),
+    title:
+      localizedText(extra.title, locale) || localizedText(extra.label, locale),
     icon: extra.icon,
     capability: registration.capability,
     priority: typeof extra.priority === "number" ? extra.priority : 100,
@@ -108,6 +122,7 @@ export const createClientExtensionDescriptor = (
 
 export const buildClientExtensionRegistry = (
   registrations: CapabilityRegistrationLike[],
+  locale?: string,
 ): ClientExtensionRegistrySnapshot => {
   const extensions = registrations
     .filter(
@@ -117,7 +132,7 @@ export const buildClientExtensionRegistry = (
     )
     .flatMap((registration) =>
       normalizeSlots(capabilityExtra(registration)).map((slot) =>
-        createClientExtensionDescriptor(registration, slot),
+        createClientExtensionDescriptor(registration, slot, locale),
       ),
     )
     .sort(

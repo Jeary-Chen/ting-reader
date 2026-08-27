@@ -11,11 +11,12 @@ use crate::core::services::ScraperService;
 use crate::core::text_cleaner::TextCleaner;
 use crate::core::StorageService;
 use crate::db::repository::{
-    BookRepository, ChapterRepository, LibraryRepository, Repository, SeriesRepository,
-    TaskRepository,
+    BookRepository, ChapterRepository, LibraryRepository, LibraryScanStateRepository, Repository,
+    SeriesRepository, TaskRepository,
 };
 use crate::plugin::manager::{FormatMethod, PluginManager};
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -48,14 +49,16 @@ pub enum ScanMode {
     Full,
 }
 
-impl ScanMode {
-    pub fn from_str(value: &str) -> Self {
+impl From<&str> for ScanMode {
+    fn from(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "full" | "force" | "rescan" => Self::Full,
             _ => Self::Incremental,
         }
     }
+}
 
+impl ScanMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Incremental => "incremental",
@@ -83,10 +86,21 @@ pub struct ScanResult {
     pub books_updated: usize,
     pub books_skipped: usize,
     pub books_deleted: usize,
+    pub changed_book_ids: HashSet<String>,
     pub failed_count: usize,
     pub errors: Vec<String>,
     pub start_time: Option<std::time::Instant>,
     pub end_time: Option<std::time::Instant>,
+}
+
+pub(crate) struct LocalLibraryScanContext<'a> {
+    library_id: &'a str,
+    path: &'a Path,
+    task_id: Option<&'a str>,
+    last_scanned: Option<chrono::DateTime<chrono::Utc>>,
+    scraper_config: &'a crate::db::models::ScraperConfig,
+    mode: ScanMode,
+    scan_paths: Option<&'a [PathBuf]>,
 }
 
 impl ScanResult {
@@ -97,6 +111,17 @@ impl ScanResult {
             std::time::Duration::default()
         }
     }
+}
+
+pub struct LibraryScannerDependencies {
+    pub book_repo: Arc<BookRepository>,
+    pub chapter_repo: Arc<ChapterRepository>,
+    pub library_repo: Arc<LibraryRepository>,
+    pub series_repo: Arc<SeriesRepository>,
+    pub text_cleaner: Arc<TextCleaner>,
+    pub nfo_manager: Arc<NfoManager>,
+    pub audio_streamer: Arc<AudioStreamer>,
+    pub plugin_manager: Arc<PluginManager>,
 }
 
 /// Library scanner service
@@ -110,6 +135,7 @@ pub struct LibraryScanner {
     pub(crate) nfo_manager: Arc<NfoManager>,
     pub(crate) audio_streamer: Arc<AudioStreamer>,
     pub(crate) plugin_manager: Arc<PluginManager>,
+    pub(crate) scan_state_repo: Arc<LibraryScanStateRepository>,
     pub(crate) scraper_service: Option<Arc<ScraperService>>,
     pub(crate) storage_service: Option<Arc<StorageService>>,
     pub(crate) merge_service: Option<Arc<MergeService>>,
@@ -119,16 +145,18 @@ pub struct LibraryScanner {
 
 impl LibraryScanner {
     /// Create a new library scanner
-    pub fn new(
-        book_repo: Arc<BookRepository>,
-        chapter_repo: Arc<ChapterRepository>,
-        library_repo: Arc<LibraryRepository>,
-        series_repo: Arc<SeriesRepository>,
-        text_cleaner: Arc<TextCleaner>,
-        nfo_manager: Arc<NfoManager>,
-        audio_streamer: Arc<AudioStreamer>,
-        plugin_manager: Arc<PluginManager>,
-    ) -> Self {
+    pub fn new(dependencies: LibraryScannerDependencies) -> Self {
+        let LibraryScannerDependencies {
+            book_repo,
+            chapter_repo,
+            library_repo,
+            series_repo,
+            text_cleaner,
+            nfo_manager,
+            audio_streamer,
+            plugin_manager,
+        } = dependencies;
+        let scan_state_repo = Arc::new(LibraryScanStateRepository::new(book_repo.db().clone()));
         Self {
             book_repo,
             chapter_repo,
@@ -139,6 +167,7 @@ impl LibraryScanner {
             nfo_manager,
             audio_streamer,
             plugin_manager,
+            scan_state_repo,
             scraper_service: None,
             storage_service: None,
             merge_service: None,
@@ -237,6 +266,21 @@ impl LibraryScanner {
         mode: ScanMode,
         task_id: Option<&str>,
     ) -> Result<ScanResult> {
+        self.scan_library_scoped(library_id, library_path, mode, task_id, None)
+            .await
+    }
+
+    /// Scan a library, optionally limiting local-library discovery to a set of
+    /// directories supplied by the filesystem watcher. Full scans always ignore
+    /// the scope and walk the complete library.
+    pub async fn scan_library_scoped(
+        &self,
+        library_id: &str,
+        library_path: &str,
+        mode: ScanMode,
+        task_id: Option<&str>,
+        scan_paths: Option<Vec<std::path::PathBuf>>,
+    ) -> Result<ScanResult> {
         info!(
             target: "audit::scan",
             message_key = "scan.started",
@@ -275,6 +319,53 @@ impl LibraryScanner {
             .and_then(|json| serde_json::from_str(json).ok())
             .unwrap_or_default();
 
+        let dirty_states = if library.library_type == "local" {
+            self.scan_state_repo
+                .find_by_library_kind(library_id, "local_dirty")
+                .await
+                .unwrap_or_default()
+        } else {
+            Default::default()
+        };
+        let library_root = Path::new(library_path);
+        let consumed_local_dirty: Vec<(String, String)> = dirty_states
+            .values()
+            .filter(|state| {
+                mode.is_full() || Path::new(&state.entry_path).starts_with(library_root)
+            })
+            .map(|state| (state.entry_path.clone(), state.fingerprint.clone()))
+            .collect();
+        let effective_scan_paths = if library.library_type == "local" && !mode.is_full() {
+            let mut paths = scan_paths.unwrap_or_default();
+            for state in dirty_states.values() {
+                let dirty_path = std::path::PathBuf::from(&state.entry_path);
+                if dirty_path.starts_with(library_root) {
+                    paths.push(dirty_path);
+                }
+            }
+
+            let has_baseline = self
+                .scan_state_repo
+                .find(library_id, library_path, "local_baseline")
+                .await?
+                .is_some()
+                || !self
+                    .scan_state_repo
+                    .find_by_library_kind(library_id, "local_file")
+                    .await?
+                    .is_empty();
+
+            if paths.is_empty() && !scraper_config.disable_watcher && has_baseline {
+                Some(Vec::new())
+            } else if paths.is_empty() {
+                None
+            } else {
+                Some(paths)
+            }
+        } else {
+            scan_paths
+        };
+
         let last_scanned = if mode.is_full() {
             None
         } else if let Some(ref date_str) = library.last_scanned_at {
@@ -308,9 +399,41 @@ impl LibraryScanner {
                 )));
             }
 
-            self.scan_local_library(library_id, path, task_id, last_scanned, &scraper_config)
+            if effective_scan_paths
+                .as_ref()
+                .is_some_and(|paths| paths.is_empty())
+            {
+                let total_books = self
+                    .book_repo
+                    .find_all_minimal_by_library(library_id)
+                    .await?
+                    .len();
+                ScanResult {
+                    total_books,
+                    books_skipped: total_books,
+                    start_time: Some(std::time::Instant::now()),
+                    end_time: Some(std::time::Instant::now()),
+                    ..Default::default()
+                }
+            } else {
+                self.scan_local_library(LocalLibraryScanContext {
+                    library_id,
+                    path,
+                    task_id,
+                    last_scanned,
+                    scraper_config: &scraper_config,
+                    mode,
+                    scan_paths: effective_scan_paths.as_deref(),
+                })
                 .await?
+            }
         };
+
+        if !consumed_local_dirty.is_empty() {
+            self.scan_state_repo
+                .delete_matching(library_id, "local_dirty", consumed_local_dirty)
+                .await?;
+        }
 
         // Update library last_scanned_at
         if let Err(e) = self.library_repo.update_last_scanned(library_id).await {
@@ -351,11 +474,23 @@ impl LibraryScanner {
         .await;
 
         // Trigger Merge Suggestions
-        if let Some(merge_service) = &self.merge_service {
-            self.update_progress_key(task_id, "scan.auto_merge.processing", serde_json::json!({}))
+        if !scan_result.changed_book_ids.is_empty() && scan_result.failed_count == 0 {
+            if let Some(merge_service) = &self.merge_service {
+                self.update_progress_key(
+                    task_id,
+                    "scan.auto_merge.processing",
+                    serde_json::json!({}),
+                )
                 .await;
-            if let Err(e) = merge_service.process_auto_merges().await {
-                warn!("Failed to process auto-merges: {}", e);
+                if let Err(e) = merge_service
+                    .process_auto_merges_for_library_books(
+                        library_id,
+                        &scan_result.changed_book_ids,
+                    )
+                    .await
+                {
+                    warn!("Failed to process auto-merges: {}", e);
+                }
             }
         }
 

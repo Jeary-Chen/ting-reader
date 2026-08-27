@@ -319,6 +319,8 @@
 
 `.tr` 包由 `trpack build` 生成，并会在安装前完成有效性校验。
 
+安装接口仅允许管理员调用。manifest 的 `id`、`name`、`version` 和 `entry_point` 会按安全规则校验；压缩包最多 10,000 个条目，单文件展开后最大 128 MiB，总展开大小最大 256 MiB。上传和商店下载包最大 50 MiB。JavaScript 依赖安装会禁用 npm 生命周期脚本。
+
 响应：`201 Created`
 
 ```json
@@ -505,6 +507,8 @@
 
 从商店安装插件。
 
+仅管理员可调用。插件商店返回的安装包下载地址必须使用 HTTPS；HTTP 和其他协议会被拒绝。服务端使用宿主生成的随机临时文件名流式下载插件，不使用下载 URL 拼接本地路径；单次商店下载最大 50 MiB，随后仍执行与上传安装相同的 manifest、签名和压缩包安全校验。
+
 请求体：
 
 ```json
@@ -553,27 +557,35 @@
   {
     "plugin_id": "advanced-capabilities-example@0.1.0",
     "plugin_name": "Advanced Capabilities Example",
+    "client_grant": "<opaque-client-grant>",
     "capability": {
-      "id": "assistant.settings",
+      "id": "assistant.panel",
       "kind": "ui_extension",
-      "invoke": "saveAssistantSettings",
-      "slot": "settings.section",
+      "invoke": "openAssistant",
+      "slot": "global.panel",
       "render": {
-        "mode": "schema"
+        "mode": "web_container",
+        "entry": "ui/assistant.html"
       }
     }
   }
 ]
 ```
 
+`client_grant` 只会出现在 `ui_extension` / `client_extension` 注册项中。它由服务端签名，绑定当前用户、插件和来源 UI capability，并带有过期时间。客户端必须把它当作不透明的临时凭据和秘密处理：不要解析、持久化到可公开读取的位置、写入日志或发送给插件页面之外的第三方；过期后重新调用本接口获取。其他 capability 不返回该字段。
+
 ### POST /api/v1/plugins/:plugin_id/capabilities/:capability_id/invoke
 
 调用指定插件 capability。后端会自动附加可信 `_context`，包含插件、capability 和当前认证用户上下文。
+
+从插件 UI 发起调用时必须同时传 `ui_capability_id` 和对应注册项返回的 `client_grant`（请求字段名为 `ui_grant`）。后端会验证签名、有效期、当前用户、插件和来源 UI capability，再只允许调用当前 UI capability 或其 `render.bridge.capabilities` 中显式声明的 capability。`tool_provider` 不接受缺少 UI 来源的直接 HTTP 调用。
 
 请求体：
 
 ```json
 {
+  "ui_capability_id": "assistant.panel",
+  "ui_grant": "<opaque-client-grant>",
   "params": {
     "slot": "book.detail_action",
     "context": {
@@ -585,6 +597,8 @@
   }
 }
 ```
+
+`ui_capability_id` 和 `ui_grant` 只有核心文档读取流程调用 `content_processor` 时可以一起省略。其他通过此客户端 HTTP 接口触发的 capability（包括 tool、task、event、metadata 和 UI）都必须携带来源 UI 和匹配的服务端签名凭据，并通过已安装 manifest 的 bridge 白名单校验；宿主内部调度不经过此客户端接口。
 
 响应：`200 OK`
 
@@ -619,12 +633,25 @@
 
 查询 `event_handler`。可用 `event` 过滤事件名。
 
+## 插件 UI 资产
+
+### GET /api/v1/plugin-assets/:client_grant/:plugin_id/*path
+
+读取处于 `active` / `executing` 状态插件的 UI 静态文件。`:client_grant` 使用 `GET /api/v1/plugin-capabilities` 中对应 UI 注册项返回的 `client_grant`；后端会验证它仍绑定当前用户、插件和 UI capability，并重新检查 capability 可见性及 `admin_only`。仅允许访问插件包内 `ui/` 和 `assets/` 目录，路径会经过规范化、canonical containment 和符号链接逃逸检查。
+
+所有资源响应使用 `no-store`、`nosniff`、`DENY` framing、无 referrer 和禁止执行的 CSP；HTML、XHTML 与 XML 还会强制下载。资源以流式方式返回，单文件最大 64 MiB。客户端获取入口 HTML 后，会由受信宿主解析并在注入 CSP、`base` 与桥接启动脚本后放入无同源 sandbox。签名凭据只限制谁能取得当前 UI 资产，不会把客户端代码变成秘密存储；插件包仍不应包含 API key、令牌、私钥或其他秘密。
+
+浏览器/WebView 内部的 bridge 使用每文档随机 `bridgeToken`，并绑定到宿主在插件代码执行前创建的首个 `MessagePort`。`bridgeToken` 不是 `client_grant` / `ui_grant`，也不能用于插件资产或 HTTP API；服务端签名凭据由受信客户端获取并附加，不会作为 `bridgeToken` 或 `ting-plugin:init` 字段传入。由于 grant 同时是资产 URL 的路径段，插件 UI 仍可能从自身资源地址观察到它，因此也必须视为秘密，不得记录或外传。端口绑定用于阻止 iframe 跳转后的页面复用 `WindowProxy` 接管能力。插件请求必须通过 `window.__TING_PLUGIN_BRIDGE__.postMessage()` 发出，详见插件 HostGateway 指南。
+
 ## HostGateway API
 
 ### POST /api/v1/plugin-host/invoke
 
 由前端受控调用插件可访问的 HostGateway 方法。后端会同时校验：
 
+- `ui_capability_id` 是否属于同一插件的 UI capability。
+- `ui_grant` 的签名、有效期、用户、插件和来源 UI capability 是否匹配。
+- 对应 UI capability 的 `render.bridge.host_methods` 是否声明目标方法。
 - 插件 manifest 是否声明了对应权限。
 - 当前用户是否有目标书籍/书库访问权限。
 - 目标方法是否允许在当前认证上下文中调用。
@@ -634,12 +661,16 @@
 ```json
 {
   "plugin_id": "advanced-capabilities-example@0.1.0",
+  "ui_capability_id": "assistant.panel",
+  "ui_grant": "<opaque-client-grant>",
   "method": "progress.recent",
   "params": {
     "limit": 5
   }
 }
 ```
+
+`ui_capability_id` 和 `ui_grant` 均为必填字段。旧客户端在升级后必须从 capability 注册响应保存当前 UI 的不透明凭据，并在转发 bridge 请求时附加；插件页面只处理每文档 `bridgeToken`，不应接触或缓存 `ui_grant`。仅修改请求字段而未在 manifest 声明 `render.bridge.host_methods` 仍会被拒绝。
 
 响应：`200 OK`
 

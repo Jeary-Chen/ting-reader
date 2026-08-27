@@ -71,6 +71,54 @@ impl BookRepository {
             .await
     }
 
+    /// Load only the title groups that can be affected by the supplied books.
+    /// This keeps post-scan auto-merge work proportional to the changed title
+    /// neighbourhood instead of regrouping every book in the library.
+    pub async fn find_merge_candidates_for_books(
+        &self,
+        library_id: &str,
+        book_ids: &[String],
+    ) -> Result<Vec<Book>> {
+        if book_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let library_id = library_id.to_string();
+        let book_ids = book_ids.to_vec();
+        self.db
+            .execute(move |conn| {
+                let placeholders = std::iter::repeat("?")
+                    .take(book_ids.len())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let query = format!(
+                    "SELECT id, library_id, title, author, narrator, cover_url, theme_color,
+                            description, skip_intro, skip_outro, path, hash, tags, genre, year, created_at,
+                            manual_corrected, match_pattern, chapter_regex
+                       FROM books
+                      WHERE library_id = ?
+                        AND title IN (
+                            SELECT DISTINCT title
+                              FROM books
+                             WHERE library_id = ? AND id IN ({})
+                        )
+                      ORDER BY created_at DESC",
+                    placeholders
+                );
+                let params = std::iter::once(library_id.as_str())
+                    .chain(std::iter::once(library_id.as_str()))
+                    .chain(book_ids.iter().map(String::as_str));
+                let mut stmt = conn.prepare(&query).map_err(TingError::DatabaseError)?;
+                let books = stmt
+                    .query_map(rusqlite::params_from_iter(params), map_book_row)
+                    .map_err(TingError::DatabaseError)?
+                    .collect::<std::result::Result<Vec<_>, _>>()
+                    .map_err(TingError::DatabaseError)?;
+                Ok(books)
+            })
+            .await
+    }
+
     /// Find books by library ID with minimal fields (id, path, hash, manual_corrected, match_pattern)
     pub async fn find_all_minimal_by_library(
         &self,

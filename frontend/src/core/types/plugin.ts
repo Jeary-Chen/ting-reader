@@ -21,6 +21,7 @@ export interface PluginCapabilityRegistration {
   plugin_id: string;
   plugin_name: string;
   admin_only?: boolean;
+  client_grant?: string;
   capability: PluginCapability;
 }
 

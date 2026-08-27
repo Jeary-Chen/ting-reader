@@ -135,15 +135,15 @@ impl JavaScriptPluginLoader {
         );
 
         // Generate package.json
-        npm_manager.generate_package_json(
-            &self.plugin_dir,
-            &self.metadata.name,
-            &self.metadata.version,
-            Some(&self.metadata.description),
-            Some(&self.metadata.author),
-            self.metadata.license.as_deref(),
-            &self.metadata.npm_dependencies,
-        )?;
+        npm_manager.generate_package_json(super::npm::PackageJsonSpec {
+            plugin_dir: &self.plugin_dir,
+            plugin_name: &self.metadata.id,
+            plugin_version: &self.metadata.version,
+            description: Some(&self.metadata.description),
+            author: Some(&self.metadata.author),
+            license: self.metadata.license.as_deref(),
+            npm_dependencies: &self.metadata.npm_dependencies,
+        })?;
 
         // Install dependencies, reusing the shared cache when configured.
         npm_manager.install_dependencies_with_cache(
@@ -177,14 +177,12 @@ impl JavaScriptPluginLoader {
                 ))
                 .into());
             }
-        } else {
-            if !metadata.entry_point.ends_with(".js") {
-                return Err(TingError::PluginLoadError(format!(
-                    "Plugin entry_point '{}' is not a .js file and no 'runtime' field specified",
-                    metadata.entry_point
-                ))
-                .into());
-            }
+        } else if !metadata.entry_point.ends_with(".js") {
+            return Err(TingError::PluginLoadError(format!(
+                "Plugin entry_point '{}' is not a .js file and no 'runtime' field specified",
+                metadata.entry_point
+            ))
+            .into());
         }
 
         Ok(())
@@ -333,6 +331,7 @@ mod tests {
 
         // Create plugin.yml
         let metadata = serde_json::json!({
+            "id": name,
             "name": name,
             "version": "1.0.0",
             "min_core_version": "1.4.8",
@@ -440,6 +439,7 @@ mod tests {
 
         // Create plugin.yml but no plugin.js
         let metadata = serde_json::json!({
+            "id": "test-plugin",
             "name": "test-plugin",
             "version": "1.0.0",
             "min_core_version": "1.4.8",

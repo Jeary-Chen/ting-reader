@@ -96,6 +96,7 @@ const BookDetailPage: React.FC = () => {
   const [deleteSourceFiles, setDeleteSourceFiles] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [editData, setEditData] = useState<Partial<Book>>({});
+  const [editLockTouched, setEditLockTouched] = useState(false);
   const [isDescriptionExpanded, setIsDescriptionExpanded] = useState(false);
   const [isOverflowing, setIsOverflowing] = useState(false);
   const [activeTab, setActiveTab] = useState<'main' | 'extra'>('main');
@@ -651,6 +652,9 @@ const BookDetailPage: React.FC = () => {
         skip_outro: editData.skip_outro,
         chapter_regex: editData.chapter_regex,
         description: editData.description,
+        // A normal manual metadata save locks the book. If the user explicitly
+        // changes the toggle, preserve that choice even when it is off.
+        manual_corrected: editLockTouched ? editData.manual_corrected === true : true,
       };
       
       const res = await apiClient.patch(`/api/books/${id}`, payload);
@@ -695,6 +699,7 @@ const BookDetailPage: React.FC = () => {
       }
 
       setIsEditModalOpen(false);
+      setEditLockTouched(false);
     } catch {
       alert(t('common.saveFailed'));
     }
@@ -835,6 +840,7 @@ const BookDetailPage: React.FC = () => {
           onToggleFavorite={toggleFavorite}
           onOpenScrapeDiff={() => setIsScrapeDiffOpen(true)}
           onOpenEditModal={() => {
+            setEditLockTouched(false);
             setEditData({
               ...book,
               cover_url: displayCoverUrl,
@@ -915,7 +921,7 @@ const BookDetailPage: React.FC = () => {
         />
       )}
 
-      {isEditModalOpen && (
+      {isEditModalOpen && book && (
         <EditBookModal
           editData={editData}
           showRegexGenerator={showRegexGenerator}
@@ -925,6 +931,10 @@ const BookDetailPage: React.FC = () => {
           genResult={genResult}
           chapterGroupOrder={editChapterGroupOrder}
           onChangeEditData={setEditData}
+          onChangeMetadataLock={(locked) => {
+            setEditLockTouched(true);
+            setEditData(prev => ({ ...prev, manual_corrected: locked }));
+          }}
           onChangeChapterGroupOrder={setEditChapterGroupOrder}
           onShowRegexGenerator={() => setShowRegexGenerator(true)}
           onHideRegexGenerator={() => setShowRegexGenerator(false)}
@@ -941,6 +951,7 @@ const BookDetailPage: React.FC = () => {
           }}
           onSave={handleEditSave}
           onWriteMetadata={handleWriteMetadata}
+          showWriteMetadata={book.library_type !== 'webdav' && book.library_type !== 'rss'}
         />
       )}
 

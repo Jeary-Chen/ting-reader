@@ -224,9 +224,8 @@ impl Sandbox {
     fn domain_matches(domain: &str, pattern: &str) -> bool {
         if pattern == "*" {
             true
-        } else if pattern.starts_with("*.") {
+        } else if let Some(base) = pattern.strip_prefix("*.") {
             // Wildcard subdomain match
-            let base = &pattern[2..];
             domain.ends_with(base) || domain == base
         } else {
             // Exact match

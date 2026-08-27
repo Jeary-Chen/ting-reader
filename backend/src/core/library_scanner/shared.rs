@@ -151,32 +151,24 @@ impl LibraryScanner {
         // Series identity is scoped by library in the repository, so identical
         // titles in separate libraries remain independent collections.
         let series = self.series_repo.find_or_create_by_title(new_series).await?;
-        let books = self.series_repo.find_books_by_series(&series.id).await?;
         let target_order = series_info.order.max(1);
-
-        if let Some((_, current_order)) = books.iter().find(|(b, _)| b.id == book_id) {
-            if *current_order != target_order {
-                self.series_repo
-                    .add_book(crate::db::models::SeriesBook {
-                        series_id: series.id,
-                        book_id: book_id.to_string(),
-                        book_order: target_order,
-                    })
-                    .await?;
-            }
-        } else {
-            self.series_repo
-                .add_book(crate::db::models::SeriesBook {
-                    series_id: series.id,
-                    book_id: book_id.to_string(),
-                    book_order: target_order,
-                })
-                .await?;
-        }
+        self.series_repo
+            .add_book(crate::db::models::SeriesBook {
+                series_id: series.id,
+                book_id: book_id.to_string(),
+                book_order: target_order,
+            })
+            .await?;
 
         Ok(())
     }
 }
+
+type SeriesDirectoryGroup<'a, K> = Vec<(
+    &'a SeriesDirectoryCandidate<K>,
+    ParsedSeriesDirectory,
+    String,
+)>;
 
 pub(crate) fn infer_series_directories<K>(
     candidates: &[SeriesDirectoryCandidate<K>],
@@ -184,10 +176,7 @@ pub(crate) fn infer_series_directories<K>(
 where
     K: Clone + Eq + Hash,
 {
-    let mut grouped: HashMap<
-        (String, String),
-        Vec<(&SeriesDirectoryCandidate<K>, ParsedSeriesDirectory, String)>,
-    > = HashMap::new();
+    let mut grouped: HashMap<(String, String), SeriesDirectoryGroup<'_, K>> = HashMap::new();
 
     for candidate in candidates {
         let Some(parsed) = parse_series_directory_name(&candidate.name) else {
@@ -853,8 +842,7 @@ pub(crate) fn apply_chapter_title_template(
     let normalized = template
         .trim()
         .to_ascii_lowercase()
-        .replace('_', "-")
-        .replace(' ', "-");
+        .replace(['_', ' '], "-");
     let template = match normalized.as_str() {
         "chapter-title" | "chapter-name" => "{chapter_title}",
         "book-chapter-title" | "book-chapter-number-chapter-title" => {

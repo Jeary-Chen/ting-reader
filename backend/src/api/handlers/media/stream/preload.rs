@@ -118,7 +118,7 @@ pub(super) async fn maybe_spawn_auto_preload(
                                             }
 
                                             let mut buf = Vec::new();
-                                            if let Ok(_) = r.read_to_end(&mut buf).await {
+                                            if r.read_to_end(&mut buf).await.is_ok() {
                                                 let bytes_data = bytes::Bytes::from(buf);
 
                                                 // Limit preload cache size to prevent memory leaks
@@ -165,17 +165,16 @@ pub(super) async fn maybe_spawn_auto_preload(
                                                         // Use temp file to ensure atomicity and prevent race conditions
                                                         let temp_path =
                                                             cache_path.with_extension("tmp");
-                                                        if let Ok(_) = tokio::fs::write(
-                                                            &temp_path,
-                                                            &bytes_data,
-                                                        )
-                                                        .await
+                                                        if tokio::fs::write(&temp_path, &bytes_data)
+                                                            .await
+                                                            .is_ok()
                                                         {
-                                                            if let Ok(_) = tokio::fs::rename(
+                                                            if tokio::fs::rename(
                                                                 &temp_path,
                                                                 &cache_path,
                                                             )
                                                             .await
+                                                            .is_ok()
                                                             {
                                                                 tracing::info!("Automatically cached next chapter (from buffer): {}", next_chapter_id);
 
@@ -246,11 +245,12 @@ pub(super) async fn maybe_spawn_auto_preload(
                                                         {
                                                             Ok(_) => {
                                                                 // Rename to final path
-                                                                if let Ok(_) = tokio::fs::rename(
+                                                                if tokio::fs::rename(
                                                                     &temp_path,
                                                                     &cache_path,
                                                                 )
                                                                 .await
+                                                                .is_ok()
                                                                 {
                                                                     tracing::info!("Automatically cached next chapter (streaming): {}", next_chapter_id);
 

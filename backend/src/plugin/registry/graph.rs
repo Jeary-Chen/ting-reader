@@ -191,7 +191,7 @@ impl PluginRegistry {
                 // Add to reverse dependency graph
                 self.dependents
                     .entry(dep_id)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(plugin_id.clone());
             }
         }
@@ -331,9 +331,9 @@ impl PluginRegistry {
                 if !visited.get(dep_id).copied().unwrap_or(false) {
                     self.topological_sort(dep_id, visited, rec_stack, result)?;
                 } else if rec_stack.get(dep_id).copied().unwrap_or(false) {
-                    return Err(TingError::DependencyError(format!(
-                        "Circular dependency detected during load order calculation"
-                    )));
+                    return Err(TingError::DependencyError(
+                        "Circular dependency detected during load order calculation".to_string(),
+                    ));
                 }
             }
         }

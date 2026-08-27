@@ -1,5 +1,6 @@
 use crate::core::error::{Result, TingError};
 use crate::core::Config;
+use crate::plugin::logger::{emit_plugin_event, PluginLogLevel};
 mod data;
 mod files;
 mod personal;
@@ -30,6 +31,21 @@ pub struct PluginHostGateway {
     plugin_cache: Arc<PluginCache>,
     encryption_key: Arc<[u8; 32]>,
     config: Config,
+}
+
+pub struct PluginHostGatewayDependencies {
+    pub book_repo: Arc<BookRepository>,
+    pub library_repo: Arc<LibraryRepository>,
+    pub chapter_repo: Arc<ChapterRepository>,
+    pub progress_repo: Arc<ProgressRepository>,
+    pub playlist_repo: Arc<PlaylistRepository>,
+    pub favorite_repo: Arc<FavoriteRepository>,
+    pub settings_repo: Arc<UserSettingsRepository>,
+    pub task_queue: Arc<TaskQueue>,
+    pub plugin_manager: Arc<PluginManager>,
+    pub plugin_cache: Arc<PluginCache>,
+    pub encryption_key: Arc<[u8; 32]>,
+    pub config: Config,
 }
 
 #[derive(Clone, Default)]
@@ -107,21 +123,21 @@ pub enum PluginHostPermission {
 }
 
 impl PluginHostGateway {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        book_repo: Arc<BookRepository>,
-        library_repo: Arc<LibraryRepository>,
-        chapter_repo: Arc<ChapterRepository>,
-        progress_repo: Arc<ProgressRepository>,
-        playlist_repo: Arc<PlaylistRepository>,
-        favorite_repo: Arc<FavoriteRepository>,
-        settings_repo: Arc<UserSettingsRepository>,
-        task_queue: Arc<TaskQueue>,
-        plugin_manager: Arc<PluginManager>,
-        plugin_cache: Arc<PluginCache>,
-        encryption_key: Arc<[u8; 32]>,
-        config: Config,
-    ) -> Self {
+    pub fn new(dependencies: PluginHostGatewayDependencies) -> Self {
+        let PluginHostGatewayDependencies {
+            book_repo,
+            library_repo,
+            chapter_repo,
+            progress_repo,
+            playlist_repo,
+            favorite_repo,
+            settings_repo,
+            task_queue,
+            plugin_manager,
+            plugin_cache,
+            encryption_key,
+            config,
+        } = dependencies;
         Self {
             book_repo,
             library_repo,
@@ -151,8 +167,50 @@ impl PluginHostGateway {
             .get_plugin(&plugin_id_owned)
             .map_err(|_| TingError::PluginNotFound(plugin_id_owned))?;
 
-        self.invoke_with_permissions(plugin_id, &metadata.permissions, user, method, params)
-            .await
+        let result = self
+            .invoke_with_permissions(plugin_id, &metadata.permissions, user, method, params)
+            .await;
+        let denied = result.as_ref().err().is_some_and(|error| {
+            matches!(
+                error,
+                TingError::PermissionDenied(_) | TingError::InvalidRequest(_)
+            )
+        });
+        let fields = serde_json::json!({
+            "op": "host_gateway.invoke",
+            "method": method,
+            "status": if result.is_ok() {
+                "success"
+            } else if denied {
+                "denied"
+            } else {
+                "error"
+            },
+        });
+        emit_plugin_event(
+            &metadata,
+            if denied {
+                crate::plugin::types::PluginLogSource::Security
+            } else {
+                crate::plugin::types::PluginLogSource::Gateway
+            },
+            if result.is_ok() {
+                PluginLogLevel::Debug
+            } else if denied {
+                PluginLogLevel::Warn
+            } else {
+                PluginLogLevel::Error
+            },
+            if result.is_ok() {
+                "HostGateway invocation completed"
+            } else if denied {
+                "HostGateway invocation denied"
+            } else {
+                "HostGateway invocation failed"
+            },
+            Some(&fields),
+        );
+        result
     }
 
     pub async fn invoke_with_permissions(

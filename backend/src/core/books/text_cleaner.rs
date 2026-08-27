@@ -213,7 +213,7 @@ impl TextCleaner {
         let title_no_ext = if let Some(idx) = title.rfind('.') {
             // Check if the part after dot looks like an extension (alphanumeric, length < 5)
             let ext = &title[idx + 1..];
-            if ext.len() > 0 && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
+            if !ext.is_empty() && ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) {
                 &title[..idx]
             } else {
                 title

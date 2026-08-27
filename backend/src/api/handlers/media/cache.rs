@@ -103,8 +103,7 @@ pub async fn cache_chapter(
     let created_at = cache_info
         .created_at
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-        .flatten()
+        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
         .map(|dt| dt.to_rfc3339());
 
     Ok(Json(CacheOperationResponse {
@@ -151,8 +150,7 @@ pub async fn get_cache_list(
                 let created_at = cache_info
                     .created_at
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-                    .flatten()
+                    .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
                     .map(|dt| dt.to_rfc3339());
 
                 caches.push(CacheInfoResponse {

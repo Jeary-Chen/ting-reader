@@ -114,20 +114,16 @@ pub async fn create_library(
         url = path_to_display_string(&canonical_path);
     }
 
-    if library_type == "webdav" {
-        if !is_http_url(&url) {
-            return Err(TingError::ValidationError(
-                "WebDAV URL must start with http:// or https://".to_string(),
-            ));
-        }
+    if library_type == "webdav" && !is_http_url(&url) {
+        return Err(TingError::ValidationError(
+            "WebDAV URL must start with http:// or https://".to_string(),
+        ));
     }
 
-    if library_type == "rss" {
-        if !is_http_url(&url) {
-            return Err(TingError::ValidationError(
-                "RSS feed URL must start with http:// or https://".to_string(),
-            ));
-        }
+    if library_type == "rss" && !is_http_url(&url) {
+        return Err(TingError::ValidationError(
+            "RSS feed URL must start with http:// or https://".to_string(),
+        ));
     }
 
     let encrypted_password = if library_type == "webdav" {
@@ -153,11 +149,21 @@ pub async fn create_library(
         req.root_path.unwrap_or_else(|| "/".to_string())
     };
 
-    let scraper_config = if library_type == "rss" {
-        None
-    } else {
-        req.scraper_config.map(|v| v.to_string())
-    };
+    let scraper_config = req.scraper_config.map(|mut config| {
+        if library_type == "webdav" {
+            if let Some(object) = config.as_object_mut() {
+                object.insert(
+                    "nfo_writing_enabled".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+                object.insert(
+                    "metadata_writing_enabled".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+        }
+        config.to_string()
+    });
 
     let library = crate::db::models::Library {
         id: Uuid::new_v4().to_string(),
@@ -368,9 +374,26 @@ pub async fn update_library(
         }
     }
 
-    if library.library_type == "rss" {
-        library.scraper_config = None;
-    } else if let Some(config) = req.scraper_config {
+    if let Some(config) = req.scraper_config {
+        library.scraper_config = Some(config.to_string());
+    }
+
+    if library.library_type == "webdav" {
+        let mut config = library
+            .scraper_config
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        if let Some(object) = config.as_object_mut() {
+            object.insert(
+                "nfo_writing_enabled".to_string(),
+                serde_json::Value::Bool(false),
+            );
+            object.insert(
+                "metadata_writing_enabled".to_string(),
+                serde_json::Value::Bool(false),
+            );
+        }
         library.scraper_config = Some(config.to_string());
     }
 
@@ -486,22 +509,22 @@ pub async fn delete_library(
         let path = std::path::Path::new(&path_str);
 
         // Security check: ensure we are deleting from allowed directories
-        if path_str.contains("/temp/covers/") || path_str.contains("/storage/cache/covers/") {
-            if path.exists() {
-                if let Err(e) = std::fs::remove_file(path) {
-                    tracing::warn!(
-                        path = %cover_path,
-                        error = %e,
-                        message_key = "library.cover_cache.delete_failed",
-                        message_params = %serde_json::json!({
-                            "path": cover_path,
-                            "error": e.to_string(),
-                        }),
-                        "Failed to delete cover cache"
-                    );
-                } else {
-                    tracing::info!("Deleted orphan cover cache: {}", cover_path);
-                }
+        if (path_str.contains("/temp/covers/") || path_str.contains("/storage/cache/covers/"))
+            && path.exists()
+        {
+            if let Err(e) = std::fs::remove_file(path) {
+                tracing::warn!(
+                    path = %cover_path,
+                    error = %e,
+                    message_key = "library.cover_cache.delete_failed",
+                    message_params = %serde_json::json!({
+                        "path": cover_path,
+                        "error": e.to_string(),
+                    }),
+                    "Failed to delete cover cache"
+                );
+            } else {
+                tracing::info!("Deleted orphan cover cache: {}", cover_path);
             }
         }
     }
@@ -579,7 +602,7 @@ pub async fn scan_library(
 
     let scan_mode = req
         .and_then(|Json(body)| body.mode)
-        .map(|mode| crate::core::library_scanner::ScanMode::from_str(&mode))
+        .map(|mode| crate::core::library_scanner::ScanMode::from(mode.as_str()))
         .unwrap_or(crate::core::library_scanner::ScanMode::Incremental);
 
     let task_payload = crate::core::task_queue::TaskPayload::Custom {

@@ -197,6 +197,31 @@ impl MergeService {
     /// Auto-merge books with identical titles
     pub async fn process_auto_merges(&self) -> Result<usize> {
         let books = self.book_repo.find_all().await?;
+        self.process_auto_merges_for_books(books).await
+    }
+
+    pub async fn process_auto_merges_for_library(&self, library_id: &str) -> Result<usize> {
+        let books = self.book_repo.find_by_library(library_id).await?;
+        self.process_auto_merges_for_books(books).await
+    }
+
+    pub async fn process_auto_merges_for_library_books(
+        &self,
+        library_id: &str,
+        changed_book_ids: &HashSet<String>,
+    ) -> Result<usize> {
+        if changed_book_ids.is_empty() {
+            return Ok(0);
+        }
+        let changed_book_ids: Vec<String> = changed_book_ids.iter().cloned().collect();
+        let books = self
+            .book_repo
+            .find_merge_candidates_for_books(library_id, &changed_book_ids)
+            .await?;
+        self.process_auto_merges_for_books(books).await
+    }
+
+    async fn process_auto_merges_for_books(&self, books: Vec<Book>) -> Result<usize> {
         let mut merged_count = 0;
 
         // Group by Title

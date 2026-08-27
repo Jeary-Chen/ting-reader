@@ -107,16 +107,26 @@ async fn get_remote_media_reader(
     )))
 }
 
+struct PluginTranscodeOptions<'a> {
+    ffmpeg_path: &'a str,
+    format: &'a str,
+    content_type: &'a str,
+    seek: Option<&'a str>,
+}
+
 async fn transcode_plugin_stream(
     state: &AppState,
     chapter: &Chapter,
     library: &Library,
     plugin: &PluginInfo,
-    ffmpeg_path: &str,
-    format: &str,
-    content_type: &str,
-    seek: Option<&str>,
+    options: PluginTranscodeOptions<'_>,
 ) -> Result<axum::response::Response> {
+    let PluginTranscodeOptions {
+        ffmpeg_path,
+        format,
+        content_type,
+        seek,
+    } = options;
     let (plugin_stream, _, _, _, _, _, _) =
         create_decrypted_stream(state, chapter, library, plugin, None).await?;
 
@@ -501,7 +511,7 @@ pub async fn stream_chapter(
             tracing::info!("Starting FFmpeg process reading directly from URL...");
 
             // Spawn FFmpeg process
-            let mut child = cmd.spawn().map_err(|e| TingError::IoError(e))?;
+            let mut child = cmd.spawn().map_err(TingError::IoError)?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
                 TingError::IoError(std::io::Error::new(
@@ -517,10 +527,8 @@ pub async fn stream_chapter(
                 tokio::spawn(async move {
                     let mut buffer = String::new();
                     use tokio::io::AsyncReadExt;
-                    if let Ok(_) = stderr.read_to_string(&mut buffer).await {
-                        if !buffer.is_empty() {
-                            tracing::warn!("FFmpeg stderr: {}", buffer);
-                        }
+                    if stderr.read_to_string(&mut buffer).await.is_ok() && !buffer.is_empty() {
+                        tracing::warn!("FFmpeg stderr: {}", buffer);
                     }
                 });
             }
@@ -613,7 +621,7 @@ pub async fn stream_chapter(
             cmd.stdout(Stdio::piped());
 
             // Spawn
-            let mut child = cmd.spawn().map_err(|e| TingError::IoError(e))?;
+            let mut child = cmd.spawn().map_err(TingError::IoError)?;
 
             // Handle input pipe if needed (Only if we are using the fallback pipe logic)
             if use_pipe && child.stdin.is_some() {
@@ -665,10 +673,12 @@ pub async fn stream_chapter(
                     &chapter,
                     &library,
                     plugin,
-                    &ffmpeg_path,
-                    format,
-                    content_type,
-                    params.seek.as_deref(),
+                    PluginTranscodeOptions {
+                        ffmpeg_path: &ffmpeg_path,
+                        format,
+                        content_type,
+                        seek: params.seek.as_deref(),
+                    },
                 )
                 .await;
             }
@@ -712,11 +722,11 @@ pub async fn stream_chapter(
                     .arg("0:a:0");
             }
 
-            cmd.arg("-f").arg(&format).arg("-");
+            cmd.arg("-f").arg(format).arg("-");
 
             cmd.stdout(Stdio::piped());
 
-            let mut child = cmd.spawn().map_err(|e| TingError::IoError(e))?;
+            let mut child = cmd.spawn().map_err(TingError::IoError)?;
 
             // Handle input pipe if needed (Only if we are using the fallback pipe logic)
             let use_pipe = !cache_path.exists() && library.library_type != "local";

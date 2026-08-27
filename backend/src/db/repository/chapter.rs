@@ -153,6 +153,51 @@ impl ChapterRepository {
             .await
     }
 
+    /// Count chapters for every book in a library in one query. Scanners use
+    /// this to avoid issuing one COUNT query per directory during incremental
+    /// scans.
+    pub async fn count_by_library(
+        &self,
+        library_id: &str,
+    ) -> Result<std::collections::HashMap<String, ChapterCounts>> {
+        let library_id = library_id.to_string();
+        self.db
+            .execute(move |conn| {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT c.book_id,
+                                COUNT(*) AS total,
+                                COALESCE(SUM(CASE WHEN c.is_extra = 0 THEN 1 ELSE 0 END), 0) AS main,
+                                COALESCE(SUM(CASE WHEN c.is_extra != 0 THEN 1 ELSE 0 END), 0) AS extra
+                           FROM chapters c
+                           JOIN books b ON b.id = c.book_id
+                          WHERE b.library_id = ?
+                          GROUP BY c.book_id",
+                    )
+                    .map_err(TingError::DatabaseError)?;
+
+                let rows = stmt
+                    .query_map([&library_id], |row| {
+                        let total: i64 = row.get(1)?;
+                        let main: i64 = row.get(2)?;
+                        let extra: i64 = row.get(3)?;
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            ChapterCounts {
+                                total: total.max(0) as usize,
+                                main: main.max(0) as usize,
+                                extra: extra.max(0) as usize,
+                            },
+                        ))
+                    })
+                    .map_err(TingError::DatabaseError)?;
+
+                rows.collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()
+                    .map_err(TingError::DatabaseError)
+            })
+            .await
+    }
+
     /// Resolve the page offset that contains a target chapter in the selected chapter type.
     pub async fn page_offset_for_chapter(
         &self,

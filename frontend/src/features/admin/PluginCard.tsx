@@ -20,6 +20,7 @@ import {
   Search,
   Settings,
   Shield,
+  ScrollText,
   Tag,
   Trash2,
   XCircle,
@@ -116,6 +117,7 @@ type PluginCardProps = {
   onReload?: () => void;
   onUninstall?: () => void;
   onConfigure?: () => void;
+  onViewLogs?: () => void;
 };
 
 const cleanText = (value?: string | null) => {
@@ -567,6 +569,7 @@ const PluginCard = ({
   onReload,
   onUninstall,
   onConfigure,
+  onViewLogs,
 }: PluginCardProps) => {
   const { t, i18n } = useTranslation();
   const description =
@@ -729,6 +732,18 @@ const PluginCard = ({
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">
+          {onViewLogs ? (
+            <button
+              type="button"
+              onClick={onViewLogs}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-cyan-50 hover:text-cyan-700 dark:hover:bg-cyan-950/40 dark:hover:text-cyan-300"
+              title={t("adminPlugins.logs")}
+              aria-label={t("adminPlugins.logs")}
+            >
+              <ScrollText size={17} />
+            </button>
+          ) : null}
+
           {onConfigure && data.config_schema ? (
             <button
               type="button"

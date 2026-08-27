@@ -1,11 +1,19 @@
 use crate::core::error::{Result, TingError};
+use futures::StreamExt;
+use reqwest::{header::LOCATION, Url};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
 use tracing::info;
+use uuid::Uuid;
 
 use super::types::{LocalizedText, PluginCapability};
+
+const MAX_PLUGIN_DOWNLOAD_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_PLUGIN_DOWNLOAD_REDIRECTS: usize = 5;
 
 /// Cache entry for store plugins
 #[derive(Debug, Clone)]
@@ -209,11 +217,50 @@ pub async fn download_plugin(
     url: &str,
     temp_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| TingError::NetworkError(format!("Failed to download plugin: {}", e)))?;
+    let mut current_url = Url::parse(url).map_err(|error| {
+        TingError::NetworkError(format!("Invalid absolute plugin download URL: {error}"))
+    })?;
+    let mut redirect_count = 0_usize;
+    let response = loop {
+        let resolved = validate_plugin_download_target(&current_url).await?;
+        let response = client.get(current_url.clone()).send().await.map_err(|e| {
+            TingError::NetworkError(format!("Failed to download plugin: {}", e.without_url()))
+        })?;
+        let remote = response.remote_addr().ok_or_else(|| {
+            TingError::NetworkError("Plugin download did not expose its remote address".to_string())
+        })?;
+        if !resolved.iter().any(|address| address.ip() == remote.ip()) {
+            return Err(TingError::NetworkError(
+                "Plugin download connected to an unexpected address".to_string(),
+            ));
+        }
+
+        if !response.status().is_redirection() {
+            break response;
+        }
+        if response.url() != &current_url {
+            return Err(TingError::NetworkError(
+                "Plugin download client followed an unvalidated redirect".to_string(),
+            ));
+        }
+        if redirect_count >= MAX_PLUGIN_DOWNLOAD_REDIRECTS {
+            return Err(TingError::NetworkError(
+                "Plugin download exceeded the redirect limit".to_string(),
+            ));
+        }
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| {
+                TingError::NetworkError("Plugin download redirect omitted Location".to_string())
+            })?;
+        let next_url = current_url.join(location).map_err(|error| {
+            TingError::NetworkError(format!("Invalid plugin download redirect: {error}"))
+        })?;
+        redirect_count += 1;
+        current_url = next_url;
+    };
 
     if !response.status().is_success() {
         return Err(TingError::NetworkError(format!(
@@ -222,18 +269,143 @@ pub async fn download_plugin(
         )));
     }
 
-    // Create a temporary file
-    let file_name = url.split('/').last().unwrap_or("plugin.tr");
-    let temp_path = temp_dir.join(file_name);
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_PLUGIN_DOWNLOAD_BYTES)
+    {
+        return Err(TingError::NetworkError(format!(
+            "Plugin download exceeds {} bytes",
+            MAX_PLUGIN_DOWNLOAD_BYTES
+        )));
+    }
 
-    let content = response
-        .bytes()
-        .await
-        .map_err(|e| TingError::NetworkError(format!("Failed to read download content: {}", e)))?;
-
-    tokio::fs::write(&temp_path, content)
+    tokio::fs::create_dir_all(temp_dir)
         .await
         .map_err(TingError::IoError)?;
+    let canonical_temp_dir = tokio::fs::canonicalize(temp_dir)
+        .await
+        .map_err(TingError::IoError)?;
+    let temp_path = canonical_temp_dir.join(format!("plugin-{}.tr", Uuid::new_v4()));
+
+    let write_result: Result<()> = async {
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .await
+            .map_err(TingError::IoError)?;
+        let mut downloaded = 0_u64;
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| {
+                TingError::NetworkError(format!(
+                    "Failed to read download content: {}",
+                    error.without_url()
+                ))
+            })?;
+            downloaded = downloaded.checked_add(chunk.len() as u64).ok_or_else(|| {
+                TingError::NetworkError("Plugin download is too large".to_string())
+            })?;
+            if downloaded > MAX_PLUGIN_DOWNLOAD_BYTES {
+                return Err(TingError::NetworkError(format!(
+                    "Plugin download exceeds {} bytes",
+                    MAX_PLUGIN_DOWNLOAD_BYTES
+                )));
+            }
+            file.write_all(&chunk).await.map_err(TingError::IoError)?;
+        }
+        file.flush().await.map_err(TingError::IoError)
+    }
+    .await;
+
+    if let Err(error) = write_result {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(error);
+    }
 
     Ok(temp_path)
+}
+
+async fn validate_plugin_download_target(url: &Url) -> Result<Vec<std::net::SocketAddr>> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(TingError::NetworkError(
+            "Plugin downloads require HTTP or HTTPS URLs".to_string(),
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(TingError::NetworkError(
+            "Plugin download URLs cannot contain credentials".to_string(),
+        ));
+    }
+
+    let host = url.host_str().ok_or_else(|| {
+        TingError::NetworkError("Plugin download URL is missing a host".to_string())
+    })?;
+    let normalized_host = host.trim_end_matches('.').to_ascii_lowercase();
+    let port = url.port_or_known_default().ok_or_else(|| {
+        TingError::NetworkError("Plugin download URL uses an unknown port".to_string())
+    })?;
+    if let Ok(ip) = normalized_host.parse::<IpAddr>() {
+        return Ok(vec![std::net::SocketAddr::new(ip, port)]);
+    }
+
+    let resolved = tokio::net::lookup_host((normalized_host.as_str(), port))
+        .await
+        .map_err(|error| {
+            TingError::NetworkError(format!("Failed to resolve plugin download host: {error}"))
+        })?
+        .collect::<Vec<_>>();
+    if resolved.is_empty() {
+        return Err(TingError::NetworkError(
+            "Plugin download host did not resolve to an address".to_string(),
+        ));
+    }
+    Ok(resolved)
+}
+
+pub fn redacted_download_url(url: &str) -> String {
+    let Ok(mut parsed) = Url::parse(url) else {
+        return "<invalid-url>".to_string();
+    };
+    if parsed.host_str().is_none() {
+        return "<invalid-url>".to_string();
+    }
+    if parsed.set_username("").is_err() || parsed.set_password(None).is_err() {
+        return "<invalid-url>".to_string();
+    }
+    parsed.set_query(None);
+    parsed.set_fragment(None);
+    parsed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn download_policy_allows_http_and_private_literal_addresses() {
+        for raw_url in [
+            "http://127.0.0.1/plugin.tr",
+            "http://192.168.1.20/plugin.tr",
+            "https://198.18.1.89/plugin.tr",
+        ] {
+            assert!(
+                validate_plugin_download_target(&Url::parse(raw_url).unwrap())
+                    .await
+                    .is_ok()
+            );
+        }
+    }
+
+    #[test]
+    fn download_url_logs_drop_credentials_and_query_values() {
+        assert_eq!(
+            redacted_download_url("https://user:secret@example.com/plugin.tr?token=secret#part"),
+            "https://example.com/plugin.tr"
+        );
+        assert_eq!(
+            redacted_download_url("https://[2606:4700:4700::1111]:8443/plugin.tr?token=secret"),
+            "https://[2606:4700:4700::1111]:8443/plugin.tr"
+        );
+    }
 }

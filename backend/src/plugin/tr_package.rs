@@ -16,6 +16,9 @@ const SIGNATURE_MANIFEST_PATH: &str = ".trpack/signature.json";
 const SIGNATURE_FORMAT_NAME: &str = "ting-reader.trpack.signature";
 const SIGNATURE_FORMAT_VERSION: u32 = 1;
 const SIGNATURE_ALGORITHM: &str = "ed25519";
+const MAX_PACKAGE_ENTRY_COUNT: usize = 10_000;
+const MAX_PACKAGE_SINGLE_FILE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_PACKAGE_TOTAL_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
 
 const TRUSTED_PLUGIN_PUBLIC_KEYS: &[(&str, &str)] = &[(
     "ting-reader-local-2026-06",
@@ -233,6 +236,47 @@ struct ReadPackage {
     files: BTreeMap<String, Vec<u8>>,
 }
 
+#[derive(Default)]
+struct PackageReadBudget {
+    entry_count: usize,
+    total_unpacked_bytes: u64,
+}
+
+impl PackageReadBudget {
+    fn record_entry(&mut self) -> Result<()> {
+        self.entry_count = self.entry_count.checked_add(1).ok_or_else(|| {
+            TingError::PluginLoadError(".tr package entry count overflow".to_string())
+        })?;
+        if self.entry_count > MAX_PACKAGE_ENTRY_COUNT {
+            return Err(TingError::PluginLoadError(format!(
+                ".tr package exceeds the {} entry limit",
+                MAX_PACKAGE_ENTRY_COUNT
+            )));
+        }
+        Ok(())
+    }
+
+    fn record_file(&mut self, path: &str, size: u64) -> Result<()> {
+        if size > MAX_PACKAGE_SINGLE_FILE_BYTES {
+            return Err(TingError::PluginLoadError(format!(
+                ".tr package file {} exceeds the {} byte limit",
+                path, MAX_PACKAGE_SINGLE_FILE_BYTES
+            )));
+        }
+        self.total_unpacked_bytes =
+            self.total_unpacked_bytes.checked_add(size).ok_or_else(|| {
+                TingError::PluginLoadError(".tr package total unpacked size overflow".to_string())
+            })?;
+        if self.total_unpacked_bytes > MAX_PACKAGE_TOTAL_UNPACKED_BYTES {
+            return Err(TingError::PluginLoadError(format!(
+                ".tr package exceeds the {} byte total unpacked limit",
+                MAX_PACKAGE_TOTAL_UNPACKED_BYTES
+            )));
+        }
+        Ok(())
+    }
+}
+
 pub fn verify_tr_package_signature(path: &Path) -> Result<TrPackageSignatureStatus> {
     let package = read_tr_package(path)?;
     Ok(verify_signature_status(
@@ -260,6 +304,7 @@ fn read_tr_package(path: &Path) -> Result<ReadPackage> {
     let mut package_manifest = None;
     let mut package_signature = None;
     let mut files = BTreeMap::new();
+    let mut budget = PackageReadBudget::default();
 
     for entry in archive.entries().map_err(|error| {
         TingError::PluginLoadError(format!("Failed to read .tr package: {}", error))
@@ -267,6 +312,7 @@ fn read_tr_package(path: &Path) -> Result<ReadPackage> {
         let mut entry = entry.map_err(|error| {
             TingError::PluginLoadError(format!("Failed to read .tr entry: {}", error))
         })?;
+        budget.record_entry()?;
         if !entry.header().entry_type().is_file() {
             continue;
         }
@@ -278,8 +324,19 @@ fn read_tr_package(path: &Path) -> Result<ReadPackage> {
             .to_string_lossy()
             .replace('\\', "/");
         validate_archive_path(&path)?;
-        let mut bytes = Vec::new();
+        let entry_size = entry.size();
+        budget.record_file(&path, entry_size)?;
+        let capacity = usize::try_from(entry_size).map_err(|_| {
+            TingError::PluginLoadError(format!(".tr package file is too large: {}", path))
+        })?;
+        let mut bytes = Vec::with_capacity(capacity);
         entry.read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != entry_size {
+            return Err(TingError::PluginLoadError(format!(
+                ".tr package entry size mismatch for {}",
+                path
+            )));
+        }
         if path == PACKAGE_MANIFEST_PATH {
             package_manifest = Some(serde_json::from_slice::<PackageManifest>(&bytes).map_err(
                 |error| TingError::PluginLoadError(format!("Invalid .tr manifest: {}", error)),
@@ -651,4 +708,35 @@ fn hex_lower(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+#[cfg(test)]
+mod package_limit_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_too_many_archive_entries() {
+        let mut budget = PackageReadBudget {
+            entry_count: MAX_PACKAGE_ENTRY_COUNT,
+            total_unpacked_bytes: 0,
+        };
+        assert!(budget.record_entry().is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_single_file() {
+        let mut budget = PackageReadBudget::default();
+        assert!(budget
+            .record_file("plugin.bin", MAX_PACKAGE_SINGLE_FILE_BYTES + 1)
+            .is_err());
+    }
+
+    #[test]
+    fn rejects_oversized_total_unpacked_payload() {
+        let mut budget = PackageReadBudget {
+            entry_count: 0,
+            total_unpacked_bytes: MAX_PACKAGE_TOTAL_UNPACKED_BYTES,
+        };
+        assert!(budget.record_file("plugin.bin", 1).is_err());
+    }
 }

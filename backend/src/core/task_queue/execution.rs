@@ -132,13 +132,20 @@ impl TaskQueue {
         })?;
         let scan_mode = data["mode"]
             .as_str()
-            .map(crate::core::library_scanner::ScanMode::from_str)
+            .map(crate::core::library_scanner::ScanMode::from)
             .unwrap_or(crate::core::library_scanner::ScanMode::Incremental);
+        let scan_paths = data["scan_paths"].as_array().map(|paths| {
+            paths
+                .iter()
+                .filter_map(|path| path.as_str().map(std::path::PathBuf::from))
+                .collect::<Vec<_>>()
+        });
 
         info!(
             library_id = %library_id,
             path = %library_path,
             scan_mode = %scan_mode.as_str(),
+            scoped_paths = scan_paths.as_ref().map(|paths| paths.len()).unwrap_or(0),
             "Handling library scan task"
         );
 
@@ -179,14 +186,16 @@ impl TaskQueue {
 
         // Create library scanner
         let mut scanner = crate::core::library_scanner::LibraryScanner::new(
-            book_repo.clone(),
-            chapter_repo.clone(),
-            library_repo.clone(),
-            series_repo.clone(),
-            text_cleaner.clone(),
-            nfo_manager.clone(),
-            audio_streamer.clone(),
-            plugin_manager.clone(),
+            crate::core::library_scanner::LibraryScannerDependencies {
+                book_repo: book_repo.clone(),
+                chapter_repo: chapter_repo.clone(),
+                library_repo: library_repo.clone(),
+                series_repo: series_repo.clone(),
+                text_cleaner: text_cleaner.clone(),
+                nfo_manager: nfo_manager.clone(),
+                audio_streamer: audio_streamer.clone(),
+                plugin_manager: plugin_manager.clone(),
+            },
         )
         .with_task_repo(Arc::new(self.task_repo.clone()))
         .with_scraper_service(self.scraper_service.as_ref().unwrap().clone());
@@ -203,7 +212,13 @@ impl TaskQueue {
 
         // Scan the library
         let result = scanner
-            .scan_library(library_id, library_path, scan_mode, Some(task_id))
+            .scan_library_scoped(
+                library_id,
+                library_path,
+                scan_mode,
+                Some(task_id),
+                scan_paths,
+            )
             .await?;
 
         info!(
@@ -408,6 +423,7 @@ impl TaskQueue {
 
         let mut success_count = 0;
         let mut error_count = 0;
+        let mut skipped_count = 0;
         let total_chapters = chapters.len();
 
         for (index, chapter) in chapters.iter().enumerate() {
@@ -426,6 +442,18 @@ impl TaskQueue {
                 .await;
 
             let path = std::path::Path::new(&chapter.path);
+            let ext = path
+                .extension()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+            // A book may contain mixed local audio and STRM chapters. STRM is
+            // skipped per chapter, while other local audio files continue.
+            if ext == "strm" {
+                skipped_count += 1;
+                continue;
+            }
+
             if !path.exists() {
                 error_count += 1;
                 continue;
@@ -433,11 +461,6 @@ impl TaskQueue {
 
             // Detect the actual container instead of trusting the extension. Files downloaded
             // from some sources may be M4A/MP4 data incorrectly named with a .mp3 suffix.
-            let ext = path
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_lowercase();
             let detected_format = detect_audio_format(path).unwrap_or_else(|| ext.to_string());
             if detected_format != ext {
                 warn!(
@@ -601,6 +624,7 @@ impl TaskQueue {
                 serde_json::json!({
                     "success": success_count,
                     "failed": error_count,
+                    "skipped": skipped_count,
                 }),
             )
             .await;
@@ -613,11 +637,13 @@ impl TaskQueue {
                 "book_id": book.id,
                 "success": success_count,
                 "failed": error_count,
+                "skipped": skipped_count,
             }),
             book_id = %book.id,
             book_title = %book.title.as_deref().unwrap_or(""),
             success = success_count,
             failed = error_count,
+            skipped = skipped_count,
             "Book metadata write completed"
         );
 

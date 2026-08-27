@@ -8,6 +8,7 @@ import {
 } from "../../core/hooks/useTheme";
 import { usePlayerStore } from "../../core/stores/playerStore";
 import { useAuthStore } from "../../core/stores/authStore";
+import { useUiPreferencesStore } from "../../core/stores/uiPreferencesStore";
 import {
   languageLabels,
   normalizeLanguage,
@@ -47,13 +48,13 @@ import {
   setApplicationTimeZone,
 } from "../../core/utils/timeZone";
 import LoadingSpinner from "../../shared/ui/LoadingSpinner";
-import PluginExtensionSlot from "../../shared/pluginExtensions/PluginExtensionSlot";
 
 type SettingsState = {
   playback_speed: number;
   sleep_timer_default: number;
   auto_preload: boolean;
   auto_cache?: boolean;
+  plugin_tool_menu_enabled: boolean;
   widget_css?: string;
   theme: Theme;
   language: SupportedLanguage;
@@ -69,6 +70,7 @@ const defaultSettings: SettingsState = {
   sleep_timer_default: 0,
   auto_preload: false,
   auto_cache: false,
+  plugin_tool_menu_enabled: true,
   widget_css: "",
   theme: "system",
   language: "zh-CN",
@@ -81,6 +83,9 @@ const PersonalizationPage: React.FC = () => {
   const token = useAuthStore((state) => state.token);
   const currentChapter = usePlayerStore((state) => state.currentChapter);
   const setPlaybackSpeed = usePlayerStore((state) => state.setPlaybackSpeed);
+  const setPluginToolMenuEnabled = useUiPreferencesStore(
+    (state) => state.setPluginToolMenuEnabled,
+  );
   const { applyTheme } = useTheme();
   const { language, setLanguage } = useAppLanguage();
   const [settings, setSettings] = useState<SettingsState>(defaultSettings);
@@ -105,6 +110,10 @@ const PersonalizationPage: React.FC = () => {
             data.sleep_timer_default ?? defaultSettings.sleep_timer_default,
           auto_preload: data.auto_preload ?? defaultSettings.auto_preload,
           auto_cache: !!data.auto_cache,
+          plugin_tool_menu_enabled:
+            data.plugin_tool_menu_enabled
+            ?? data.settings_json?.plugin_tool_menu_enabled
+            ?? true,
           widget_css: data.widget_css ?? "",
           theme: normalizeTheme(data.theme),
           language: normalizeLanguage(
@@ -115,6 +124,7 @@ const PersonalizationPage: React.FC = () => {
           ),
         };
         setSettings(fetchedSettings);
+        setPluginToolMenuEnabled(fetchedSettings.plugin_tool_menu_enabled);
         applyTheme(fetchedSettings.theme);
         void setLanguage(fetchedSettings.language, false);
       } catch (err) {
@@ -187,6 +197,9 @@ const PersonalizationPage: React.FC = () => {
       }
       if (patch.language) {
         void setLanguage(normalizeLanguage(patch.language), false);
+      }
+      if (typeof patch.plugin_tool_menu_enabled === "boolean") {
+        setPluginToolMenuEnabled(patch.plugin_tool_menu_enabled);
       }
 
       setSaved(true);
@@ -269,18 +282,6 @@ const PersonalizationPage: React.FC = () => {
           )}
         </div>
 
-        <PluginExtensionSlot
-          slot="settings.section"
-          className="flex justify-end gap-2"
-          context={{
-            page: "settings",
-            user_id: user?.id,
-            role: user?.role,
-            language: settings.language,
-            theme: settings.theme,
-          }}
-        />
-
         <section className="bg-white dark:bg-slate-900 rounded-3xl p-5 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">
           <h2 className="text-xl font-bold dark:text-white mb-6 flex items-center gap-2">
             <Monitor size={20} className="text-blue-500" />
@@ -320,6 +321,16 @@ const PersonalizationPage: React.FC = () => {
               </button>
             ))}
           </div>
+          <ToggleRow
+            title={t("settings.pluginToolMenu")}
+            description={t("settings.pluginToolMenuDescription")}
+            checked={settings.plugin_tool_menu_enabled}
+            onChange={() =>
+              void handleSaveSettings({
+                plugin_tool_menu_enabled: !settings.plugin_tool_menu_enabled,
+              })
+            }
+          />
         </section>
 
         <section className="bg-white dark:bg-slate-900 rounded-3xl p-5 md:p-6 border border-slate-100 dark:border-slate-800 shadow-sm">

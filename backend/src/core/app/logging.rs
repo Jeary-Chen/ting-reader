@@ -12,7 +12,15 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{
+    filter::{filter_fn, FilterExt},
+    fmt,
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+    EnvFilter, Layer,
+};
+
+const PLUGIN_LOG_TARGET: &str = "ting_reader::plugin::logger";
 
 /// In-memory log entry
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,14 +138,31 @@ impl Logger {
             .with_target(true)
             .boxed();
 
+        let plugin_log_file = api_log_dir.join("plugins.json");
+        let plugin_appender = create_rolling_appender(&plugin_log_file, 5 * 1024 * 1024, 3)?;
+        let (plugin_writer, plugin_guard) = tracing_appender::non_blocking(plugin_appender);
+        guards.push(Some(plugin_guard));
+        let plugin_layer = fmt::layer()
+            .json()
+            .with_writer(plugin_writer)
+            .with_target(true)
+            .boxed();
+
         // Create env filter with the configured level for api layer
         let api_env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.as_str()));
+        let plugin_env_filter =
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level.as_str()));
 
         // Initialize the global subscriber
         tracing_subscriber::registry()
             .with(fmt_layer.with_filter(env_filter))
-            .with(api_layer.with_filter(api_env_filter))
+            .with(api_layer.with_filter(
+                api_env_filter.and(filter_fn(|metadata| metadata.target() != PLUGIN_LOG_TARGET)),
+            ))
+            .with(plugin_layer.with_filter(
+                plugin_env_filter.and(filter_fn(|metadata| metadata.target() == PLUGIN_LOG_TARGET)),
+            ))
             .try_init()
             .context("Failed to initialize tracing subscriber")?;
 

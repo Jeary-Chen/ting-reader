@@ -2,9 +2,10 @@
 //!
 //! Reads and validates plugin.yml/plugin.yaml, producing a PluginMetadata struct.
 
+use semver::Version;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use tracing::warn;
 
 use super::super::js::npm::NpmManager;
@@ -16,6 +17,10 @@ use super::{
 use crate::core::error::TingError;
 
 const PLUGIN_MANIFEST_NAMES: [&str; 2] = ["plugin.yml", "plugin.yaml"];
+const MAX_PLUGIN_ID_LENGTH: usize = 64;
+const MAX_PLUGIN_NAME_LENGTH: usize = 128;
+const MAX_PLUGIN_VERSION_LENGTH: usize = 64;
+const MAX_PLUGIN_ENTRY_POINT_LENGTH: usize = 240;
 
 pub fn find_plugin_manifest(path: &Path) -> Option<PathBuf> {
     PLUGIN_MANIFEST_NAMES
@@ -88,12 +93,16 @@ pub fn parse_plugin_metadata_value(
         })?
         .to_string();
 
-    // Optional fields
     let id = json
         .get("id")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| name.clone());
+        .ok_or_else(|| {
+            TingError::PluginLoadError(format!("Missing 'id' field in {}", manifest_label))
+        })?
+        .to_string();
+    validate_plugin_manifest_identity(&id, &name, &version, &entry_point, manifest_label)?;
+
+    // Optional fields
     let license = json["license"].as_str().map(|s| s.to_string());
     let repo = json["repo"].as_str().map(|s| s.to_string());
     let min_core_version = json["min_core_version"].as_str().map(|s| s.to_string());
@@ -167,6 +176,233 @@ pub fn parse_plugin_metadata_value(
         scraper,
         capabilities,
     })
+}
+
+fn validate_plugin_manifest_identity(
+    id: &str,
+    name: &str,
+    version: &str,
+    entry_point: &str,
+    manifest_label: &str,
+) -> Result<(), TingError> {
+    validate_plugin_id(id, manifest_label)?;
+    validate_plugin_name(name, manifest_label)?;
+    validate_plugin_version(version, manifest_label)?;
+    validate_plugin_entry_point(entry_point, manifest_label)
+}
+
+fn validate_plugin_id(id: &str, manifest_label: &str) -> Result<(), TingError> {
+    if id.is_empty() || id != id.trim() {
+        return Err(invalid_manifest_field(
+            "id",
+            manifest_label,
+            "must be non-empty and have no surrounding whitespace",
+        ));
+    }
+    if id.len() > MAX_PLUGIN_ID_LENGTH {
+        return Err(invalid_manifest_field(
+            "id",
+            manifest_label,
+            &format!("must not exceed {} characters", MAX_PLUGIN_ID_LENGTH),
+        ));
+    }
+
+    let bytes = id.as_bytes();
+    let is_edge_valid = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    if !is_edge_valid(bytes[0]) || !is_edge_valid(bytes[bytes.len() - 1]) {
+        return Err(invalid_manifest_field(
+            "id",
+            manifest_label,
+            "must start and end with a lowercase ASCII letter or digit",
+        ));
+    }
+    if !bytes.iter().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_' | b'.')
+    }) || id.contains("..")
+        || is_windows_reserved_name(id)
+    {
+        return Err(invalid_manifest_field(
+            "id",
+            manifest_label,
+            "may contain only lowercase ASCII letters, digits, '-', '_' and '.'",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_plugin_name(name: &str, manifest_label: &str) -> Result<(), TingError> {
+    if name.is_empty() || name != name.trim() {
+        return Err(invalid_manifest_field(
+            "name",
+            manifest_label,
+            "must be non-empty and have no surrounding whitespace",
+        ));
+    }
+    if name.chars().count() > MAX_PLUGIN_NAME_LENGTH {
+        return Err(invalid_manifest_field(
+            "name",
+            manifest_label,
+            &format!("must not exceed {} characters", MAX_PLUGIN_NAME_LENGTH),
+        ));
+    }
+    validate_path_segment(name).map_err(|reason| {
+        invalid_manifest_field(
+            "name",
+            manifest_label,
+            &format!("is not path-safe: {}", reason),
+        )
+    })
+}
+
+fn validate_plugin_version(version: &str, manifest_label: &str) -> Result<(), TingError> {
+    if version.is_empty()
+        || version != version.trim()
+        || version.chars().count() > MAX_PLUGIN_VERSION_LENGTH
+    {
+        return Err(invalid_manifest_field(
+            "version",
+            manifest_label,
+            &format!(
+                "must be a non-empty SemVer string no longer than {} characters",
+                MAX_PLUGIN_VERSION_LENGTH
+            ),
+        ));
+    }
+    Version::parse(version).map_err(|error| {
+        invalid_manifest_field(
+            "version",
+            manifest_label,
+            &format!("must be valid SemVer: {}", error),
+        )
+    })?;
+    Ok(())
+}
+
+fn validate_plugin_entry_point(entry_point: &str, manifest_label: &str) -> Result<(), TingError> {
+    if entry_point.is_empty()
+        || entry_point != entry_point.trim()
+        || entry_point.chars().count() > MAX_PLUGIN_ENTRY_POINT_LENGTH
+    {
+        return Err(invalid_manifest_field(
+            "entry_point",
+            manifest_label,
+            &format!(
+                "must be a non-empty relative path no longer than {} characters",
+                MAX_PLUGIN_ENTRY_POINT_LENGTH
+            ),
+        ));
+    }
+    if entry_point.contains('\\') {
+        return Err(invalid_manifest_field(
+            "entry_point",
+            manifest_label,
+            "must use forward slashes",
+        ));
+    }
+
+    let path = Path::new(entry_point);
+    if path.is_absolute() {
+        return Err(invalid_manifest_field(
+            "entry_point",
+            manifest_label,
+            "must stay within the plugin directory",
+        ));
+    }
+
+    let mut components = 0;
+    for component in path.components() {
+        let Component::Normal(segment) = component else {
+            return Err(invalid_manifest_field(
+                "entry_point",
+                manifest_label,
+                "must not contain parent, current-directory, root, or prefix components",
+            ));
+        };
+        let segment = segment.to_str().ok_or_else(|| {
+            invalid_manifest_field("entry_point", manifest_label, "must be valid UTF-8")
+        })?;
+        validate_path_segment(segment).map_err(|reason| {
+            invalid_manifest_field(
+                "entry_point",
+                manifest_label,
+                &format!("contains an unsafe path segment: {}", reason),
+            )
+        })?;
+        components += 1;
+    }
+    if components == 0 {
+        return Err(invalid_manifest_field(
+            "entry_point",
+            manifest_label,
+            "must identify a file",
+        ));
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+    if !matches!(
+        extension.as_deref(),
+        Some("js" | "wasm" | "dll" | "so" | "dylib")
+    ) {
+        return Err(invalid_manifest_field(
+            "entry_point",
+            manifest_label,
+            "must use a supported .js, .wasm, .dll, .so, or .dylib extension",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_path_segment(segment: &str) -> std::result::Result<(), &'static str> {
+    if segment.is_empty() || matches!(segment, "." | "..") {
+        return Err("empty and dot segments are not allowed");
+    }
+    if segment
+        .chars()
+        .any(|character| character.is_control() || r#"<>:\"/\\|?*"#.contains(character))
+    {
+        return Err("contains control characters or reserved path characters");
+    }
+    if segment.ends_with([' ', '.']) {
+        return Err("must not end with a space or dot");
+    }
+    if is_windows_reserved_name(segment) {
+        return Err("uses a reserved device name");
+    }
+    Ok(())
+}
+
+fn is_windows_reserved_name(value: &str) -> bool {
+    let stem = value
+        .trim_end_matches([' ', '.'])
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+            && stem.len() == 4
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
+fn invalid_manifest_field(field: &str, manifest_label: &str, reason: &str) -> TingError {
+    TingError::PluginLoadError(format!(
+        "Invalid '{}' field in {}: {}",
+        field, manifest_label, reason
+    ))
+}
+
+pub(crate) fn validate_plugin_instance_id(instance_id: &str) -> Result<(), TingError> {
+    let (id, version) = instance_id.rsplit_once('@').ok_or_else(|| {
+        TingError::PluginLoadError(format!(
+            "Invalid plugin instance ID '{}': expected <id>@<version>",
+            instance_id
+        ))
+    })?;
+    validate_plugin_id(id, "plugin instance ID")?;
+    validate_plugin_version(version, "plugin instance ID")
 }
 
 fn parse_capabilities(
@@ -740,6 +976,78 @@ fn humanize_field_key(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn valid_manifest_value() -> Value {
+        serde_json::json!({
+            "id": "safe-plugin",
+            "name": "Safe Plugin",
+            "version": "1.2.3",
+            "runtime": "javascript",
+            "entry_point": "dist/plugin.js",
+            "author": "Ting Reader",
+            "description": "Safe plugin",
+            "capabilities": [{
+                "id": "safe.tools",
+                "kind": "tool_provider",
+                "invoke": "execute"
+            }]
+        })
+    }
+
+    #[test]
+    fn rejects_unsafe_manifest_identity_fields() {
+        let cases = [
+            ("id", "../../escape"),
+            ("id", "safe@1"),
+            ("version", "../1.0.0"),
+            ("version", "1.0"),
+            ("name", "../shared"),
+            ("name", "CON"),
+            ("entry_point", "../plugin.js"),
+            ("entry_point", "/tmp/plugin.js"),
+            ("entry_point", r"C:\outside\plugin.js"),
+        ];
+
+        for (field, value) in cases {
+            let mut manifest = valid_manifest_value();
+            manifest[field] = Value::String(value.to_string());
+            let error = parse_plugin_metadata_value(manifest, "malicious-plugin.yml")
+                .expect_err("unsafe manifest identity should be rejected");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected error for {field}: {error}"
+            );
+        }
+
+        let mut missing_id = valid_manifest_value();
+        missing_id.as_object_mut().unwrap().remove("id");
+        let error = parse_plugin_metadata_value(missing_id, "missing-id.yml").unwrap_err();
+        assert!(error.to_string().contains("id"));
+    }
+
+    #[test]
+    fn accepts_safe_nested_entry_point_and_semver() {
+        let metadata =
+            parse_plugin_metadata_value(valid_manifest_value(), "safe-plugin.yml").unwrap();
+        assert_eq!(metadata.instance_id(), "safe-plugin@1.2.3");
+        assert_eq!(metadata.entry_point, "dist/plugin.js");
+    }
+
+    #[test]
+    fn rejects_unsafe_plugin_instance_ids() {
+        for instance_id in [
+            "../../outside@1.0.0",
+            "safe-plugin@../1.0.0",
+            "safe-plugin",
+            "safe-plugin@1.0",
+        ] {
+            assert!(
+                validate_plugin_instance_id(instance_id).is_err(),
+                "unsafe instance id was accepted: {instance_id}"
+            );
+        }
+        validate_plugin_instance_id("safe-plugin@1.0.0").unwrap();
+    }
 
     #[test]
     fn parses_declared_capabilities() {

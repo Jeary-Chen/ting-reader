@@ -20,10 +20,14 @@ import {
   ChevronDown,
   ChevronRight,
   MoreHorizontal,
-  Eraser
+  Eraser,
+  Puzzle,
+  RotateCcw,
+  Search,
 } from 'lucide-react';
 import { formatDate } from '../../core/utils/date';
 import { useApplicationTimeZone } from '../../core/utils/timeZone';
+import type { Plugin } from '../../core/types';
 
 interface LogEntry {
   timestamp: string;
@@ -47,6 +51,7 @@ const MODULE_OPTIONS: Array<{ labelKey: string; value: string }> = [
   { labelKey: 'adminLogs.metadataRecords', value: 'audit::metadata' },
   { labelKey: 'adminLogs.libraryRecords', value: 'audit::library' },
   { labelKey: 'adminLogs.notificationRecords', value: 'audit::notification' },
+  { labelKey: 'adminLogs.pluginRecords', value: 'plugins' },
   { labelKey: 'adminLogs.allSystemLogs', value: 'all' }
 ];
 
@@ -57,6 +62,8 @@ const LEVEL_OPTIONS: Array<{ label?: string; labelKey?: string; value: string }>
   { label: 'ERROR', value: 'ERROR' }
 ];
 
+const PLUGIN_SOURCE_OPTIONS = ['', 'code', 'lifecycle', 'runtime', 'gateway', 'security'];
+
 const LogsPage: React.FC = () => {
   const { t } = useTranslation();
   useApplicationTimeZone();
@@ -65,6 +72,10 @@ const LogsPage: React.FC = () => {
   
   const [moduleFilter, setModuleFilter] = useState('audit');
   const [levelFilter, setLevelFilter] = useState('');
+  const [pluginFilter, setPluginFilter] = useState('');
+  const [pluginSourceFilter, setPluginSourceFilter] = useState('');
+  const [pluginSearch, setPluginSearch] = useState('');
+  const [plugins, setPlugins] = useState<Plugin[]>([]);
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -72,17 +83,37 @@ const LogsPage: React.FC = () => {
 
   const page = 1;
   const pageSize = 100;
+  const showingPluginLogs = moduleFilter === 'plugins';
+
+  useEffect(() => {
+    if (!showingPluginLogs || plugins.length > 0) return;
+    void apiClient
+      .get<Plugin[]>('/api/v1/plugins')
+      .then((response) => setPlugins(response.data || []))
+      .catch((error) => console.error('Failed to load plugins for log filter', error));
+  }, [plugins.length, showingPluginLogs]);
 
   const fetchData = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/v1/system/logs', {
-        params: {
-          level: levelFilter,
-          module: moduleFilter,
-          page,
-          page_size: pageSize
-        }
-      });
+      const response = showingPluginLogs
+        ? await apiClient.get('/api/v1/plugin-logs', {
+            params: {
+              level: levelFilter,
+              plugin_id: pluginFilter,
+              source: pluginSourceFilter,
+              q: pluginSearch,
+              page,
+              page_size: pageSize,
+            },
+          })
+        : await apiClient.get('/api/v1/system/logs', {
+            params: {
+              level: levelFilter,
+              module: moduleFilter,
+              page,
+              page_size: pageSize,
+            },
+          });
       
       const newLogs: LogEntry[] = response.data.logs || [];
       setLogs(newLogs);
@@ -92,7 +123,7 @@ const LogsPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [moduleFilter, levelFilter, page]);
+  }, [levelFilter, moduleFilter, page, pluginFilter, pluginSearch, pluginSourceFilter, showingPluginLogs]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -148,10 +179,24 @@ const LogsPage: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const currentExportParams = (level = levelFilter) => showingPluginLogs
+    ? {
+        level,
+        plugin_id: pluginFilter,
+        source: pluginSourceFilter,
+        q: pluginSearch,
+      }
+    : { level, module: moduleFilter };
+
   const handleExportAll = async () => {
     try {
-      const response = await apiClient.get('/api/v1/system/logs/export');
-      downloadFile(response.data, 'system_logs.txt');
+      const response = await apiClient.get(
+        showingPluginLogs ? '/api/v1/plugin-logs/export' : '/api/v1/system/logs/export',
+        {
+        params: currentExportParams(),
+        },
+      );
+      downloadFile(response.data, showingPluginLogs ? 'plugin_logs.txt' : 'system_logs.txt');
     } catch (err) {
       console.error('Failed to export logs', err);
     }
@@ -159,10 +204,13 @@ const LogsPage: React.FC = () => {
 
   const handleExportError = async () => {
     try {
-      const response = await apiClient.get('/api/v1/system/logs/export', {
-        params: { level: 'ERROR' }
-      });
-      downloadFile(response.data, 'error_logs.txt');
+      const response = await apiClient.get(
+        showingPluginLogs ? '/api/v1/plugin-logs/export' : '/api/v1/system/logs/export',
+        {
+        params: currentExportParams('ERROR'),
+        },
+      );
+      downloadFile(response.data, showingPluginLogs ? 'plugin_error_logs.txt' : 'error_logs.txt');
     } catch (err) {
       console.error('Failed to export error logs', err);
     }
@@ -190,6 +238,7 @@ const LogsPage: React.FC = () => {
     if (module.startsWith('audit::library')) return t('adminLogs.libraryRecords');
     if (module.startsWith('audit::notification')) return t('adminLogs.notificationRecords');
     if (module.startsWith('audit::task')) return t('adminLogs.taskRecords');
+    if (module === 'ting_reader::plugin::logger') return t('adminLogs.pluginRecords');
     if (module === 'audit') return t('adminLogs.coreBusiness');
     if (module.startsWith('auth')) return t('adminLogs.authSystem');
     if (module.startsWith('ting_reader::core::error')) return t('adminLogs.coreErrors');
@@ -209,6 +258,7 @@ const LogsPage: React.FC = () => {
   };
 
   const getLogIcon = (module: string) => {
+    if (module === 'ting_reader::plugin::logger') return <Puzzle size={20} className="sm:w-6 sm:h-6" />;
     if (module.includes('login') || module.includes('auth')) return <LogOut size={20} className="sm:w-6 sm:h-6" />;
     if (module.includes('playback')) return <PlayCircle size={20} className="sm:w-6 sm:h-6" />;
     if (module.includes('notification')) return <BellRing size={20} className="sm:w-6 sm:h-6" />;
@@ -381,6 +431,65 @@ const LogsPage: React.FC = () => {
         </div>
       </div>
 
+      {showingPluginLogs && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <label className="flex h-10 min-w-56 flex-1 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm dark:border-slate-700">
+            <Puzzle size={16} className="shrink-0 text-slate-400" />
+            <select
+              value={pluginFilter}
+              onChange={(event) => setPluginFilter(event.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-slate-700 outline-none dark:text-slate-300"
+            >
+              <option value="">{t('adminLogs.allPlugins')}</option>
+              {plugins.map((plugin) => (
+                <option key={`${plugin.id}@${plugin.version}`} value={plugin.id}>
+                  {plugin.name} ({plugin.id})
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex h-10 min-w-48 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm dark:border-slate-700">
+            <span className="text-slate-500">{t('adminLogs.source')}</span>
+            <select
+              value={pluginSourceFilter}
+              onChange={(event) => setPluginSourceFilter(event.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-slate-700 outline-none dark:text-slate-300"
+            >
+              {PLUGIN_SOURCE_OPTIONS.map((source) => (
+                <option key={source || 'all'} value={source}>
+                  {source ? t(`pluginLogs.sources.${source}`) : t('adminLogs.allSources')}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex h-10 min-w-64 flex-[2] items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm dark:border-slate-700">
+            <Search size={16} className="shrink-0 text-slate-400" />
+            <input
+              value={pluginSearch}
+              onChange={(event) => setPluginSearch(event.target.value)}
+              placeholder={t('adminLogs.searchPlaceholder')}
+              className="min-w-0 flex-1 bg-transparent text-slate-700 outline-none placeholder:text-slate-400 dark:text-slate-300"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={() => {
+              setPluginFilter('');
+              setPluginSourceFilter('');
+              setPluginSearch('');
+            }}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition-colors hover:bg-slate-50 hover:text-primary-600 dark:border-slate-700 dark:hover:bg-slate-800"
+            title={t('adminLogs.resetFilters')}
+            aria-label={t('adminLogs.resetFilters')}
+          >
+            <RotateCcw size={16} />
+          </button>
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-900 rounded-3xl overflow-hidden border border-slate-100 dark:border-slate-800 shadow-sm">
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {logs.map((log, index) => {
@@ -390,6 +499,11 @@ const LogsPage: React.FC = () => {
             const fieldEntries = log.fields ? Object.entries(log.fields) : [];
             const hasDetails = fieldEntries.length > 0;
             const isExpanded = expandedLogKeys.has(logKey);
+            const eventId = typeof log.fields?.event_id === 'string' ? log.fields.event_id : undefined;
+            const pluginName = typeof log.fields?.plugin === 'string' ? log.fields.plugin : undefined;
+            const pluginInstanceId = typeof log.fields?.plugin_instance_id === 'string'
+              ? log.fields.plugin_instance_id
+              : undefined;
 
             return (
               <div key={log.task_id || `log-${index}`} className="p-4 sm:p-6 transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
@@ -416,6 +530,15 @@ const LogsPage: React.FC = () => {
                         <span className={`text-[10px] font-bold tracking-widest px-2 py-0.5 rounded-md shrink-0 ${getLevelColor(log.level)}`}>
                           {log.level}
                         </span>
+
+                        {showingPluginLogs && (pluginName || pluginInstanceId) && (
+                          <span
+                            className="max-w-56 truncate rounded-md bg-cyan-50 px-2 py-0.5 text-[10px] font-semibold text-cyan-700 dark:bg-cyan-950/40 dark:text-cyan-300"
+                            title={pluginInstanceId || pluginName}
+                          >
+                            {pluginName || pluginInstanceId}
+                          </span>
+                        )}
 
                         {isTask && log.task_status && (
                           <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-md shrink-0 ${
@@ -444,6 +567,12 @@ const LogsPage: React.FC = () => {
                       <p className={`text-sm break-all font-mono whitespace-pre-wrap mt-2 ${isTask ? 'text-slate-500' : 'text-slate-600 dark:text-slate-300'}`}>
                         {logMessage}
                       </p>
+
+                      {eventId && (
+                        <p className="mt-1 truncate font-mono text-[10px] text-slate-400" title={eventId}>
+                          event_id: {eventId}
+                        </p>
+                      )}
 
                       {hasDetails && isExpanded && (
                         <div className="mt-3 rounded-2xl border border-slate-100 bg-slate-50/70 p-3 dark:border-slate-800 dark:bg-slate-950/30">

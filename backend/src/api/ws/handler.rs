@@ -127,7 +127,7 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState, user_id: Strin
         loop {
             match broadcast_rx.recv().await {
                 Ok(msg) => {
-                    if sender.send(Message::Text(msg.into())).await.is_err() {
+                    if sender.send(Message::Text(msg)).await.is_err() {
                         break;
                     }
                 }

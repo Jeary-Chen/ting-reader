@@ -110,7 +110,7 @@ async fn get_input_url(
         // 读取 strm 文件内容
         let url = if library.library_type == "local" {
             std::fs::read_to_string(&chapter.path)
-                .map_err(|e| TingError::IoError(e))?
+                .map_err(TingError::IoError)?
                 .trim()
                 .to_string()
         } else if library.library_type == "webdav" {
@@ -134,14 +134,12 @@ async fn get_input_url(
         };
 
         if url.is_empty() || !url.starts_with("http") {
-            return Err(TingError::InvalidRequest(format!("Invalid strm URL")));
+            return Err(TingError::InvalidRequest("Invalid strm URL".to_string()));
         }
 
         tracing::info!("HLS transcoding strm: {}", sanitize_url(&url));
         Ok(url)
-    } else if library.library_type == "local" {
-        Ok(chapter.path.clone())
-    } else if library.library_type == "rss" {
+    } else if matches!(library.library_type.as_str(), "local" | "rss") {
         Ok(chapter.path.clone())
     } else {
         // 构建 WebDAV URL
@@ -234,17 +232,15 @@ async fn start_hls_transcoding(
     cmd.stdout(Stdio::null());
     cmd.stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().map_err(|e| TingError::IoError(e))?;
+    let mut child = cmd.spawn().map_err(TingError::IoError)?;
 
     // 监控 stderr
     if let Some(mut stderr) = child.stderr.take() {
         let session_id = session_id.to_string();
         tokio::spawn(async move {
             let mut buffer = String::new();
-            if let Ok(_) = stderr.read_to_string(&mut buffer).await {
-                if !buffer.is_empty() {
-                    tracing::warn!("HLS [{}] FFmpeg: {}", session_id, buffer);
-                }
+            if stderr.read_to_string(&mut buffer).await.is_ok() && !buffer.is_empty() {
+                tracing::warn!("HLS [{}] FFmpeg: {}", session_id, buffer);
             }
         });
     }

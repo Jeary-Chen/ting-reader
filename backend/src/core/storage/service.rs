@@ -13,6 +13,12 @@ pub struct StorageService {
     client: Client,
 }
 
+impl Default for StorageService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StorageService {
     pub fn new() -> Self {
         let client = Client::builder()

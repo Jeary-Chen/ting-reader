@@ -193,6 +193,9 @@ impl Plugin for FailedPlugin {
     }
 }
 
+type PluginStateSubscriber = Box<dyn Fn(crate::plugin::types::PluginStateEvent) + Send + Sync>;
+type PluginStateSubscribers = Arc<RwLock<Vec<PluginStateSubscriber>>>;
+
 /// Manager for the plugin system
 pub struct PluginManager {
     pub(crate) config: PluginConfig,
@@ -200,8 +203,7 @@ pub struct PluginManager {
     pub(crate) metadata_cache: Arc<RwLock<HashMap<PluginId, PathBuf>>>,
     pub(crate) wasm_runtime: Arc<WasmRuntime>,
     pub(crate) http_client: reqwest::Client,
-    pub(crate) _event_subscribers:
-        Arc<RwLock<Vec<Box<dyn Fn(crate::plugin::types::PluginStateEvent) + Send + Sync>>>>,
+    pub(crate) _event_subscribers: PluginStateSubscribers,
     pub(crate) load_semaphore: Arc<Semaphore>,
     pub(crate) store_cache: Arc<crate::plugin::store::PluginCache>,
     pub(crate) config_manager: std::sync::RwLock<Option<Arc<PluginConfigManager>>>,
@@ -215,6 +217,10 @@ impl PluginManager {
         let wasm_runtime = Arc::new(WasmRuntime::new()?);
         let http_client = reqwest::Client::builder()
             .user_agent("TingReader/1.0")
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
+            .no_proxy()
             .build()
             .map_err(|e| TingError::NetworkError(e.to_string()))?;
 

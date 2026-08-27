@@ -377,8 +377,10 @@ mod tests {
     #[test]
     fn test_service_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = DecryptionCacheConfig::default();
-        config.cache_dir = temp_dir.path().to_path_buf();
+        let config = DecryptionCacheConfig {
+            cache_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let service = DecryptionCacheService::new(config);
         assert!(service.is_ok());
@@ -388,8 +390,10 @@ mod tests {
     #[test]
     fn test_temp_path_generation() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = DecryptionCacheConfig::default();
-        config.cache_dir = temp_dir.path().to_path_buf();
+        let config = DecryptionCacheConfig {
+            cache_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let service = DecryptionCacheService::new(config).unwrap();
 
@@ -403,8 +407,10 @@ mod tests {
     #[tokio::test]
     async fn test_cache_stats() {
         let temp_dir = TempDir::new().unwrap();
-        let mut config = DecryptionCacheConfig::default();
-        config.cache_dir = temp_dir.path().to_path_buf();
+        let config = DecryptionCacheConfig {
+            cache_dir: temp_dir.path().to_path_buf(),
+            ..Default::default()
+        };
 
         let service = DecryptionCacheService::new(config).unwrap();
         let stats = service.stats().unwrap();

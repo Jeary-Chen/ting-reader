@@ -36,11 +36,14 @@ struct PluginConfigEntry {
     updated_at: i64,
 }
 
+type ConfigSubscriber = Box<dyn Fn(ConfigChangeEvent) + Send + Sync>;
+type ConfigSubscribers = Arc<RwLock<Vec<ConfigSubscriber>>>;
+
 /// Plugin configuration manager
 pub struct PluginConfigManager {
     config_dir: PathBuf,
     configs: Arc<RwLock<HashMap<PluginId, PluginConfigEntry>>>,
-    subscribers: Arc<RwLock<Vec<Box<dyn Fn(ConfigChangeEvent) + Send + Sync>>>>,
+    subscribers: ConfigSubscribers,
     encryption_key: Arc<[u8; 32]>,
 }
 

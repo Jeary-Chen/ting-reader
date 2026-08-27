@@ -21,6 +21,7 @@ export interface Book {
   genre?: string;
   year?: number;
   chapter_regex?: string;
+  manual_corrected?: boolean;
 }
 
 export interface BookMetadata {

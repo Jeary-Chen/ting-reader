@@ -136,6 +136,22 @@ fn summarize_device(user_agent: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_user(role: &str) -> AuthUser {
+        AuthUser {
+            user_id: "user-1".to_string(),
+            id: "user-1".to_string(),
+            username: "alice".to_string(),
+            role: role.to_string(),
+        }
+    }
+
+    #[test]
+    fn require_admin_rejects_non_admin_users() {
+        let error = require_admin(&test_user("user")).unwrap_err();
+        assert!(matches!(error, TingError::PermissionDenied(_)));
+        require_admin(&test_user("admin")).unwrap();
+    }
+
     #[test]
     fn normalizes_ipv4_mapped_ipv6_from_forwarded_header() {
         let mut headers = HeaderMap::new();

@@ -8,17 +8,31 @@
 //! - Async function support (Promise ↔ Future)
 
 use anyhow::{Context, Result};
+use futures::StreamExt;
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE,
+    LOCATION, PROXY_AUTHORIZATION, TRANSFER_ENCODING,
+};
+use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde_json::Value;
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 use super::super::scraper::{Chapter, SearchResult};
 use super::super::types::{
-    PluginContext, PluginEventBus, PluginLogger, PluginMetadata, PluginType,
+    PluginContext, PluginEventBus, PluginLogContext, PluginLogSource, PluginLogger, PluginMetadata,
+    PluginType,
 };
 use super::npm::NpmDependency;
 use super::plugin::JavaScriptPluginExecutor;
+use crate::plugin::logger::{DefaultPluginLogger, PluginLogLevel};
 use crate::plugin::{PluginHostGatewayHandle, PluginHostUser};
+
+const MAX_JS_FETCH_REDIRECTS: usize = 5;
+const MAX_JS_FETCH_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+const DEFAULT_JS_FETCH_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// JavaScript Scraper Plugin Adapter
 ///
@@ -256,9 +270,365 @@ struct JsHostGatewayState {
     host_gateway: Option<PluginHostGatewayHandle>,
 }
 
+#[derive(Clone)]
+struct JsPluginLogState {
+    logger: DefaultPluginLogger,
+}
+
 #[derive(Clone, Default)]
 pub struct JsHostInvocationContext {
     pub user: Option<PluginHostUser>,
+}
+
+#[derive(Clone)]
+struct JsFetchOptions {
+    method: Method,
+    headers: HeaderMap,
+    body: Option<String>,
+    timeout: Duration,
+}
+
+impl Default for JsFetchOptions {
+    fn default() -> Self {
+        Self {
+            method: Method::GET,
+            headers: HeaderMap::new(),
+            body: None,
+            timeout: DEFAULT_JS_FETCH_TIMEOUT,
+        }
+    }
+}
+
+fn build_js_fetch_client(url: &Url, resolved: &[SocketAddr]) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(DEFAULT_JS_FETCH_TIMEOUT)
+        .connect_timeout(Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy();
+    if matches!(url.host(), Some(url::Host::Domain(_))) {
+        let host = url
+            .host_str()
+            .ok_or_else(|| anyhow::anyhow!("Plugin fetch URL is missing a host"))?;
+        builder = builder.resolve_to_addrs(host, resolved);
+    }
+    builder
+        .build()
+        .context("Failed to build plugin fetch client")
+}
+
+fn parse_js_fetch_options(options: Option<&Value>) -> Result<JsFetchOptions> {
+    let Some(options) = options else {
+        return Ok(JsFetchOptions::default());
+    };
+
+    let mut parsed = JsFetchOptions::default();
+    if let Some(method) = options.get("method").and_then(Value::as_str) {
+        parsed.method = match method.to_ascii_uppercase().as_str() {
+            "POST" => Method::POST,
+            "PUT" => Method::PUT,
+            "DELETE" => Method::DELETE,
+            _ => Method::GET,
+        };
+    }
+
+    if let Some(headers) = options.get("headers").and_then(Value::as_object) {
+        for (name, value) in headers {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            let name = HeaderName::from_bytes(name.as_bytes())
+                .context("Plugin fetch contains an invalid header name")?;
+            let value = HeaderValue::from_str(value)
+                .context("Plugin fetch contains an invalid header value")?;
+            parsed.headers.insert(name, value);
+        }
+    }
+
+    parsed.body = options
+        .get("body")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    if let Some(timeout_ms) = options.get("timeout_ms").and_then(Value::as_u64) {
+        parsed.timeout = Duration::from_millis(timeout_ms.clamp(1_000, 600_000));
+    }
+
+    Ok(parsed)
+}
+
+fn redacted_js_fetch_url(url: &Url) -> String {
+    let mut redacted = url.clone();
+    if redacted.set_username("").is_err() || redacted.set_password(None).is_err() {
+        return "<invalid-url>".to_string();
+    }
+    redacted.set_query(None);
+    redacted.set_fragment(None);
+    redacted.to_string()
+}
+
+fn redacted_js_fetch_url_str(url: &str) -> String {
+    Url::parse(url)
+        .map(|parsed| redacted_js_fetch_url(&parsed))
+        .unwrap_or_else(|_| "<invalid-url>".to_string())
+}
+
+async fn validate_js_fetch_target(
+    allowed_domains: &[String],
+    url: &Url,
+) -> Result<Vec<SocketAddr>> {
+    let redacted_url = redacted_js_fetch_url(url);
+    if !matches!(url.scheme(), "http" | "https") {
+        anyhow::bail!("Network access denied: unsupported URL scheme for {redacted_url}");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        anyhow::bail!("Network access denied: URL credentials are not allowed");
+    }
+    if !is_network_allowed(allowed_domains, url.as_str()) {
+        anyhow::bail!("Network access denied for {redacted_url}");
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("Network access denied: URL is missing a host"))?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("Network access denied: URL uses an unknown port"))?;
+    if port == 0 {
+        anyhow::bail!("Network access denied: port 0 is not allowed");
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(vec![SocketAddr::new(ip, port)]);
+    }
+
+    let resolved = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .with_context(|| format!("Failed to resolve plugin fetch host {host}"))?
+        .collect::<Vec<_>>();
+    if resolved.is_empty() {
+        anyhow::bail!("Network access denied: host did not resolve to an address");
+    }
+
+    Ok(resolved)
+}
+
+fn is_followable_js_fetch_redirect(status: StatusCode) -> bool {
+    matches!(
+        status,
+        StatusCode::MOVED_PERMANENTLY
+            | StatusCode::FOUND
+            | StatusCode::SEE_OTHER
+            | StatusCode::TEMPORARY_REDIRECT
+            | StatusCode::PERMANENT_REDIRECT
+    )
+}
+
+fn same_url_origin(left: &Url, right: &Url) -> bool {
+    left.scheme() == right.scheme()
+        && left.host_str().map(str::to_ascii_lowercase)
+            == right.host_str().map(str::to_ascii_lowercase)
+        && left.port_or_known_default() == right.port_or_known_default()
+}
+
+fn strip_cross_origin_fetch_headers(headers: &mut HeaderMap) {
+    headers.remove(AUTHORIZATION);
+    headers.remove(COOKIE);
+    headers.remove(PROXY_AUTHORIZATION);
+}
+
+fn apply_js_fetch_redirect_semantics(
+    status: StatusCode,
+    method: &mut Method,
+    headers: &mut HeaderMap,
+    body: &mut Option<String>,
+) {
+    let switch_to_get = status == StatusCode::SEE_OTHER
+        || (matches!(status, StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND)
+            && *method == Method::POST);
+    if switch_to_get {
+        *method = Method::GET;
+        *body = None;
+        headers.remove(CONTENT_LENGTH);
+        headers.remove(CONTENT_TYPE);
+        headers.remove(TRANSFER_ENCODING);
+    }
+}
+
+fn checked_js_fetch_body_len(current: usize, additional: usize) -> Result<usize> {
+    let next = current
+        .checked_add(additional)
+        .ok_or_else(|| anyhow::anyhow!("Plugin fetch response is too large"))?;
+    if next > MAX_JS_FETCH_RESPONSE_BYTES {
+        anyhow::bail!(
+            "Plugin fetch response exceeds the {} MiB limit",
+            MAX_JS_FETCH_RESPONSE_BYTES / (1024 * 1024)
+        );
+    }
+    Ok(next)
+}
+
+async fn execute_js_fetch(
+    raw_url: &str,
+    options: Option<&Value>,
+    allowed_domains: &[String],
+) -> Result<String> {
+    let mut current_url = Url::parse(raw_url).map_err(|error| {
+        anyhow::anyhow!(
+            "Invalid plugin fetch URL {}: {error}",
+            redacted_js_fetch_url_str(raw_url)
+        )
+    })?;
+    let mut options = parse_js_fetch_options(options)?;
+    let deadline = tokio::time::Instant::now() + options.timeout;
+    let mut redirect_count = 0_usize;
+
+    loop {
+        let redacted_url = redacted_js_fetch_url(&current_url);
+        let remaining = deadline
+            .checked_duration_since(tokio::time::Instant::now())
+            .ok_or_else(|| anyhow::anyhow!("Plugin fetch timed out"))?;
+        let resolved = match tokio::time::timeout(
+            remaining,
+            validate_js_fetch_target(allowed_domains, &current_url),
+        )
+        .await
+        {
+            Ok(Ok(resolved)) => resolved,
+            Ok(Err(error)) => {
+                warn!(
+                    url = %redacted_url,
+                    error = %error,
+                    message_key = "plugin.fetch.target_rejected",
+                    "Plugin fetch target rejected"
+                );
+                return Err(error);
+            }
+            Err(_) => return Err(anyhow::anyhow!("Plugin fetch timed out")),
+        };
+
+        let remaining = deadline
+            .checked_duration_since(tokio::time::Instant::now())
+            .ok_or_else(|| anyhow::anyhow!("Plugin fetch timed out"))?;
+        info!(url = %redacted_url, "Plugin fetch request started");
+        let client = build_js_fetch_client(&current_url, &resolved)?;
+        let mut request = client
+            .request(options.method.clone(), current_url.clone())
+            .headers(options.headers.clone())
+            .timeout(remaining);
+        if let Some(body) = &options.body {
+            request = request.body(body.clone());
+        }
+
+        let response = match request.send().await {
+            Ok(response) => response,
+            Err(error) => {
+                let error = error.without_url().to_string();
+                debug!(
+                    url = %redacted_url,
+                    error = %error,
+                    message_key = "plugin.fetch.request_failed",
+                    message_params = %serde_json::json!({ "error": &error }),
+                    "Plugin fetch request failed"
+                );
+                return Err(anyhow::anyhow!("Plugin fetch request failed: {error}"));
+            }
+        };
+
+        let remote = response.remote_addr().ok_or_else(|| {
+            anyhow::anyhow!("Plugin fetch response did not expose its remote address")
+        })?;
+        if !resolved.iter().any(|address| address.ip() == remote.ip()) {
+            warn!(
+                url = %redacted_url,
+                "Plugin fetch connected to an unexpected address"
+            );
+            anyhow::bail!("Network access denied: connected to an unexpected address");
+        }
+
+        let status = response.status();
+        if is_followable_js_fetch_redirect(status) {
+            if redirect_count >= MAX_JS_FETCH_REDIRECTS {
+                anyhow::bail!(
+                    "Plugin fetch exceeded the {} redirect limit",
+                    MAX_JS_FETCH_REDIRECTS
+                );
+            }
+            let location = response
+                .headers()
+                .get(LOCATION)
+                .and_then(|value| value.to_str().ok())
+                .ok_or_else(|| anyhow::anyhow!("Plugin fetch redirect omitted Location"))?;
+            let next_url = current_url
+                .join(location)
+                .map_err(|_| anyhow::anyhow!("Plugin fetch returned an invalid redirect target"))?;
+            if !same_url_origin(&current_url, &next_url) {
+                strip_cross_origin_fetch_headers(&mut options.headers);
+            }
+            apply_js_fetch_redirect_semantics(
+                status,
+                &mut options.method,
+                &mut options.headers,
+                &mut options.body,
+            );
+            info!(
+                from = %redacted_url,
+                to = %redacted_js_fetch_url(&next_url),
+                status = %status,
+                "Plugin fetch following redirect"
+            );
+            current_url = next_url;
+            redirect_count += 1;
+            continue;
+        }
+
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_JS_FETCH_RESPONSE_BYTES as u64)
+        {
+            anyhow::bail!(
+                "Plugin fetch response exceeds the {} MiB limit",
+                MAX_JS_FETCH_RESPONSE_BYTES / (1024 * 1024)
+            );
+        }
+
+        let capacity = response
+            .content_length()
+            .unwrap_or_default()
+            .min(MAX_JS_FETCH_RESPONSE_BYTES as u64) as usize;
+        let mut body = Vec::with_capacity(capacity);
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(error) => {
+                    let error = error.without_url().to_string();
+                    debug!(
+                        url = %redacted_url,
+                        error = %error,
+                        message_key = "plugin.fetch.body_read_failed",
+                        message_params = %serde_json::json!({ "error": &error }),
+                        "Plugin fetch body read failed"
+                    );
+                    return Err(anyhow::anyhow!(
+                        "Plugin fetch response read failed: {error}"
+                    ));
+                }
+            };
+            checked_js_fetch_body_len(body.len(), chunk.len())?;
+            body.extend_from_slice(&chunk);
+        }
+
+        let body = String::from_utf8_lossy(&body).into_owned();
+        info!(
+            url = %redacted_url,
+            status = %status,
+            body_length = body.len(),
+            redirects = redirect_count,
+            "Plugin fetch request completed"
+        );
+        return Ok(body);
+    }
 }
 
 /// Helper to create a JavaScript runtime with plugin bindings
@@ -279,14 +649,11 @@ pub fn create_js_runtime_with_bindings(
     plugin_dir: std::path::PathBuf,
     npm_dependencies: Vec<NpmDependency>,
 ) -> Result<deno_core::JsRuntime> {
-    use deno_core::{op2, Extension, JsRuntime, OpState, RuntimeOptions};
+    use deno_core::{op2, Extension, JsRuntime, Op, OpState, RuntimeOptions};
     use std::cell::RefCell;
     use std::collections::HashSet;
     use std::path::PathBuf;
     use std::rc::Rc;
-    use std::sync::OnceLock;
-
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
     #[derive(Clone)]
     struct JsFetchPermissions {
@@ -297,18 +664,6 @@ pub fn create_js_runtime_with_bindings(
     struct JsNpmModuleState {
         plugin_dir: PathBuf,
         allowed_packages: HashSet<String>,
-    }
-
-    fn get_client() -> &'static reqwest::Client {
-        CLIENT.get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(180))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .danger_accept_invalid_certs(true)
-                .no_proxy()
-                .build()
-                .expect("Failed to build global reqwest client")
-        })
     }
 
     let allowed_paths = sandbox
@@ -324,6 +679,34 @@ pub fn create_js_runtime_with_bindings(
         .map(|s| s.get_allowed_domains().to_vec())
         .unwrap_or_default();
 
+    #[op2]
+    #[string]
+    pub fn op_plugin_log(
+        state: Rc<RefCell<OpState>>,
+        #[string] level: String,
+        #[string] message: String,
+        #[serde] fields: Option<Value>,
+    ) -> Result<String, anyhow::Error> {
+        let level = PluginLogLevel::parse(&level)
+            .ok_or_else(|| anyhow::anyhow!("Unsupported plugin log level"))?;
+        let fields = match fields {
+            None | Some(Value::Null) => None,
+            Some(Value::Object(fields)) => Some(Value::Object(fields)),
+            Some(_) => {
+                return Err(anyhow::anyhow!("Plugin log fields must be a JSON object"));
+            }
+        };
+        let logger = {
+            let state = state.borrow();
+            state
+                .try_borrow::<JsPluginLogState>()
+                .map(|log_state| log_state.logger.clone())
+                .ok_or_else(|| anyhow::anyhow!("Plugin logger is not configured"))?
+        };
+
+        Ok(logger.log(level, &message, fields.as_ref()))
+    }
+
     #[op2(async)]
     #[string]
     pub async fn op_fetch(
@@ -331,8 +714,6 @@ pub fn create_js_runtime_with_bindings(
         #[string] url: String,
         #[serde] options: Option<Value>,
     ) -> Result<String, anyhow::Error> {
-        tracing::info!("op_fetch: starting request {}", url);
-
         let allowed_domains = {
             let state = state.borrow();
             state
@@ -341,75 +722,7 @@ pub fn create_js_runtime_with_bindings(
                 .unwrap_or_default()
         };
 
-        if !is_network_allowed(&allowed_domains, &url) {
-            return Err(anyhow::anyhow!("Network access denied: {}", url));
-        }
-
-        let client = get_client();
-        let mut builder = client.get(&url);
-
-        if let Some(opts) = options {
-            if let Some(method) = opts.get("method").and_then(|m| m.as_str()) {
-                match method.to_uppercase().as_str() {
-                    "POST" => builder = client.post(&url),
-                    "PUT" => builder = client.put(&url),
-                    "DELETE" => builder = client.delete(&url),
-                    _ => {}
-                }
-            }
-            if let Some(headers) = opts.get("headers").and_then(|h| h.as_object()) {
-                for (k, v) in headers {
-                    if let Some(v_str) = v.as_str() {
-                        builder = builder.header(k, v_str);
-                    }
-                }
-            }
-            if let Some(body) = opts.get("body").and_then(|b| b.as_str()) {
-                builder = builder.body(body.to_string());
-            }
-            if let Some(timeout_ms) = opts.get("timeout_ms").and_then(|v| v.as_u64()) {
-                let timeout_ms = timeout_ms.clamp(1_000, 600_000);
-                builder = builder.timeout(std::time::Duration::from_millis(timeout_ms));
-            }
-        }
-
-        tracing::info!("op_fetch: sending request...");
-        match builder.send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                tracing::info!("op_fetch: received response status {}", status);
-                match resp.text().await {
-                    Ok(text) => {
-                        tracing::info!(
-                            "op_fetch: request to {} completed, body length: {}",
-                            url,
-                            text.len()
-                        );
-                        Ok(text)
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            url = %url,
-                            error = %e,
-                            message_key = "plugin.fetch.body_read_failed",
-                            message_params = %serde_json::json!({ "error": e.to_string() }),
-                            "Plugin fetch body read failed"
-                        );
-                        Err(e.into())
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!(
-                    url = %url,
-                    error = %e,
-                    message_key = "plugin.fetch.request_failed",
-                    message_params = %serde_json::json!({ "error": e.to_string() }),
-                    "Plugin fetch request failed"
-                );
-                Err(e.into())
-            }
-        }
+        execute_js_fetch(&url, options.as_ref(), &allowed_domains).await
     }
 
     #[op2(async)]
@@ -503,13 +816,13 @@ pub fn create_js_runtime_with_bindings(
         }))
     }
 
-    #[allow(deprecated)]
     let ext = Extension {
         name: "ting_fetch",
         ops: std::borrow::Cow::Owned(vec![
-            op_fetch::decl(),
-            op_host_invoke::decl(),
-            op_require_module::decl(),
+            op_plugin_log::DECL,
+            op_fetch::DECL,
+            op_host_invoke::DECL,
+            op_require_module::DECL,
         ]),
         ..Default::default()
     };
@@ -520,6 +833,17 @@ pub fn create_js_runtime_with_bindings(
     });
     runtime.op_state().borrow_mut().put(JsFetchPermissions {
         allowed_domains: allowed_domains.clone(),
+    });
+    let (stable_plugin_id, plugin_version) = split_plugin_instance_id(&plugin_id);
+    runtime.op_state().borrow_mut().put(JsPluginLogState {
+        logger: DefaultPluginLogger::from_context(PluginLogContext {
+            plugin_id: stable_plugin_id,
+            plugin_instance_id: plugin_id.clone(),
+            plugin_name: plugin_name.clone(),
+            plugin_version,
+            runtime: "javascript".to_string(),
+            source: PluginLogSource::Code,
+        }),
     });
     runtime.op_state().borrow_mut().put(JsHostGatewayState {
         plugin_id: plugin_id.clone(),
@@ -549,6 +873,15 @@ pub fn create_js_runtime_with_bindings(
         .context("Failed to initialize JavaScript bindings")?;
 
     Ok(runtime)
+}
+
+fn split_plugin_instance_id(instance_id: &str) -> (String, String) {
+    match instance_id.rsplit_once('@') {
+        Some((plugin_id, version)) if !plugin_id.is_empty() && !version.is_empty() => {
+            (plugin_id.to_string(), version.to_string())
+        }
+        _ => (instance_id.to_string(), "unknown".to_string()),
+    }
 }
 
 fn resolve_js_module(
@@ -683,6 +1016,12 @@ fn is_network_allowed(allowed_domains: &[String], url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
         return false;
     };
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+    {
+        return false;
+    }
     let Some(host) = parsed.host_str() else {
         return false;
     };
@@ -750,6 +1089,46 @@ mod tests {
     }
 
     #[test]
+    fn js_plugin_logs_keep_legacy_signature_and_accept_fields() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut runtime = create_js_runtime_with_bindings(
+            "test-plugin".to_string(),
+            "stable-plugin@1.0.0".to_string(),
+            serde_json::json!({}),
+            None,
+            None,
+            temp_dir.path().to_path_buf(),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let result = runtime.execute_script(
+            "<plugin_log_compatibility>",
+            r#"
+            Ting.log.info("legacy message");
+            Ting.log.warn("structured message", { code: 42 });
+            console.error("console message", { retryable: false });
+            "#
+            .to_string()
+            .into(),
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn plugin_instance_id_is_split_into_stable_id_and_version() {
+        assert_eq!(
+            split_plugin_instance_id("demo-plugin@1.2.3"),
+            ("demo-plugin".to_string(), "1.2.3".to_string())
+        );
+        assert_eq!(
+            split_plugin_instance_id("demo-plugin"),
+            ("demo-plugin".to_string(), "unknown".to_string())
+        );
+    }
+
+    #[test]
     fn js_op_fetch_network_permission_denies_by_default() {
         assert!(!is_network_allowed(&[], "https://example.com"));
         assert!(is_network_allowed(
@@ -768,6 +1147,114 @@ mod tests {
             &["example.com".to_string()],
             "https://evil.example.net/path"
         ));
+        assert!(!is_network_allowed(
+            &["example.com".to_string()],
+            "ftp://example.com/archive"
+        ));
+        assert!(!is_network_allowed(
+            &["example.com".to_string()],
+            "https://user:secret@example.com/private"
+        ));
+    }
+
+    #[test]
+    fn js_fetch_urls_are_redacted_before_logging() {
+        let url =
+            Url::parse("https://user:secret@[2606:4700:4700::1111]:8443/plugin?token=secret#part")
+                .unwrap();
+        assert_eq!(
+            redacted_js_fetch_url(&url),
+            "https://[2606:4700:4700::1111]:8443/plugin"
+        );
+        assert_eq!(
+            redacted_js_fetch_url_str("not a URL?token=secret"),
+            "<invalid-url>"
+        );
+    }
+
+    #[tokio::test]
+    async fn js_fetch_target_validation_allows_private_addresses_with_permission() {
+        let allowed_domains = vec!["*".to_string()];
+        for raw_url in [
+            "http://127.0.0.1/private",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[::1]/private",
+        ] {
+            assert!(
+                validate_js_fetch_target(&allowed_domains, &Url::parse(raw_url).unwrap())
+                    .await
+                    .is_ok()
+            );
+        }
+
+        validate_js_fetch_target(
+            &allowed_domains,
+            &Url::parse("https://8.8.8.8/resource").unwrap(),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[test]
+    fn js_fetch_redirects_drop_sensitive_headers_and_post_bodies() {
+        let mut headers = HeaderMap::new();
+        headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
+        headers.insert(COOKIE, HeaderValue::from_static("session=secret"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(CONTENT_LENGTH, HeaderValue::from_static("2"));
+        strip_cross_origin_fetch_headers(&mut headers);
+        assert!(!headers.contains_key(AUTHORIZATION));
+        assert!(!headers.contains_key(COOKIE));
+
+        let mut method = Method::POST;
+        let mut body = Some("{}".to_string());
+        apply_js_fetch_redirect_semantics(StatusCode::FOUND, &mut method, &mut headers, &mut body);
+        assert_eq!(method, Method::GET);
+        assert!(body.is_none());
+        assert!(!headers.contains_key(CONTENT_TYPE));
+        assert!(!headers.contains_key(CONTENT_LENGTH));
+    }
+
+    #[test]
+    fn js_fetch_response_limit_is_enforced_without_overflow() {
+        assert_eq!(
+            checked_js_fetch_body_len(MAX_JS_FETCH_RESPONSE_BYTES - 1, 1).unwrap(),
+            MAX_JS_FETCH_RESPONSE_BYTES
+        );
+        assert!(checked_js_fetch_body_len(MAX_JS_FETCH_RESPONSE_BYTES, 1).is_err());
+        assert!(checked_js_fetch_body_len(usize::MAX, 1).is_err());
+    }
+
+    #[tokio::test]
+    async fn js_fetch_client_pins_dns_and_does_not_follow_redirects_automatically() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://example.com/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+
+        let url = Url::parse(&format!(
+            "http://plugin-fetch.test:{}/start?token=secret",
+            address.port()
+        ))
+        .unwrap();
+        let client = build_js_fetch_client(&url, &[address]).unwrap();
+        let response = client.get(url).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::FOUND);
+        assert_eq!(response.url().host_str(), Some("plugin-fetch.test"));
+        server.await.unwrap();
     }
 
     #[tokio::test]

@@ -469,6 +469,37 @@ BEGIN
 END;
 "#;
 
+/// Twenty-sixth schema migration (version 26)
+const MIGRATION_V26: &str = r#"
+-- Persistent scanner state for local file fingerprints and WebDAV validators.
+CREATE TABLE IF NOT EXISTS library_scan_state (
+    library_id TEXT NOT NULL,
+    entry_path TEXT NOT NULL,
+    entry_kind TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    config_fingerprint TEXT,
+    modified_at TEXT,
+    etag TEXT,
+    size INTEGER,
+    parent_path TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (library_id, entry_path, entry_kind),
+    FOREIGN KEY (library_id) REFERENCES libraries(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_library_scan_state_parent
+    ON library_scan_state(library_id, parent_path, entry_kind);
+CREATE INDEX IF NOT EXISTS idx_library_scan_state_kind
+    ON library_scan_state(library_id, entry_kind);
+"#;
+
+/// Twenty-seventh schema migration (version 27)
+const MIGRATION_V27: &str = r#"
+-- Changed-book auto-merge looks up only matching title groups.
+CREATE INDEX IF NOT EXISTS idx_books_library_title
+    ON books(library_id, title);
+"#;
+
 /// Seventeenth schema migration (version 17)
 const MIGRATION_V17: &str = r#"
 -- Admin-configured webhook notification listeners.
@@ -547,7 +578,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
     // Create migration tracking table
     conn.execute_batch(MIGRATION_TABLE)
-        .map_err(|e| TingError::DatabaseError(e))?;
+        .map_err(TingError::DatabaseError)?;
 
     // Check current version
     let current_version: i64 = conn
@@ -556,7 +587,7 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
             [],
             |row| row.get(0),
         )
-        .map_err(|e| TingError::DatabaseError(e))?;
+        .map_err(TingError::DatabaseError)?;
 
     info!("Current database schema version: {}", current_version);
 
@@ -727,6 +758,16 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         apply_migration(conn, 25, MIGRATION_V25)?;
     }
 
+    if current_version < 26 {
+        info!("Applying migration v26: Persistent library scanner state");
+        apply_migration(conn, 26, MIGRATION_V26)?;
+    }
+
+    if current_version < 27 {
+        info!("Applying migration v27: Book title neighbourhood index");
+        apply_migration(conn, 27, MIGRATION_V27)?;
+    }
+
     info!("Database migrations completed successfully");
     Ok(())
 }
@@ -743,7 +784,7 @@ pub fn run_migrations_with_backup(db_path: &Path) -> Result<()> {
     info!("Created migration backup at: {}", backup_path.display());
 
     // Open connection and run migrations
-    let mut conn = Connection::open(db_path).map_err(|e| TingError::DatabaseError(e))?;
+    let mut conn = Connection::open(db_path).map_err(TingError::DatabaseError)?;
 
     match run_migrations(&mut conn) {
         Ok(_) => {
@@ -772,19 +813,19 @@ fn create_migration_backup(db_path: &Path) -> Result<PathBuf> {
         .join("backups");
 
     // Create backup directory if it doesn't exist
-    fs::create_dir_all(&backup_dir).map_err(|e| TingError::IoError(e))?;
+    fs::create_dir_all(&backup_dir).map_err(TingError::IoError)?;
 
     let backup_path = backup_dir.join(format!("migration_backup_{}.db", timestamp));
 
     // Copy database file
-    fs::copy(db_path, &backup_path).map_err(|e| TingError::IoError(e))?;
+    fs::copy(db_path, &backup_path).map_err(TingError::IoError)?;
 
     Ok(backup_path)
 }
 
 /// Restore database from backup
 fn restore_from_backup(backup_path: &Path, db_path: &Path) -> Result<()> {
-    fs::copy(backup_path, db_path).map_err(|e| TingError::IoError(e))?;
+    fs::copy(backup_path, db_path).map_err(TingError::IoError)?;
 
     Ok(())
 }
@@ -814,9 +855,7 @@ pub fn rollback_to_version(db_path: &Path, target_version: i64, backup_path: &Pa
 /// Apply a single migration
 fn apply_migration(conn: &mut Connection, version: i64, sql: &str) -> Result<()> {
     // Start transaction
-    let tx = conn
-        .transaction()
-        .map_err(|e| TingError::DatabaseError(e))?;
+    let tx = conn.transaction().map_err(TingError::DatabaseError)?;
 
     // Execute migration SQL
     tx.execute_batch(sql).map_err(|e| {
@@ -829,10 +868,10 @@ fn apply_migration(conn: &mut Connection, version: i64, sql: &str) -> Result<()>
         "INSERT INTO schema_migrations (version) VALUES (?)",
         [version],
     )
-    .map_err(|e| TingError::DatabaseError(e))?;
+    .map_err(TingError::DatabaseError)?;
 
     // Commit transaction
-    tx.commit().map_err(|e| TingError::DatabaseError(e))?;
+    tx.commit().map_err(TingError::DatabaseError)?;
 
     info!("Migration v{} applied successfully", version);
     Ok(())
@@ -900,6 +939,55 @@ CREATE INDEX IF NOT EXISTS idx_playlists_user_id ON playlists(user_id);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_v26_creates_persistent_scanner_state() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_TABLE).unwrap();
+        conn.execute_batch("CREATE TABLE libraries (id TEXT PRIMARY KEY);")
+            .unwrap();
+
+        apply_migration(&mut conn, 26, MIGRATION_V26).unwrap();
+
+        let table_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'library_scan_state'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_library_scan_state_parent', 'idx_library_scan_state_kind')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(table_exists, 1);
+        assert_eq!(index_count, 2);
+    }
+
+    #[test]
+    fn migration_v27_indexes_library_title_neighbourhoods() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_TABLE).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE books (id TEXT PRIMARY KEY, library_id TEXT NOT NULL, title TEXT);",
+        )
+        .unwrap();
+
+        apply_migration(&mut conn, 27, MIGRATION_V27).unwrap();
+
+        let index_exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_books_library_title'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_exists, 1);
+    }
 
     #[test]
     fn migration_v25_compacts_raw_events_without_losing_totals() {

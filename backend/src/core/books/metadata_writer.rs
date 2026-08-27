@@ -166,7 +166,7 @@ fn chapter_match_key(value: &str) -> String {
 
 pub fn write_metadata_json(dir: &Path, metadata: &AudiobookshelfMetadata) -> Result<()> {
     let path = dir.join("metadata.json");
-    let file = std::fs::File::create(&path).map_err(|e| TingError::IoError(e))?;
+    let file = std::fs::File::create(&path).map_err(TingError::IoError)?;
     serde_json::to_writer_pretty(file, metadata)
         .map_err(|e| TingError::SerializationError(e.to_string()))?;
     tracing::info!(
@@ -184,7 +184,7 @@ pub fn read_metadata_json(dir: &Path) -> Result<Option<AudiobookshelfMetadata>> 
     if !path.exists() {
         return Ok(None);
     }
-    let file = std::fs::File::open(&path).map_err(|e| TingError::IoError(e))?;
+    let file = std::fs::File::open(&path).map_err(TingError::IoError)?;
     let metadata: AudiobookshelfMetadata = serde_json::from_reader(file)
         .map_err(|e| TingError::DeserializationError(e.to_string()))?;
     Ok(Some(metadata))

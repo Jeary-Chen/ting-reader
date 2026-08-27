@@ -8,10 +8,13 @@ use super::{FailedPlugin, PluginEntry, PluginManager};
 use crate::core::error::{Result, TingError};
 use crate::plugin::installer::PluginInstaller;
 use crate::plugin::js::{JavaScriptPluginLoader, JavaScriptPluginWrapper};
+use crate::plugin::logger::{emit_plugin_event, PluginLogLevel};
 use crate::plugin::native::{NativeLoader, NativePlugin};
 use crate::plugin::tr_package::{self, TrPackageSignatureIdentity};
 use crate::plugin::types::metadata::has_plugin_manifest;
-use crate::plugin::types::{Plugin, PluginContext, PluginId, PluginMetadata, PluginState};
+use crate::plugin::types::{
+    Plugin, PluginContext, PluginId, PluginLogSource, PluginMetadata, PluginState,
+};
 
 impl PluginManager {
     /// Load a plugin from a directory
@@ -70,7 +73,7 @@ impl PluginManager {
                     )
                 }
                 Err(_) => {
-                    let timeout_err = format!("Plugin load timeout after 30s");
+                    let timeout_err = "Plugin load timeout after 30s".to_string();
                     error!("{} for plugin {}", timeout_err, plugin_id);
                     (
                         Arc::new(FailedPlugin::new(metadata.clone(), timeout_err.clone()))
@@ -86,7 +89,7 @@ impl PluginManager {
         {
             let mut registry = self.registry.write().await;
             let mut entry = PluginEntry::new(metadata.clone(), instance);
-            entry.state = state.clone();
+            entry.state = state;
             entry.load_error = error;
             registry.insert(plugin_id.clone(), entry);
         }
@@ -106,6 +109,18 @@ impl PluginManager {
                     entry.load_error = Some(e.to_string());
                 }
             }
+        } else {
+            let fields = serde_json::json!({
+                "op": "plugin.lifecycle.load",
+                "state": "failed",
+            });
+            emit_plugin_event(
+                &metadata,
+                PluginLogSource::Lifecycle,
+                PluginLogLevel::Error,
+                "Plugin failed to load",
+                Some(&fields),
+            );
         }
 
         info!("Plugin load completed for: {} (permit released)", plugin_id);
@@ -734,7 +749,11 @@ impl PluginManager {
 
         let download_url = crate::plugin::store::get_download_url(plugin)?;
 
-        info!("Downloading plugin {} from {}", plugin_id, download_url);
+        info!(
+            plugin_id = %plugin_id,
+            download_url = %crate::plugin::store::redacted_download_url(&download_url),
+            "Downloading plugin package"
+        );
 
         let temp_dir = self.config.plugin_dir.join("temp");
         if !temp_dir.exists() {
@@ -856,6 +875,17 @@ impl PluginManager {
         }
 
         let context = self.create_plugin_context(&metadata)?;
+        let initializing_fields = serde_json::json!({
+            "op": "plugin.lifecycle.initialize",
+            "state": "initializing",
+        });
+        emit_plugin_event(
+            &metadata,
+            PluginLogSource::Lifecycle,
+            PluginLogLevel::Info,
+            "Plugin initialization started",
+            Some(&initializing_fields),
+        );
 
         let instance = {
             let mut registry = self.registry.write().await;
@@ -866,7 +896,20 @@ impl PluginManager {
             entry.instance.clone()
         };
 
-        instance.initialize(&context).await?;
+        if let Err(error) = instance.initialize(&context).await {
+            let failed_fields = serde_json::json!({
+                "op": "plugin.lifecycle.initialize",
+                "state": "failed",
+            });
+            emit_plugin_event(
+                &metadata,
+                PluginLogSource::Lifecycle,
+                PluginLogLevel::Error,
+                "Plugin initialization failed",
+                Some(&failed_fields),
+            );
+            return Err(error);
+        }
 
         {
             let mut registry = self.registry.write().await;
@@ -874,21 +917,56 @@ impl PluginManager {
                 entry.set_state(PluginState::Active);
             }
         }
+        let active_fields = serde_json::json!({
+            "op": "plugin.lifecycle.initialize",
+            "state": "active",
+        });
+        emit_plugin_event(
+            &metadata,
+            PluginLogSource::Lifecycle,
+            PluginLogLevel::Info,
+            "Plugin is active",
+            Some(&active_fields),
+        );
 
         Ok(())
     }
 
     pub(crate) async fn shutdown_plugin(&self, plugin_id: &PluginId) -> Result<()> {
-        let instance = {
+        let (instance, metadata) = {
             let mut registry = self.registry.write().await;
             let entry = registry
                 .get_mut(plugin_id)
                 .ok_or_else(|| TingError::PluginNotFound(plugin_id.clone()))?;
             entry.set_state(PluginState::Unloading);
-            entry.instance.clone()
+            (entry.instance.clone(), entry.metadata.clone())
         };
 
-        instance.shutdown().await?;
+        if let Err(error) = instance.shutdown().await {
+            let fields = serde_json::json!({
+                "op": "plugin.lifecycle.shutdown",
+                "state": "failed",
+            });
+            emit_plugin_event(
+                &metadata,
+                PluginLogSource::Lifecycle,
+                PluginLogLevel::Error,
+                "Plugin shutdown failed",
+                Some(&fields),
+            );
+            return Err(error);
+        }
+        let fields = serde_json::json!({
+            "op": "plugin.lifecycle.shutdown",
+            "state": "unloaded",
+        });
+        emit_plugin_event(
+            &metadata,
+            PluginLogSource::Lifecycle,
+            PluginLogLevel::Info,
+            "Plugin shutdown completed",
+            Some(&fields),
+        );
         Ok(())
     }
 
@@ -899,22 +977,22 @@ impl PluginManager {
                 metadata
                     .config_schema
                     .as_ref()
-                    .map(|s| extract_defaults_from_schema(s))
+                    .map(extract_defaults_from_schema)
                     .unwrap_or(serde_json::json!({}))
             })
         } else {
             metadata
                 .config_schema
                 .as_ref()
-                .map(|s| extract_defaults_from_schema(s))
+                .map(extract_defaults_from_schema)
                 .unwrap_or(serde_json::json!({}))
         };
 
         Ok(PluginContext {
             config,
             data_dir: self.config.plugin_dir.join("data").join(&metadata.name),
-            logger: Arc::new(crate::plugin::logger::DefaultPluginLogger::new(
-                metadata.name.clone(),
+            logger: Arc::new(crate::plugin::logger::DefaultPluginLogger::from_metadata(
+                metadata,
             )),
             event_bus: Arc::new(crate::plugin::events::DefaultPluginEventBus::new()),
         })

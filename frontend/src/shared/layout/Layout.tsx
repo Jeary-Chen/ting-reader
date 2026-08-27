@@ -12,7 +12,9 @@ import {
   Users,
   Terminal,
   ListMusic,
-  Puzzle
+  Puzzle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuthStore } from '../../core/stores/authStore';
 import { getRuntimeAssetUrl } from '../../core/utils/runtimeUrl';
@@ -27,9 +29,12 @@ import {
 } from '../../core/utils/sessionRestore';
 import apiClient from '../../core/api/client';
 import { setApplicationTimeZone } from '../../core/utils/timeZone';
+import { useClientExtensions } from '../../core/hooks/useClientExtensions';
+import { useUiPreferencesStore } from '../../core/stores/uiPreferencesStore';
 
 import Player from '../../features/player/Player';
 import PluginExtensionHost from '../pluginExtensions/PluginExtensionHost';
+import PluginExtensionIcon from '../pluginExtensions/PluginExtensionIcon';
 
 type NavItem = {
   icon: React.ReactNode;
@@ -55,6 +60,10 @@ const Layout: React.FC = () => {
   const logout = useAuthStore(state => state.logout);
   const hasCurrentChapter = usePlayerStore(state => !!state.currentChapter);
   const setPlaybackSpeed = usePlayerStore(state => state.setPlaybackSpeed);
+  const sidebarCollapsed = useUiPreferencesStore(state => state.sidebarCollapsed);
+  const toggleSidebarCollapsed = useUiPreferencesStore(state => state.toggleSidebarCollapsed);
+  const setPluginToolMenuEnabled = useUiPreferencesStore(state => state.setPluginToolMenuEnabled);
+  const { registry: pluginExtensionRegistry } = useClientExtensions();
 
   // Validate Token on Mount
   React.useEffect(() => {
@@ -95,6 +104,7 @@ const Layout: React.FC = () => {
   // Fetch and apply user settings
   React.useEffect(() => {
     if (user && !isConnecting && !connectionError) {
+      setPluginToolMenuEnabled(true);
       apiClient.get('/api/settings').then(res => {
         const settings = res.data;
         const speed = settings.playback_speed;
@@ -105,9 +115,14 @@ const Layout: React.FC = () => {
         if (language) {
           void setLanguage(normalizeLanguage(language), false);
         }
+        setPluginToolMenuEnabled(
+          settings.plugin_tool_menu_enabled
+            ?? settings.settings_json?.plugin_tool_menu_enabled
+            ?? true,
+        );
       }).catch(err => console.error('Failed to sync user settings', err));
     }
-  }, [user, setPlaybackSpeed, isConnecting, connectionError, setLanguage]);
+  }, [user, setPlaybackSpeed, isConnecting, connectionError, setLanguage, setPluginToolMenuEnabled]);
 
   React.useEffect(() => {
     if (!user || isConnecting || connectionError) return;
@@ -138,6 +153,12 @@ const Layout: React.FC = () => {
     { icon: <Terminal size={20} />, label: t('nav.logs'), path: '/admin/logs' },
     { icon: <Users size={20} />, label: t('nav.users'), path: '/admin/users' },
   ] satisfies NavItem[];
+
+  const pluginPageItems = (pluginExtensionRegistry.bySlot['app.sidebar_page'] || []).map((extension) => ({
+    icon: <PluginExtensionIcon extension={extension} size={20} />,
+    label: extension.title || extension.pluginName || extension.capability.id,
+    path: `/plugin-pages/${encodeURIComponent(extension.pluginId)}/${encodeURIComponent(extension.capability.id)}`,
+  })) satisfies NavItem[];
 
   const handleLogout = () => {
     logout();
@@ -223,14 +244,21 @@ const Layout: React.FC = () => {
       <Link
         to={item.path}
         onClick={() => setIsSidebarOpen(false)}
-        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${
-          isActive 
-            ? 'bg-primary-600 text-white shadow-lg shadow-primary-500/30' 
+        title={sidebarCollapsed ? item.label : undefined}
+        className={`flex h-12 items-center rounded-xl transition-all ${
+          sidebarCollapsed ? 'xl:justify-center xl:px-0' : 'gap-3 px-4'
+        } ${
+          isActive
+            ? 'bg-primary-600 text-white shadow-lg shadow-primary-500/30'
             : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
         }`}
       >
-        {item.icon}
-        <span className="font-medium">{item.label}</span>
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center">
+          {item.icon}
+        </span>
+        <span className={`truncate font-medium ${sidebarCollapsed ? 'xl:hidden' : ''}`}>
+          {item.label}
+        </span>
       </Link>
     );
   };
@@ -247,36 +275,54 @@ const Layout: React.FC = () => {
 
       {/* Sidebar */}
       <aside className={`
-        fixed xl:sticky top-0 inset-y-0 left-0 w-72 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-[100] transform transition-transform duration-300 ease-out xl:translate-x-0
+        fixed xl:sticky top-0 inset-y-0 left-0 w-72 ${sidebarCollapsed ? 'xl:w-20' : 'xl:w-72'} bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-[100] transform transition-[transform,width] duration-300 ease-out xl:translate-x-0
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="flex flex-col h-full p-4">
-          <div className="hidden xl:flex items-center gap-3 px-4 py-6 mb-4">
-            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-10 h-10 shadow-lg shadow-primary-500/10 object-contain" />
-            <span className="font-bold text-xl dark:text-white tracking-tight">Ting Reader</span>
+        <div className={`flex h-full flex-col ${sidebarCollapsed ? 'p-2' : 'p-4'}`}>
+          <div className={`relative hidden h-14 items-center py-2 xl:flex ${sidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-2'}`}>
+            <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="h-9 w-9 shrink-0 object-contain shadow-lg shadow-primary-500/10" />
+            {!sidebarCollapsed && (
+              <span className="min-w-0 flex-1 truncate whitespace-nowrap text-xl font-bold tracking-tight dark:text-white">Ting Reader</span>
+            )}
+            <button
+              type="button"
+              onClick={toggleSidebarCollapsed}
+              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition-colors hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-primary-700 dark:hover:text-primary-300 ${sidebarCollapsed ? 'absolute -right-5 top-1/2 z-10 -translate-y-1/2' : 'ml-auto'}`}
+              title={sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+              aria-label={sidebarCollapsed ? t('nav.expandSidebar') : t('nav.collapseSidebar')}
+            >
+              {sidebarCollapsed ? <ChevronRight size={17} /> : <ChevronLeft size={17} />}
+            </button>
           </div>
 
-          <nav className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
+          <nav className="flex flex-1 flex-col overflow-y-auto custom-scrollbar">
             <div className="xl:block hidden">
-              <div className="text-xs font-bold text-slate-400 uppercase tracking-widest px-4 mb-2 mt-4">{t('nav.mainMenu')}</div>
+              {!sidebarCollapsed && <div className="mt-1 mb-1 px-4 text-xs font-bold uppercase tracking-widest text-slate-400">{t('nav.mainMenu')}</div>}
               {menuItems.map((item) => <NavLink key={item.path} item={item} />)}
             </div>
 
             {user?.role === 'admin' && (
               <div className="xl:mt-8">
-                <div className="text-xs font-bold text-slate-400 uppercase tracking-widest px-4 mb-2 mt-4 xl:mt-0">{t('nav.admin')}</div>
+                <div className={`text-xs font-bold text-slate-400 uppercase tracking-widest px-4 mb-2 mt-4 xl:mt-0 ${sidebarCollapsed ? 'xl:hidden' : ''}`}>{t('nav.admin')}</div>
                 {adminItems.map((item) => <NavLink key={item.path} item={item} />)}
+              </div>
+            )}
+
+            {pluginPageItems.length > 0 && (
+              <div className={sidebarCollapsed ? 'mt-auto pt-8 xl:mt-8 xl:pt-0' : 'mt-auto pt-8'}>
+                <div className={`text-xs font-bold text-slate-400 uppercase tracking-widest px-4 mb-2 ${sidebarCollapsed ? 'xl:hidden' : ''}`}>{t('nav.pluginPages')}</div>
+                {pluginPageItems.map((item) => <NavLink key={item.path} item={item} />)}
               </div>
             )}
           </nav>
 
           <div className="mt-auto pt-4 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex items-center justify-between bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl">
+            <div className={`flex items-center bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg ${sidebarCollapsed ? 'xl:flex-col xl:gap-2' : 'justify-between'}`}>
               <div className="flex items-center gap-3 overflow-hidden">
                 <div className="w-10 h-10 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center text-primary-600 shrink-0 font-bold text-sm">
                   {user?.username.charAt(0).toUpperCase()}
                 </div>
-                <div className="truncate">
+                <div className={`truncate ${sidebarCollapsed ? 'xl:hidden' : ''}`}>
                   <p className="text-sm font-bold dark:text-white truncate">{user?.username}</p>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">{user?.role === 'admin' ? 'Administrator' : 'User'}</p>
                 </div>
@@ -333,7 +379,9 @@ const Layout: React.FC = () => {
 
         {/* Player - Moved inside the right-side container to prevent sidebar overlap */}
         {hasCurrentChapter && <Player />}
-        <PluginExtensionHost />
+        {!location.pathname.startsWith('/plugin-pages') && (
+          <PluginExtensionHost />
+        )}
       </div>
     </div>
   );

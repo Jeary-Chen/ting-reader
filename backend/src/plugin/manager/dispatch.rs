@@ -5,9 +5,10 @@ use super::enums::{FormatMethod, ScraperMethod};
 use super::PluginManager;
 use crate::core::error::{Result, TingError};
 use crate::plugin::js::JavaScriptPluginWrapper;
+use crate::plugin::logger::{emit_plugin_event, PluginLogLevel};
 use crate::plugin::native::NativePlugin;
 use crate::plugin::scraper::ScraperPlugin;
-use crate::plugin::types::PluginId;
+use crate::plugin::types::{PluginId, PluginLogSource};
 use crate::plugin::wasm::WasmPlugin;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,9 +43,15 @@ impl PluginManager {
                 )))
             };
 
-        self.record_plugin_call(id, started_at.elapsed(), result.as_ref().err())
-            .await;
-        result
+        self.record_plugin_call(
+            id,
+            method,
+            started_at.elapsed(),
+            result.as_ref().err(),
+            PluginLogLevel::Debug,
+        )
+        .await;
+        result.map_err(TingError::mark_plugin_execution_logged)
     }
 
     /// Call a scraper plugin method
@@ -84,50 +91,68 @@ impl PluginManager {
         };
 
         let started_at = Instant::now();
-        let result =
-            if let Some(wrapper) = instance.as_any().downcast_ref::<JavaScriptPluginWrapper>() {
-                wrapper.call_function(&method_name, params).await
-            } else if let Some(wasm_plugin) = instance.as_any().downcast_ref::<WasmPlugin>() {
-                match method {
-                    ScraperMethod::Search => {
-                        let result = wasm_plugin.search_with_params(params).await?;
-                        Ok(serde_json::to_value(result).map_err(|e| {
+        let result = if let Some(wrapper) =
+            instance.as_any().downcast_ref::<JavaScriptPluginWrapper>()
+        {
+            wrapper.call_function(&method_name, params).await
+        } else if let Some(wasm_plugin) = instance.as_any().downcast_ref::<WasmPlugin>() {
+            match method {
+                ScraperMethod::Search => {
+                    wasm_plugin
+                        .search_with_params(params)
+                        .await
+                        .and_then(|result| {
+                            serde_json::to_value(result).map_err(|e| {
+                                TingError::PluginExecutionError(format!(
+                                    "Serialization error: {}",
+                                    e
+                                ))
+                            })
+                        })
+                }
+                ScraperMethod::GetChapterList => {
+                    let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    wasm_plugin.get_chapters(id).await.and_then(|result| {
+                        serde_json::to_value(result).map_err(|e| {
                             TingError::PluginExecutionError(format!("Serialization error: {}", e))
-                        })?)
-                    }
-                    ScraperMethod::GetChapterList => {
-                        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let result = wasm_plugin.get_chapters(id).await?;
-                        Ok(serde_json::to_value(result).map_err(|e| {
-                            TingError::PluginExecutionError(format!("Serialization error: {}", e))
-                        })?)
-                    }
-                    ScraperMethod::DownloadCover => {
-                        let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                        let result = wasm_plugin.download_cover(url).await?;
+                        })
+                    })
+                }
+                ScraperMethod::DownloadCover => {
+                    let url = params.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                    wasm_plugin.download_cover(url).await.map(|result| {
                         use base64::Engine;
                         let b64 = base64::engine::general_purpose::STANDARD.encode(result);
-                        Ok(serde_json::json!({ "data": b64 }))
-                    }
-                    ScraperMethod::GetAudioUrl => {
-                        let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                        let result = wasm_plugin.get_audio_url(id).await?;
-                        Ok(serde_json::json!({ "url": result }))
-                    }
-                    _ => Err(TingError::PluginExecutionError(format!(
-                        "Unsupported method for WASM: {:?}",
-                        method
-                    ))),
+                        serde_json::json!({ "data": b64 })
+                    })
                 }
-            } else {
-                Err(TingError::PluginExecutionError(
-                    "Native scrapers not supported yet".to_string(),
-                ))
-            };
+                ScraperMethod::GetAudioUrl => {
+                    let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                    wasm_plugin
+                        .get_audio_url(id)
+                        .await
+                        .map(|result| serde_json::json!({ "url": result }))
+                }
+                _ => Err(TingError::PluginExecutionError(format!(
+                    "Unsupported method for WASM: {:?}",
+                    method
+                ))),
+            }
+        } else {
+            Err(TingError::PluginExecutionError(
+                "Native scrapers not supported yet".to_string(),
+            ))
+        };
 
-        self.record_plugin_call(id, started_at.elapsed(), result.as_ref().err())
-            .await;
-        result
+        self.record_plugin_call(
+            id,
+            &method_name,
+            started_at.elapsed(),
+            result.as_ref().err(),
+            PluginLogLevel::Info,
+        )
+        .await;
+        result.map_err(TingError::mark_plugin_execution_logged)
     }
 
     /// Call a format plugin method
@@ -180,9 +205,15 @@ impl PluginManager {
             ))
         };
 
-        self.record_plugin_call(id, started_at.elapsed(), result.as_ref().err())
-            .await;
-        result
+        self.record_plugin_call(
+            id,
+            method_name,
+            started_at.elapsed(),
+            result.as_ref().err(),
+            PluginLogLevel::Debug,
+        )
+        .await;
+        result.map_err(TingError::mark_plugin_execution_logged)
     }
 
     /// Helper to find and call an FFmpeg tool provider by capability.
@@ -257,13 +288,17 @@ impl PluginManager {
     pub(crate) async fn record_plugin_call(
         &self,
         id: &PluginId,
+        method: &str,
         duration: Duration,
         error: Option<&TingError>,
+        success_level: PluginLogLevel,
     ) {
         let mut registry = self.registry.write().await;
         let Some(entry) = registry.get_mut(id) else {
             return;
         };
+        let metadata = entry.metadata.clone();
+        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
 
         match error {
             Some(error) => {
@@ -271,10 +306,35 @@ impl PluginManager {
                 entry.stats.record_failure(Some(error_type.as_str()));
             }
             None => {
-                let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
                 entry.stats.record_success(duration_ms);
             }
         }
+        drop(registry);
+
+        let failed = error.is_some();
+        let error_message = error.map(ToString::to_string);
+        let fields = serde_json::json!({
+            "op": "plugin.invoke",
+            "method": method,
+            "duration_ms": duration_ms,
+            "status": if failed { "error" } else { "success" },
+            "error": error_message,
+        });
+        emit_plugin_event(
+            &metadata,
+            PluginLogSource::Runtime,
+            if failed {
+                PluginLogLevel::Error
+            } else {
+                success_level
+            },
+            if failed {
+                "Plugin invocation failed"
+            } else {
+                "Plugin invocation completed"
+            },
+            Some(&fields),
+        );
     }
 }
 
@@ -324,13 +384,21 @@ mod tests {
             .insert(plugin_id.clone(), PluginEntry::new(metadata, instance));
 
         manager
-            .record_plugin_call(&plugin_id, Duration::from_millis(25), None)
+            .record_plugin_call(
+                &plugin_id,
+                "search",
+                Duration::from_millis(25),
+                None,
+                PluginLogLevel::Info,
+            )
             .await;
         manager
             .record_plugin_call(
                 &plugin_id,
+                "search",
                 Duration::from_millis(5),
                 Some(&TingError::PluginExecutionError("boom".to_string())),
+                PluginLogLevel::Info,
             )
             .await;
 

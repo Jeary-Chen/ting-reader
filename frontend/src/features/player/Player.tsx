@@ -9,7 +9,6 @@ import type { Chapter } from "../../core/types";
 import { sortChaptersForPlayback } from "../../core/utils/chapter";
 import { setAlpha, toSolidColor, isTooLight } from "../../core/utils/color";
 import { useBookshelfCoverShape } from "../../core/hooks/useBookshelfCoverShape";
-import PluginExtensionSlot from "../../shared/pluginExtensions/PluginExtensionSlot";
 import ProgressBar from "./ProgressBar";
 import { isAppleMobileBrowser, isStrmPath } from "./platform";
 import { getRuntimeBaseUrl, getRuntimePathname, getRuntimeUrl } from "../../core/utils/runtimeUrl";
@@ -809,7 +808,7 @@ const Player: React.FC = () => {
     [t],
   );
 
-  const hiddenPaths = ["/admin", "/settings", "/cache"];
+  const hiddenPaths = ["/admin", "/settings", "/cache", "/plugin-pages"];
   const isHiddenPage = hiddenPaths.some((path) =>
     location.pathname.startsWith(path),
   );
@@ -1171,37 +1170,6 @@ const Player: React.FC = () => {
             onExit={handleExitExpanded}
             onOpenSettings={() => setShowSettings(true)}
           />
-
-          <div className="mx-auto -mt-2 mb-2 flex w-full max-w-[520px] justify-end gap-1">
-            <PluginExtensionSlot
-              slot="reader.toolbar_action"
-              context={{
-                book_id: currentBook?.id,
-                book_title: currentBook?.title,
-                book_path: currentBook?.path,
-                chapter_id: currentChapter.id,
-                chapter_title: currentChapter.title,
-                chapter_path: currentChapter.path,
-                position: currentTime,
-                duration,
-                playback_state: isPlaying ? "playing" : "paused",
-              }}
-            />
-            <PluginExtensionSlot
-              slot="reader.side_panel"
-              context={{
-                book_id: currentBook?.id,
-                book_title: currentBook?.title,
-                book_path: currentBook?.path,
-                chapter_id: currentChapter.id,
-                chapter_title: currentChapter.title,
-                chapter_path: currentChapter.path,
-                position: currentTime,
-                duration,
-                playback_state: isPlaying ? "playing" : "paused",
-              }}
-            />
-          </div>
 
           <div className="flex-1 flex flex-col items-center justify-center max-w-[520px] mx-auto w-full gap-5 sm:gap-7">
             <ExpandedCoverAndMeta

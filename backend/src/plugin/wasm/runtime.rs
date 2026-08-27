@@ -7,6 +7,7 @@ use super::plugin::{PluginState, StoreLimits, WasmExports, WasmPlugin, WasmPlugi
 use super::sandbox::{Permission, ResourceLimits, Sandbox};
 use crate::core::error::{Result, TingError};
 use crate::plugin::types::{PluginId, PluginMetadata};
+use crate::plugin::types::{PluginLogContext, PluginLogSource};
 use crate::plugin::PluginHostGatewayHandle;
 use std::collections::HashMap;
 use std::path::Path;
@@ -120,6 +121,10 @@ impl WasmRuntime {
             host_responses: HashMap::new(),
             allowed_domains: sandbox.get_allowed_domains().to_vec(),
             plugin_id: metadata.instance_id(),
+            plugin_log_context: Some(PluginLogContext::from_metadata(
+                metadata,
+                PluginLogSource::Gateway,
+            )),
             permissions: metadata.permissions.clone(),
             host_gateway,
             current_user: None,

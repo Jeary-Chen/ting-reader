@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { listPluginCapabilities } from "../api/pluginCapabilities";
+import { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import {
   buildClientExtensionRegistry,
   type ClientExtensionRegistrySnapshot,
 } from "../pluginExtensions";
+import { useAuthStore } from "../stores/authStore";
+import { usePluginExtensionsStore } from "../stores/pluginExtensionsStore";
 
 type ClientExtensionState = {
   loading: boolean;
@@ -18,41 +20,50 @@ const emptyRegistry: ClientExtensionRegistrySnapshot = {
 };
 
 export const useClientExtensions = (): ClientExtensionState => {
-  const [registrations, setRegistrations] = useState<
-    Awaited<ReturnType<typeof listPluginCapabilities>>
-  >([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>();
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(undefined);
-    try {
-      const [uiExtensions, clientExtensions] = await Promise.all([
-        listPluginCapabilities("ui_extension"),
-        listPluginCapabilities("client_extension"),
-      ]);
-      setRegistrations([...uiExtensions, ...clientExtensions]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setRegistrations([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { i18n } = useTranslation();
+  const token = useAuthStore((state) => state.token);
+  const registrations = usePluginExtensionsStore(
+    (state) => state.registrations,
+  );
+  const loading = usePluginExtensionsStore((state) => state.loading);
+  const loaded = usePluginExtensionsStore((state) => state.loaded);
+  const loadedForToken = usePluginExtensionsStore(
+    (state) => state.loadedForToken,
+  );
+  const error = usePluginExtensionsStore((state) => state.error);
+  const ensureLoaded = usePluginExtensionsStore((state) => state.ensureLoaded);
+  const refresh = usePluginExtensionsStore((state) => state.refresh);
+  const reset = usePluginExtensionsStore((state) => state.reset);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
-    return () => window.clearTimeout(timer);
-  }, [refresh]);
+    if (!token) {
+      reset();
+      return;
+    }
+    void ensureLoaded();
+  }, [ensureLoaded, reset, token]);
+
+  const locale = i18n.resolvedLanguage || i18n.language;
 
   const registry = useMemo(
-    () =>
-      registrations.length > 0
-        ? buildClientExtensionRegistry(registrations)
-        : emptyRegistry,
-    [registrations],
+    () => {
+      if (
+        !token ||
+        loadedForToken !== token ||
+        registrations.length === 0
+      ) {
+        return emptyRegistry;
+      }
+      return buildClientExtensionRegistry(registrations, locale);
+    },
+    [loadedForToken, locale, registrations, token],
   );
 
-  return { loading, error, registry, refresh };
+  return {
+    loading:
+      loading || (!!token && (!loaded || loadedForToken !== token)),
+    error,
+    registry,
+    refresh,
+  };
 };

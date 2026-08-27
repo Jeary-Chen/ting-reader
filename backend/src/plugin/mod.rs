@@ -33,8 +33,8 @@ pub use cache::{PluginCache, PluginCacheItem};
 pub use config::{ConfigChangeEvent, PluginConfigManager};
 pub use format::{AudioFormat, AudioMetadata, FormatPlugin, ProgressCallback, TranscodeOptions};
 pub use host_gateway::{
-    plugin_host_user_from_invocation_args, PluginHostGateway, PluginHostGatewayHandle,
-    PluginHostPermission, PluginHostUser,
+    plugin_host_user_from_invocation_args, PluginHostGateway, PluginHostGatewayDependencies,
+    PluginHostGatewayHandle, PluginHostPermission, PluginHostUser,
 };
 pub use installer::{PluginInstaller, PluginPackage};
 pub use js::npm::{

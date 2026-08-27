@@ -93,10 +93,11 @@ const BookHeaderSection: React.FC<Props> = ({
   const scrapeLabel = t("bookshelf.scrape");
   const editLabel = t("common.edit");
   const moreLabel = t("bookshelf.more");
-  const actionButtonLabels = isAdmin
+  const canEditMetadata = isAdmin;
+  const actionButtonLabels = canEditMetadata
     ? [favoriteLabel, scrapeLabel, editLabel, moreLabel]
     : [favoriteLabel, moreLabel];
-  const actionButtonWidthLabels = isAdmin
+  const actionButtonWidthLabels = canEditMetadata
     ? [
         t("bookshelf.favorite"),
         t("bookshelf.favorited"),
@@ -270,7 +271,7 @@ const BookHeaderSection: React.FC<Props> = ({
               </span>
             </button>
 
-            {isAdmin && (
+            {canEditMetadata && (
               <>
                 <button
                   onClick={onOpenScrapeDiff}

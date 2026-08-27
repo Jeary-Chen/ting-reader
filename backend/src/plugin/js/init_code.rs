@@ -87,6 +87,36 @@ pub fn generate_init_code(
             toString() {{ return this.href; }}
         }};
 
+        function __tingFormatLogValue(value) {{
+            if (typeof value === "string") return value;
+            if (value === undefined) return "undefined";
+            try {{
+                const encoded = JSON.stringify(value);
+                return encoded === undefined ? String(value) : encoded;
+            }} catch (_) {{
+                return String(value);
+            }}
+        }}
+
+        function __tingWriteLog(level, message, fields) {{
+            const normalizedFields = fields === undefined || fields === null ? null : fields;
+            if (
+                normalizedFields !== null &&
+                (typeof normalizedFields !== "object" || Array.isArray(normalizedFields))
+            ) {{
+                throw new TypeError("Ting.log fields must be an object");
+            }}
+            return Deno.core.ops.op_plugin_log(
+                level,
+                __tingFormatLogValue(message),
+                normalizedFields,
+            );
+        }}
+
+        function __tingWriteConsole(level, args) {{
+            return __tingWriteLog(level, args.map(__tingFormatLogValue).join(" "), null);
+        }}
+
         // Ting Plugin API for JavaScript
         globalThis.Ting = {{
             pluginName: "{plugin_name}",
@@ -100,10 +130,10 @@ pub fn generate_init_code(
 
             // Logging functions
             log: {{
-                debug: (message) => console.log(`[DEBUG] [{plugin_name}] ${{message}}`),
-                info: (message) => console.log(`[INFO] [{plugin_name}] ${{message}}`),
-                warn: (message) => console.warn(`[WARN] [{plugin_name}] ${{message}}`),
-                error: (message) => console.error(`[ERROR] [{plugin_name}] ${{message}}`),
+                debug: (message, fields) => __tingWriteLog("debug", message, fields),
+                info: (message, fields) => __tingWriteLog("info", message, fields),
+                warn: (message, fields) => __tingWriteLog("warn", message, fields),
+                error: (message, fields) => __tingWriteLog("error", message, fields),
             }},
 
             // Configuration access
@@ -141,6 +171,12 @@ pub fn generate_init_code(
             }},
         }};
 
+        // Preserve familiar console APIs while binding log identity in the host.
+        globalThis.console.log = (...args) => __tingWriteConsole("info", args);
+        globalThis.console.debug = (...args) => __tingWriteConsole("debug", args);
+        globalThis.console.warn = (...args) => __tingWriteConsole("warn", args);
+        globalThis.console.error = (...args) => __tingWriteConsole("error", args);
+
         const __tingModuleCache = new Map();
         function __tingRequire(request, parentPath) {{
             if (!request || typeof request !== 'string') {{
@@ -176,10 +212,20 @@ pub fn generate_init_code(
         }}
         globalThis.require = (request) => __tingRequire(request, "");
 
+        function safeNetworkTarget(url) {{
+            try {{
+                const parsed = new URL(url);
+                return parsed.protocol + '//' + parsed.hostname;
+            }} catch (_) {{
+                return '<invalid-url>';
+            }}
+        }}
+
         // Override fetch to enforce network access control
         globalThis.fetch = async function(url, options) {{
             const urlStr = typeof url === 'string' ? url : url.toString();
-            Ting.log.info('fetch: ' + urlStr);
+            const logTarget = safeNetworkTarget(urlStr);
+            Ting.log.info('fetch request', {{ op: 'fetch.request', target: logTarget }});
 
             // Check if URL is allowed
             const allowedDomains = Ting.sandbox.allowedDomains;
@@ -188,13 +234,12 @@ pub fn generate_init_code(
                 allowedDomains.some(pattern => domainMatches(domain, pattern));
 
             if (!isAllowed) {{
-                throw new Error(`Network access denied: ${{urlStr}}`);
+                throw new Error(`Network access denied for domain: ${{domain || '<invalid>'}}`);
             }}
 
             try {{
-                Ting.log.info('calling op_fetch for ' + urlStr);
                 const responseText = await Deno.core.ops.op_fetch(urlStr, options);
-                Ting.log.info('op_fetch returned for ' + urlStr);
+                Ting.log.info('fetch completed', {{ op: 'fetch.complete', target: logTarget }});
                 return {{
                     ok: true,
                     status: 200,
@@ -204,7 +249,6 @@ pub fn generate_init_code(
                     headers: new Headers(),
                 }};
             }} catch (e) {{
-                Ting.log.error('op_fetch failed: ' + e);
                 throw e;
             }}
         }};
@@ -285,5 +329,15 @@ mod tests {
 
         assert!(code.contains("op_host_invoke(method, params ?? {})"));
         assert!(code.contains("Ting.host.invoke requires a method string"));
+    }
+
+    #[test]
+    fn generated_logging_uses_host_op_and_keeps_legacy_calls() {
+        let code = generate_init_code("test-plugin", &serde_json::json!({}), &[], &[]);
+
+        assert!(code.contains("op_plugin_log"));
+        assert!(code.contains("info: (message, fields)"));
+        assert!(code.contains("globalThis.console.log = (...args)"));
+        assert!(!code.contains("[INFO] [test-plugin]"));
     }
 }

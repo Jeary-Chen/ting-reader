@@ -367,6 +367,33 @@ impl TaskQueue {
         Ok(())
     }
 
+    pub async fn has_active_library_scan(&self, library_id: &str) -> bool {
+        for status in ["queued", "running"] {
+            let Ok(tasks) = self.task_repo.find_by_status(status).await else {
+                continue;
+            };
+
+            for task in tasks {
+                if task.task_type != "library_scan" {
+                    continue;
+                }
+                let Some(payload) = task.payload.as_deref() else {
+                    continue;
+                };
+                let Ok(TaskPayload::Custom { data, .. }) =
+                    serde_json::from_str::<TaskPayload>(payload)
+                else {
+                    continue;
+                };
+                if data.get("library_id").and_then(|value| value.as_str()) == Some(library_id) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
     /// Submit a task to the queue
     pub async fn submit(&self, mut task: Task) -> Result<String> {
         let task_id = task.id.clone();
@@ -689,13 +716,32 @@ impl TaskQueue {
         library_path: &str,
         mode: crate::core::library_scanner::ScanMode,
     ) -> Result<String> {
+        self.enqueue_scan_library_scoped(library_id, library_path, mode, None)
+            .await
+    }
+
+    /// Enqueue a library scan optionally limited to directories affected by a
+    /// filesystem watcher event. Manual scans and scheduled scans pass `None`;
+    /// watcher-triggered incremental scans can avoid walking the whole library.
+    pub async fn enqueue_scan_library_scoped(
+        &self,
+        library_id: &str,
+        library_path: &str,
+        mode: crate::core::library_scanner::ScanMode,
+        scan_paths: Option<Vec<String>>,
+    ) -> Result<String> {
+        let mut data = serde_json::json!({
+            "library_id": library_id,
+            "library_path": library_path,
+            "mode": mode.as_str(),
+        });
+        if let Some(paths) = scan_paths.filter(|paths| !paths.is_empty()) {
+            data["scan_paths"] = serde_json::json!(paths);
+        }
+
         let task_payload = TaskPayload::Custom {
             task_type: "library_scan".to_string(),
-            data: serde_json::json!({
-                "library_id": library_id,
-                "library_path": library_path,
-                "mode": mode.as_str(),
-            }),
+            data,
         };
 
         let task = Task::new(

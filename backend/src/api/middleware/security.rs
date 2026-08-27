@@ -1,5 +1,7 @@
 use axum::{extract::Request, http::HeaderValue, middleware::Next, response::Response};
 
+const PLUGIN_ASSET_CSP: &str = "default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; media-src 'none'; font-src 'none'; connect-src 'none'; child-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox";
+
 /// Security headers middleware
 ///
 /// This middleware adds security-related HTTP headers to all responses:
@@ -39,10 +41,16 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
             HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors *;"),
         );
     } else if is_plugin_asset {
-        parts.headers.insert(
-            "Content-Security-Policy",
-            HeaderValue::from_static("default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; media-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'self';"),
-        );
+        parts
+            .headers
+            .entry("Content-Security-Policy")
+            .or_insert(HeaderValue::from_static(PLUGIN_ASSET_CSP));
+        parts
+            .headers
+            .insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+        parts
+            .headers
+            .insert("Referrer-Policy", HeaderValue::from_static("no-referrer"));
     } else {
         parts
             .headers
@@ -239,6 +247,58 @@ mod tests {
         assert!(csp_value.contains("script-src 'self'"));
         assert!(csp_value.contains("object-src 'none'"));
         assert!(csp_value.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn test_plugin_asset_uses_non_executable_csp() {
+        let app = Router::new()
+            .route(
+                "/api/v1/plugin-assets/example/ui/icon.svg",
+                get(|| async { "asset" }),
+            )
+            .layer(middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/api/v1/plugin-assets/example/ui/icon.svg")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.headers().get("Content-Security-Policy").unwrap(),
+            PLUGIN_ASSET_CSP
+        );
+        assert_eq!(response.headers().get("X-Frame-Options").unwrap(), "DENY");
+        assert_eq!(
+            response.headers().get("Referrer-Policy").unwrap(),
+            "no-referrer"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_plugin_asset_preserves_handler_csp() {
+        let app = Router::new()
+            .route(
+                "/api/v1/plugin-assets/example/ui/index.html",
+                get(|| async {
+                    Response::builder()
+                        .header("Content-Security-Policy", "default-src 'none'; sandbox")
+                        .body(Body::empty())
+                        .unwrap()
+                }),
+            )
+            .layer(middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder()
+            .uri("/api/v1/plugin-assets/example/ui/index.html")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.headers().get("Content-Security-Policy").unwrap(),
+            "default-src 'none'; sandbox"
+        );
     }
 
     #[tokio::test]

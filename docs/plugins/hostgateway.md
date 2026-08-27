@@ -44,6 +44,8 @@ Content-Type: application/json
 
 {
   "plugin_id": "assistant-tools@1.0.0",
+  "ui_capability_id": "assistant.panel",
+  "ui_grant": "<opaque-client-grant>",
   "method": "books.list",
   "params": {
     "search": "三体",
@@ -51,6 +53,8 @@ Content-Type: application/json
   }
 }
 ```
+
+HTTP 中转只供受控 UI bridge 使用，`ui_capability_id` 和 `ui_grant` 都必填。受信客户端先从 `GET /api/v1/plugin-capabilities` 的对应 `ui_extension` / `client_extension` 注册项取得 `client_grant`，再原样作为 `ui_grant` 转发。该凭据由服务端签名，绑定当前用户、插件和来源 UI capability，并会过期；客户端应把它当作不透明秘密，不解析、不记录，过期后重新获取。后端还会读取该 UI capability 的 `render.bridge.host_methods`，不能通过伪造来源 ID 或复用其他 UI 的 grant 绕过 manifest 白名单。JavaScript/WASM/Native 后台运行时使用各自的宿主桥接，不调用这个 HTTP 中转接口。
 
 HTTP 中转成功响应会包一层 `result`：
 
@@ -587,6 +591,20 @@ const cached = await Ting.host.invoke("cache.get", {
 
 `web_container` UI 页面不能直接拿到后端对象，需要通过 `postMessage` 调用宿主。
 
+桥接不是任意 HostGateway 代理。插件必须在对应 UI capability 的 manifest 中声明允许的方法；未声明的方法会同时被客户端和后端拒绝，manifest 权限、管理员要求和用户数据范围检查仍然保留。
+
+```yaml
+render:
+  mode: web_container
+  entry: ui/index.html
+  bridge:
+    capabilities:
+      - assistant.tools
+    host_methods:
+      - progress.recent
+      - user_settings.get
+```
+
 页面加载后宿主会发送初始化消息：
 
 ```json
@@ -595,6 +613,7 @@ const cached = await Ting.host.invoke("cache.get", {
   "pluginId": "assistant-tools@1.0.0",
   "pluginName": "Assistant Tools",
   "capabilityId": "assistant.panel",
+  "bridgeToken": "per-document-random-token",
   "slot": "global.floating_action",
   "contexts": ["global"],
   "context": {
@@ -612,24 +631,40 @@ const cached = await Ting.host.invoke("cache.get", {
 }
 ```
 
-Web 客户端当前不会附带 `theme` 字段；Flutter 客户端会附带并注入主题变量。插件 UI 应把 `theme` 当成可选字段处理。Flutter 端主题变化时还会发送 `ting-plugin:theme` 消息，并设置 `window.__tingPluginTheme`、`data-ting-theme`、`data-theme`、`dark/light` class 和 CSS 变量。
+Web 和 Flutter 客户端都会附带并注入 `theme` 主题变量。插件 UI 应把 `theme` 当成可选字段处理。宿主主题变化时还会发送 `ting-plugin:theme` 消息，并设置 `window.__tingPluginTheme`、`data-ting-theme`、`data-theme`、`dark/light` class 和 CSS 变量。
+
+`bridgeToken` 只会随 `ting-plugin:init` 发给已完成握手的当前 iframe 文档。宿主会在插件代码执行前创建只读的 `window.__TING_PLUGIN_BRIDGE__`，其 `postMessage()` 通过当前文档独占的 `MessagePort` 发送请求。插件必须使用这个对象，不能直接调用 `window.parent.postMessage()`。每个请求仍需携带 `bridge_token`，响应也必须匹配该令牌；iframe 刷新、跳转或重新挂载会销毁原文档端口，旧页面或新导航页面都不能接管 bridge。
+
+这里的 `bridgeToken` 只证明请求来自当前已握手文档，与服务端签发的 `client_grant` / HTTP 请求字段 `ui_grant` 是两套凭据。受信 Web/Flutter 客户端负责取得 UI grant、用它加载 `GET /api/v1/plugin-assets/:client_grant/:plugin_id/*path`（单文件最大 64 MiB），并在转发 capability 或 HostGateway HTTP 调用时附加 `ui_grant`；grant 不会作为初始化消息字段发送，但插件 UI 可能从自身资产 URL 观察到它，因此插件也不得解析、记录、持久化或外传该值。
 
 ```javascript
+let bridgeToken = null;
 const id = crypto.randomUUID();
 
-window.parent.postMessage({
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
+  if (event.data?.type === "ting-plugin:init") {
+    bridgeToken = event.data.bridgeToken;
+  }
+});
+
+window.__TING_PLUGIN_BRIDGE__.postMessage({
   type: "ting-plugin:request",
+  bridge_token: bridgeToken,
   id,
   method: "host.invoke",
   params: {
     method: "progress.recent",
     params: { limit: 5 }
   }
-}, "*");
+});
 
 window.addEventListener("message", (event) => {
+  if (event.source !== window) return;
   const message = event.data;
-  if (message?.type !== "ting-plugin:response" || message.id !== id) return;
+  if (message?.type !== "ting-plugin:response" ||
+      message.bridge_token !== bridgeToken ||
+      message.id !== id) return;
   if (!message.ok) {
     console.error(message.error);
     return;
@@ -641,8 +676,9 @@ window.addEventListener("message", (event) => {
 调用当前 capability：
 
 ```javascript
-window.parent.postMessage({
+window.__TING_PLUGIN_BRIDGE__.postMessage({
   type: "ting-plugin:request",
+  bridge_token: bridgeToken,
   id: crypto.randomUUID(),
   method: "capability.invoke",
   params: {
@@ -650,32 +686,12 @@ window.parent.postMessage({
       action: "refresh"
     }
   }
-}, "*");
+});
 ```
 
-指定其他 capability：
+`capability.invoke` 默认绑定当前 UI capability。页面如需调用同插件的其他 capability，必须把目标 ID 写入当前 UI capability 的 `render.bridge.capabilities`，并在请求中传入同一个 `capabilityId`；未声明的目标会被客户端拒绝。如不需要 capability 桥接，可设置 `render.bridge.allow_capability_invoke: false`。
 
-```javascript
-window.parent.postMessage({
-  type: "ting-plugin:request",
-  id: crypto.randomUUID(),
-  method: "capability.invoke",
-  params: {
-    capabilityId: "assistant.panel",
-    params: {
-      action: "open"
-    }
-  }
-}, "*");
-```
-
-外部链接可以使用普通浏览器写法：
-
-```html
-<a href="https://example.com/register" target="_blank" rel="noopener noreferrer">注册服务</a>
-```
-
-Web 端 iframe 允许弹窗逃离 sandbox；Flutter 端会拦截非插件资产的 `http/https` 导航、`target="_blank"` 和 `window.open()`，再交给系统浏览器打开。插件不需要用 `window.open()` 返回值判断是否成功，因为某些 WebView 即使已经打开外部浏览器也可能返回 `null`。
+Web iframe 不包含 `allow-same-origin`，也不允许创建逃离 sandbox 的弹窗。bridge 使用宿主先注入、每文档独占的 `MessageChannel`，宿主只接受首个端口，不再依赖可跨导航复用的 `WindowProxy` 传递能力。两端 CSP 只允许包内同源资源及必要的 `data:` / `blob:` 媒体，不能用远程图片、音频或 `fetch` 外传 bridge 数据。Web 和 Flutter 都只会接受宿主启动脚本在真实用户点击中明确拦截到的 HTTP(S) 外链请求，并在宿主界面展示目标地址、要求用户再次确认后才交给外部浏览器；程序化跳转、未确认请求和插件子页面通过 `location` 发起的外部导航都会被阻止。插件不应把外链或 `window.open()` 作为核心交互流程，也不能依赖 `window.open()` 返回值。
 
 ## 9. WASM 桥接
 

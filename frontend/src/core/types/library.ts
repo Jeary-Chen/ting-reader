@@ -13,6 +13,8 @@ export interface ScraperConfig {
   extract_extra_chapters?: boolean;
   disable_watcher?: boolean;
   cloud_mode?: boolean;
+  scheduled_sync_enabled?: boolean;
+  scheduled_sync_interval?: 'hourly' | 'daily' | 'weekly' | 'monthly';
 }
 
 export interface Library {

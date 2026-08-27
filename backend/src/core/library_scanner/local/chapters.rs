@@ -13,20 +13,36 @@ use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 use uuid::Uuid;
 
+pub(super) struct ChapterProcessingOptions<'a> {
+    pub(super) last_scanned: Option<chrono::DateTime<chrono::Utc>>,
+    pub(super) task_id: Option<&'a str>,
+    pub(super) use_filename_as_title: bool,
+    pub(super) extract_extra_chapters: bool,
+    pub(super) cloud_mode: bool,
+    pub(super) changed_file_paths: Option<&'a HashSet<PathBuf>>,
+    pub(super) json_chapters: Option<Vec<crate::core::metadata_writer::AudiobookshelfChapter>>,
+    pub(super) chapter_title_template: Option<&'a str>,
+    pub(super) chapter_title_overrides: Option<&'a [String]>,
+}
+
 impl LibraryScanner {
-    pub(crate) async fn process_chapters(
+    pub(super) async fn process_chapters(
         &self,
         book_id: &str,
         files: &[PathBuf],
-        last_scanned: Option<chrono::DateTime<chrono::Utc>>,
-        task_id: Option<&str>,
-        use_filename_as_title: bool,
-        extract_extra_chapters: bool,
-        cloud_mode: bool,
-        json_chapters: Option<Vec<crate::core::metadata_writer::AudiobookshelfChapter>>,
-        chapter_title_template: Option<&str>,
-        chapter_title_overrides: Option<&[String]>,
+        options: ChapterProcessingOptions<'_>,
     ) -> Result<bool> {
+        let ChapterProcessingOptions {
+            last_scanned,
+            task_id,
+            use_filename_as_title,
+            extract_extra_chapters,
+            cloud_mode,
+            changed_file_paths,
+            json_chapters,
+            chapter_title_template,
+            chapter_title_overrides,
+        } = options;
         let mut has_changes = false;
         let total_files = files.len();
         let mut json_chapters = json_chapters;
@@ -125,8 +141,9 @@ impl LibraryScanner {
         let mut processed_chapter_ids = HashSet::new();
 
         for (index, file_path) in files.iter().enumerate() {
-            if index % 5 == 0 {
-                // Check cancellation and log progress
+            if index % 25 == 0 || index + 1 == total_files {
+                // Progress/cancellation updates are database operations; keep
+                // them periodic instead of writing once per handful of files.
                 self.check_cancellation(task_id).await?;
                 self.update_progress_key(
                     task_id,
@@ -145,7 +162,9 @@ impl LibraryScanner {
             let mut existing_chapter = chapter_map.get(&canonical_file_path).cloned();
 
             // Check if file has changed
-            let is_modified = if let Some(last_scan) = last_scanned {
+            let is_modified = if let Some(changed_file_paths) = changed_file_paths {
+                changed_file_paths.contains(file_path)
+            } else if let Some(last_scan) = last_scanned {
                 if let Ok(metadata) = std::fs::metadata(file_path) {
                     if let Ok(mtime) = metadata.modified() {
                         let mtime_utc: chrono::DateTime<chrono::Utc> = mtime.into();
@@ -514,12 +533,12 @@ impl LibraryScanner {
     }
 
     fn calculate_file_hash(&self, path: &Path) -> Result<String> {
-        let mut file = std::fs::File::open(path).map_err(|e| TingError::IoError(e))?;
-        let metadata = file.metadata().map_err(|e| TingError::IoError(e))?;
+        let mut file = std::fs::File::open(path).map_err(TingError::IoError)?;
+        let metadata = file.metadata().map_err(TingError::IoError)?;
         let len = metadata.len();
 
         let mut buffer = vec![0; 16384]; // 16KB
-        let n = file.read(&mut buffer).map_err(|e| TingError::IoError(e))?;
+        let n = file.read(&mut buffer).map_err(TingError::IoError)?;
 
         let mut hasher = Sha256::new();
         hasher.update(&buffer[..n]);

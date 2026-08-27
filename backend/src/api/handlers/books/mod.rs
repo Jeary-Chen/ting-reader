@@ -343,7 +343,7 @@ pub async fn update_book(
         }
     }
 
-    let updated_book = Book {
+    let mut updated_book = Book {
         id: existing_book.id,
         library_id: req.library_id.unwrap_or(existing_book.library_id),
         title: req.title.or(existing_book.title),
@@ -365,6 +365,23 @@ pub async fn update_book(
         chapter_regex: req.chapter_regex.or(existing_book.chapter_regex),
     };
 
+    // A manual metadata save locks the book by default. The detail editor may
+    // explicitly turn the lock off; that choice must survive this same save.
+    updated_book.manual_corrected = req
+        .manual_corrected
+        .map(|locked| if locked { 1 } else { 0 })
+        .unwrap_or(1);
+    updated_book.match_pattern = if updated_book.manual_corrected != 0 {
+        updated_book
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(regex::escape)
+    } else {
+        None
+    };
+
     state.book_repo.update(&updated_book).await?;
 
     // Check NFO writing
@@ -379,8 +396,9 @@ pub async fn update_book(
             .and_then(|json| serde_json::from_str(json).ok())
             .unwrap_or_default();
 
-        // Handle NFO writing (Local & WebDAV)
-        if config.nfo_writing_enabled {
+        // Only local libraries write sidecar files. RSS/WebDAV edits stay in
+        // the database and never write back to the source.
+        if library.library_type == "local" && config.nfo_writing_enabled {
             let mut metadata = BookMetadata::new(
                 updated_book.title.clone().unwrap_or_default(),
                 "ting-reader".to_string(),
@@ -437,7 +455,7 @@ pub async fn update_book(
         }
 
         // Handle metadata.json writing
-        if config.metadata_writing_enabled {
+        if library.library_type == "local" && config.metadata_writing_enabled {
             // Read existing metadata.json to preserve extended fields
             let target_dir = if library.library_type == "webdav" {
                 let mut hasher = sha2::Sha256::new();
@@ -1102,14 +1120,14 @@ pub async fn merge_books(
         ));
     }
 
-    let result = state
+    state
         .merge_service
         .merge_books(&req.source_book_id, &req.target_book_id)
         .await?;
 
     Ok(Json(serde_json::json!({
         "message": "Books merged successfully",
-        "result": result
+        "result": ()
     })))
 }
 
@@ -1307,6 +1325,19 @@ pub async fn write_book_metadata_to_files(
         .find_by_id(&id)
         .await?
         .ok_or_else(|| TingError::NotFound(format!("Book with id {} not found", id)))?;
+
+    let library = state
+        .library_repo
+        .find_by_id(&book.library_id)
+        .await?
+        .ok_or_else(|| {
+            TingError::NotFound(format!("Library with id {} not found", book.library_id))
+        })?;
+    if library.library_type != "local" {
+        return Err(TingError::ValidationError(
+            "Only local books support metadata file writing".to_string(),
+        ));
+    }
 
     // Create task
     let task = Task::new(

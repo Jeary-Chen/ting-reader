@@ -188,7 +188,7 @@ impl EventBus {
         // Get subscribers for this event type
         let subscribers = {
             let subs = self.subscribers.read().await;
-            subs.get(&event.event_type).map(|v| v.clone())
+            subs.get(&event.event_type).cloned()
         };
 
         if let Some(subscribers) = subscribers {

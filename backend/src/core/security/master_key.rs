@@ -175,7 +175,7 @@ impl MasterKeyManager {
 
         // 备选：用户目录中的机器ID
         let user_machine_id_path = dirs::data_dir()
-            .or_else(|| dirs::home_dir())
+            .or_else(dirs::home_dir)
             .map(|dir| dir.join(".ting-reader").join("machine-id"));
 
         // 按优先级尝试读取现有文件
@@ -206,36 +206,36 @@ impl MasterKeyManager {
 
         // 尝试保存到数据目录
         if let Some(parent) = data_machine_id_path.parent() {
-            if std::fs::create_dir_all(parent).is_ok() {
-                if std::fs::write(&data_machine_id_path, &machine_id).is_ok() {
-                    tracing::info!(
-                        path = %data_machine_id_path.display(),
-                        message_key = "security.machine_id.created_data",
-                        message_params = %serde_json::json!({
-                            "path": data_machine_id_path.display().to_string(),
-                        }),
-                        "Created new machine ID in data directory"
-                    );
-                    return Ok(machine_id.as_bytes().to_vec());
-                }
+            if std::fs::create_dir_all(parent).is_ok()
+                && std::fs::write(&data_machine_id_path, &machine_id).is_ok()
+            {
+                tracing::info!(
+                    path = %data_machine_id_path.display(),
+                    message_key = "security.machine_id.created_data",
+                    message_params = %serde_json::json!({
+                        "path": data_machine_id_path.display().to_string(),
+                    }),
+                    "Created new machine ID in data directory"
+                );
+                return Ok(machine_id.as_bytes().to_vec());
             }
         }
 
         // 备选：保存到用户目录
         if let Some(user_path) = user_machine_id_path {
             if let Some(parent) = user_path.parent() {
-                if std::fs::create_dir_all(parent).is_ok() {
-                    if std::fs::write(&user_path, &machine_id).is_ok() {
-                        tracing::info!(
-                            path = %user_path.display(),
-                            message_key = "security.machine_id.created_user",
-                            message_params = %serde_json::json!({
-                                "path": user_path.display().to_string(),
-                            }),
-                            "Created new machine ID in user directory"
-                        );
-                        return Ok(machine_id.as_bytes().to_vec());
-                    }
+                if std::fs::create_dir_all(parent).is_ok()
+                    && std::fs::write(&user_path, &machine_id).is_ok()
+                {
+                    tracing::info!(
+                        path = %user_path.display(),
+                        message_key = "security.machine_id.created_user",
+                        message_params = %serde_json::json!({
+                            "path": user_path.display().to_string(),
+                        }),
+                        "Created new machine ID in user directory"
+                    );
+                    return Ok(machine_id.as_bytes().to_vec());
                 }
             }
         }
@@ -280,7 +280,7 @@ impl MasterKeyManager {
         }
 
         // 添加随机种子（基于进程 ID 和时间）
-        hasher.update(&std::process::id().to_le_bytes());
+        hasher.update(std::process::id().to_le_bytes());
 
         let result = hasher.finalize();
         tracing::warn!(

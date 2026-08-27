@@ -30,16 +30,9 @@ pub async fn calculate_theme_color_from_bytes(bytes: &[u8]) -> Result<Option<Str
                         drop(img);
                         // bytes_vec dropped at end of scope
 
-                        if let Some(dominant) = palette.first() {
-                            // Return rgba string with 0.1 alpha for UI background use
-                            // Matches the behavior of the old backend
-                            Some(format!(
-                                "rgba({}, {}, {}, 0.1)",
-                                dominant.r, dominant.g, dominant.b
-                            ))
-                        } else {
-                            None
-                        }
+                        palette.first().map(|dominant| {
+                            format!("rgba({}, {}, {}, 0.1)", dominant.r, dominant.g, dominant.b)
+                        })
                     }
                     Err(e) => {
                         tracing::warn!(
