@@ -21,6 +21,41 @@ fn is_http_url(value: &str) -> bool {
     value.starts_with("http://") || value.starts_with("https://")
 }
 
+/// RSS libraries do not use scraper plugins. Their legacy config column is
+/// still used by the scheduler, so retain only the two sync settings there.
+fn normalize_rss_sync_config(config: serde_json::Value) -> Option<serde_json::Value> {
+    let object = config.as_object()?;
+    let mut normalized = serde_json::Map::new();
+
+    if let Some(enabled) = object
+        .get("scheduled_sync_enabled")
+        .filter(|value| value.is_boolean())
+    {
+        normalized.insert("scheduled_sync_enabled".to_string(), enabled.clone());
+    }
+
+    if let Some(interval) = object
+        .get("scheduled_sync_interval")
+        .and_then(|value| value.as_str())
+    {
+        if matches!(
+            interval.trim().to_ascii_lowercase().as_str(),
+            "hourly" | "daily" | "weekly" | "monthly"
+        ) {
+            normalized.insert(
+                "scheduled_sync_interval".to_string(),
+                serde_json::Value::String(interval.to_string()),
+            );
+        }
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(normalized))
+    }
+}
+
 fn scraper_config_value_requires_writes(config: Option<&serde_json::Value>) -> bool {
     config
         .and_then(|value| {
@@ -149,7 +184,10 @@ pub async fn create_library(
         req.root_path.unwrap_or_else(|| "/".to_string())
     };
 
-    let scraper_config = req.scraper_config.map(|mut config| {
+    let scraper_config = req.scraper_config.and_then(|mut config| {
+        if library_type == "rss" {
+            return normalize_rss_sync_config(config).map(|config| config.to_string());
+        }
         if library_type == "webdav" {
             if let Some(object) = config.as_object_mut() {
                 object.insert(
@@ -162,7 +200,7 @@ pub async fn create_library(
                 );
             }
         }
-        config.to_string()
+        Some(config.to_string())
     });
 
     let library = crate::db::models::Library {
@@ -375,7 +413,20 @@ pub async fn update_library(
     }
 
     if let Some(config) = req.scraper_config {
-        library.scraper_config = Some(config.to_string());
+        library.scraper_config = if library.library_type == "rss" {
+            normalize_rss_sync_config(config).map(|config| config.to_string())
+        } else {
+            Some(config.to_string())
+        };
+    } else if library.library_type == "rss" {
+        // Remove any scraper-only keys left by older clients while preserving
+        // an existing scheduled-sync configuration.
+        library.scraper_config = library
+            .scraper_config
+            .take()
+            .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+            .and_then(normalize_rss_sync_config)
+            .map(|config| config.to_string());
     }
 
     if library.library_type == "webdav" {
@@ -838,4 +889,37 @@ pub async fn test_webdav_connection(
         success: false,
         message: format!("连接失败: {}", last_error),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_rss_sync_config;
+    use serde_json::json;
+
+    #[test]
+    fn rss_config_keeps_only_scheduled_sync_settings() {
+        let normalized = normalize_rss_sync_config(json!({
+            "default_sources": ["scraper"],
+            "metadata_writing_enabled": true,
+            "scheduled_sync_enabled": true,
+            "scheduled_sync_interval": "weekly",
+        }))
+        .expect("scheduled sync settings should be retained");
+
+        assert_eq!(
+            normalized,
+            json!({
+                "scheduled_sync_enabled": true,
+                "scheduled_sync_interval": "weekly",
+            })
+        );
+    }
+
+    #[test]
+    fn rss_config_without_schedule_is_omitted() {
+        assert!(normalize_rss_sync_config(json!({
+            "default_sources": ["scraper"],
+        }))
+        .is_none());
+    }
 }

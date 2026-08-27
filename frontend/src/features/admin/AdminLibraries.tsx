@@ -34,6 +34,29 @@ const DEFAULT_SCRAPER_CONFIG = JSON.stringify({
   scheduled_sync_interval: 'daily',
 }, null, 2);
 
+const RSS_SYNC_INTERVALS = ['hourly', 'daily', 'weekly', 'monthly'] as const;
+
+const parseRssSyncConfig = (value: string): Record<string, unknown> | null => {
+  if (!value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const source = parsed as Record<string, unknown>;
+    const config: Record<string, unknown> = {};
+    if (typeof source.scheduled_sync_enabled === 'boolean') {
+      config.scheduled_sync_enabled = source.scheduled_sync_enabled;
+    }
+    if (typeof source.scheduled_sync_interval === 'string'
+      && RSS_SYNC_INTERVALS.includes(source.scheduled_sync_interval as typeof RSS_SYNC_INTERVALS[number])) {
+      config.scheduled_sync_interval = source.scheduled_sync_interval;
+    }
+    return Object.keys(config).length > 0 ? config : null;
+  } catch {
+    // RSS has no scraper JSON to validate. Ignore stale hidden text.
+    return null;
+  }
+};
+
 interface StorageRoot {
   path: string;
   source: string;
@@ -221,6 +244,10 @@ const AdminLibraries: React.FC = () => {
         scraperConfigStr = JSON.stringify(configData, null, 2);
       }
     }
+    if (libType === 'rss') {
+      const syncConfig = parseRssSyncConfig(scraperConfigStr);
+      scraperConfigStr = syncConfig ? JSON.stringify(syncConfig, null, 2) : '';
+    }
 
     setFormData({
       name: lib.name,
@@ -298,7 +325,10 @@ const AdminLibraries: React.FC = () => {
         payload.root_path = formData.root_path;
       }
 
-      if (formData.scraper_config) {
+      if (formData.type === 'rss') {
+        const syncConfig = parseRssSyncConfig(formData.scraper_config);
+        if (syncConfig) payload.scraper_config = syncConfig;
+      } else if (formData.scraper_config) {
         try {
           const scraperConfig = JSON.parse(formData.scraper_config) as Record<string, unknown>;
           if (formData.type === 'webdav') {
@@ -567,7 +597,7 @@ const AdminLibraries: React.FC = () => {
                     <button
                       type="button"
                       disabled={!!editingId}
-                      onClick={() => setFormData({...formData, type: 'rss', url: '', root_path: '/'})}
+                      onClick={() => setFormData({...formData, type: 'rss', url: '', root_path: '/', scraper_config: ''})}
                       className={`py-2.5 rounded-xl font-bold transition-all border ${
                         formData.type === 'rss'
                           ? 'bg-primary-50 border-primary-200 text-primary-600'
