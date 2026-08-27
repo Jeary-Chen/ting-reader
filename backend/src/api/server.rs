@@ -20,7 +20,7 @@ use crate::db::repository::BookRepository;
 use axum::{
     body::{to_bytes, Body},
     extract::{ConnectInfo, Request, State},
-    http::{header, uri::PathAndQuery, Uri},
+    http::{header, uri::PathAndQuery, StatusCode, Uri},
     middleware,
     middleware::Next,
     response::{IntoResponse, Json, Response},
@@ -754,6 +754,21 @@ async fn ensure_manifest_link(request: Request, next: Next) -> Response {
     }
 
     let is_manifest_request = request.uri().path().ends_with("/manifest.webmanifest");
+    if is_manifest_request && request.uri().path() != "/manifest.webmanifest" {
+        let parent_depth = request
+            .uri()
+            .path()
+            .trim_matches('/')
+            .split('/')
+            .count()
+            .saturating_sub(1);
+        let location = format!("{}manifest.webmanifest", "../".repeat(parent_depth));
+        return Response::builder()
+            .status(StatusCode::TEMPORARY_REDIRECT)
+            .header(header::LOCATION, location)
+            .body(Body::empty())
+            .expect("manifest redirect response is valid");
+    }
     let response = next.run(request).await;
     if is_manifest_request {
         return response;
@@ -801,19 +816,19 @@ fn ensure_manifest_link_in_html(html: &str) -> String {
         let mut rewritten_tag = tag.to_string();
         rewritten_tag = rewritten_tag.replace(
             "href=\"/app/ting-reader/manifest.webmanifest\"",
-            "href=\"./manifest.webmanifest\"",
+            "href=\"/manifest.webmanifest\"",
         );
         rewritten_tag = rewritten_tag.replace(
             "href='/app/ting-reader/manifest.webmanifest'",
-            "href='./manifest.webmanifest'",
-        );
-        rewritten_tag = rewritten_tag.replace(
-            "href=\"/manifest.webmanifest\"",
-            "href=\"./manifest.webmanifest\"",
-        );
-        rewritten_tag = rewritten_tag.replace(
             "href='/manifest.webmanifest'",
+        );
+        rewritten_tag = rewritten_tag.replace(
+            "href=\"./manifest.webmanifest\"",
+            "href=\"/manifest.webmanifest\"",
+        );
+        rewritten_tag = rewritten_tag.replace(
             "href='./manifest.webmanifest'",
+            "href='/manifest.webmanifest'",
         );
         if !rewritten_tag.contains("crossorigin=") {
             let insert_at = rewritten_tag
@@ -833,7 +848,7 @@ fn ensure_manifest_link_in_html(html: &str) -> String {
     }
 
     let manifest_link =
-        r#"<link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">"#;
+        r#"<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">"#;
     if let Some(index) = html.find("</head>") {
         let mut rewritten = String::with_capacity(html.len() + manifest_link.len());
         rewritten.push_str(&html[..index]);
@@ -1038,6 +1053,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nested_manifest_request_redirects_to_the_app_root() {
+        let app = Router::new()
+            .fallback(|| async { "not found" })
+            .layer(middleware::from_fn(ensure_manifest_link));
+        let request = Request::builder()
+            .uri("/plugin-pages/rss-feed/manifest.webmanifest")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "../../manifest.webmanifest"
+        );
+    }
+
+    #[tokio::test]
     async fn gateway_proxy_preserves_plugin_asset_relative_urls() {
         async fn plugin_asset() -> Response {
             Response::builder()
@@ -1078,7 +1111,7 @@ mod tests {
         let rewritten = ensure_manifest_link_in_html(html);
 
         assert!(rewritten.contains(
-            r#"<link rel="manifest" href="./manifest.webmanifest" crossorigin="use-credentials">"#
+            r#"<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials">"#
         ));
         assert_eq!(rewritten.matches("rel=\"manifest\"").count(), 1);
     }
@@ -1088,9 +1121,7 @@ mod tests {
         let html = r#"<html><head><link rel="manifest" href="/app/ting-reader/manifest.webmanifest"></head></html>"#;
         let rewritten = ensure_manifest_link_in_html(html);
 
-        assert!(
-            rewritten.contains(r#"href="./manifest.webmanifest" crossorigin="use-credentials""#)
-        );
+        assert!(rewritten.contains(r#"href="/manifest.webmanifest" crossorigin="use-credentials""#));
         assert_eq!(rewritten.matches("rel=\"manifest\"").count(), 1);
     }
 

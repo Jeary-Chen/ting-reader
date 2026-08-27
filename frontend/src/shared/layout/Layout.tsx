@@ -309,7 +309,7 @@ const Layout: React.FC = () => {
             )}
 
             {pluginPageItems.length > 0 && (
-              <div className={sidebarCollapsed ? 'mt-auto pt-8 xl:mt-8 xl:pt-0' : 'mt-auto pt-8'}>
+              <div className="mt-8">
                 <div className={`text-xs font-bold text-slate-400 uppercase tracking-widest px-4 mb-2 ${sidebarCollapsed ? 'xl:hidden' : ''}`}>{t('nav.pluginPages')}</div>
                 {pluginPageItems.map((item) => <NavLink key={item.path} item={item} />)}
               </div>

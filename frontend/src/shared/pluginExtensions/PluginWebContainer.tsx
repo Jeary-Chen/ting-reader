@@ -8,7 +8,10 @@ import {
 import apiClient from "../../core/api/client";
 import type { ClientExtensionDescriptor } from "../../core/pluginExtensions";
 import { useAuthStore } from "../../core/stores/authStore";
-import { getRuntimeUrl } from "../../core/utils/runtimeUrl";
+import {
+  getRuntimeAssetUrl,
+  getRuntimeUrl,
+} from "../../core/utils/runtimeUrl";
 
 type PluginBridgeRequest = {
   type: "ting-plugin:request";
@@ -271,17 +274,30 @@ const absoluteAssetUrl = (path: string, activeUrl?: string) => {
   }
 };
 
+const finalResponseUrl = (request: unknown) => {
+  if (!request || typeof request !== "object") return undefined;
+  const responseUrl = (request as { responseURL?: unknown }).responseURL;
+  return typeof responseUrl === "string" && /^https?:\/\//i.test(responseUrl)
+    ? responseUrl
+    : undefined;
+};
+
 const withPluginDocumentPolicy = (
   html: string,
   href: string,
+  bootstrapUrl: string,
   token: string,
   theme: PluginTheme,
 ) => {
   const document = new DOMParser().parseFromString(html, "text/html");
   const origin = new URL(href).origin;
+  const bootstrapOrigin = new URL(bootstrapUrl).origin;
+  const scriptSources = Array.from(new Set([origin, bootstrapOrigin])).join(
+    " ",
+  );
   const policy = [
     "default-src 'none'",
-    `script-src 'unsafe-inline' ${origin}`,
+    `script-src ${scriptSources}`,
     `style-src 'unsafe-inline' ${origin}`,
     `font-src data: ${origin}`,
     `img-src data: blob: ${origin}`,
@@ -295,166 +311,28 @@ const withPluginDocumentPolicy = (
   ].join("; ");
 
   document.querySelectorAll("base").forEach((base) => base.remove());
+  document.querySelectorAll('meta[http-equiv]').forEach((meta) => {
+    if (
+      meta.getAttribute("http-equiv")?.toLowerCase() ===
+      "content-security-policy"
+    ) {
+      meta.remove();
+    }
+  });
   const base = document.createElement("base");
-  base.href = href;
+  base.href = new URL(".", href).toString();
   const csp = document.createElement("meta");
   csp.httpEquiv = "Content-Security-Policy";
   csp.content = policy;
-  const lifecycle = document.createElement("script");
-  lifecycle.textContent = `(() => {
-    const bridgeToken = ${JSON.stringify(token)};
-    const initialTheme = ${JSON.stringify(theme)};
-    const channel = new MessageChannel();
-    const bridgePort = channel.port1;
-    const sendPort = bridgePort.postMessage.bind(bridgePort);
-    const scheduleTask = window.setTimeout.bind(window);
-    const lifecycleScript = document.currentScript;
-    if (lifecycleScript) lifecycleScript.remove();
-    let pluginListenersReady = document.readyState !== "loading";
-    let externalNavigationPermit = false;
-    let permitGeneration = 0;
-    const queuedHostMessages = [];
-    const deliverHostMessage = (message) => window.postMessage(message, "*");
-    const applyTheme = (theme) => {
-      const rawScheme = String(
-        theme && (theme.colorScheme || theme.brightness) || "light"
-      ).toLowerCase();
-      const colorScheme = rawScheme.includes("dark") ? "dark" : "light";
-      const root = document.documentElement;
-      const variables = theme && theme.cssVariables || {};
-      root.style.setProperty("color-scheme", colorScheme, "important");
-      root.dataset.tingTheme = colorScheme;
-      root.dataset.theme = colorScheme;
-      root.classList.toggle("dark", colorScheme === "dark");
-      root.classList.toggle("light", colorScheme === "light");
-      Object.entries(variables).forEach(([name, value]) => {
-        root.style.setProperty(name, String(value), "important");
-      });
-      if (document.body) {
-        if (variables["--bg"]) {
-          document.body.style.setProperty(
-            "background-color",
-            String(variables["--bg"]),
-            "important",
-          );
-        }
-        if (variables["--text"]) {
-          document.body.style.setProperty(
-            "color",
-            String(variables["--text"]),
-            "important",
-          );
-        }
-      }
-      window.__tingPluginTheme = theme;
-    };
-    Object.defineProperty(window, "__tingPluginApplyTheme", {
-      value: applyTheme,
-      configurable: false,
-      enumerable: false,
-      writable: false,
-    });
-    applyTheme(initialTheme);
-    const markPluginListenersReady = () => {
-      if (pluginListenersReady) return;
-      pluginListenersReady = true;
-      queuedHostMessages.splice(0).forEach(deliverHostMessage);
-    };
-    if (!pluginListenersReady) {
-      document.addEventListener("DOMContentLoaded", () => {
-        scheduleTask(markPluginListenersReady, 0);
-      }, { capture: true, once: true });
-    }
-    const postBridgeMessage = (message) => {
-      sendPort(Object.assign({}, message, { bridge_token: bridgeToken }));
-    };
-    Object.defineProperty(window, "__TING_PLUGIN_BRIDGE__", {
-      value: Object.freeze({
-        postMessage(message) {
-          if (
-            !message ||
-            typeof message !== "object" ||
-            message.type !== "ting-plugin:request"
-          ) return;
-          postBridgeMessage(message);
-        },
-      }),
-      configurable: false,
-      enumerable: false,
-      writable: false,
-    });
-    bridgePort.addEventListener("message", (event) => {
-      const message = event.data;
-      if (!message || message.bridge_token !== bridgeToken) return;
-      if (message.type === "ting-plugin:theme") applyTheme(message.theme);
-      if (pluginListenersReady) {
-        deliverHostMessage(message);
-      } else if (queuedHostMessages.length < 128) {
-        queuedHostMessages.push(message);
-      }
-    });
-    bridgePort.start();
-    window.addEventListener("beforeunload", () => {
-      postBridgeMessage({ type: "ting-plugin:document-unloading" });
-    }, { capture: true });
-    window.addEventListener("pagehide", () => bridgePort.close(), {
-      capture: true,
-      once: true,
-    });
-    const pluginAssetUrl = ${JSON.stringify(href)};
-    const absolutePluginUrl = (url) => {
-      try { return new URL(url, pluginAssetUrl).href; } catch (_error) { return ""; }
-    };
-    const isExternalUrl = (url) => {
-      const absoluteUrl = absolutePluginUrl(url);
-      if (!absoluteUrl) return false;
-      try {
-        const parsed = new URL(absoluteUrl);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-        return absoluteUrl !== pluginAssetUrl &&
-          !absoluteUrl.startsWith(pluginAssetUrl + "#") &&
-          !absoluteUrl.startsWith(pluginAssetUrl + "?");
-      } catch (_error) {
-        return false;
-      }
-    };
-    const grantExternalNavigation = () => {
-      const generation = ++permitGeneration;
-      externalNavigationPermit = true;
-      scheduleTask(() => {
-        if (permitGeneration === generation) externalNavigationPermit = false;
-      }, 0);
-    };
-    const requestExternalNavigation = (url) => {
-      if (!externalNavigationPermit) return;
-      externalNavigationPermit = false;
-      const absoluteUrl = absolutePluginUrl(url);
-      if (!isExternalUrl(absoluteUrl)) return;
-      postBridgeMessage({ type: "ting-plugin:external-url", url: absoluteUrl });
-    };
-    Object.defineProperty(window, "open", {
-      value(url) {
-        if (url && isExternalUrl(url)) requestExternalNavigation(url);
-        return null;
-      },
-      configurable: false,
-      writable: false,
-    });
-    window.addEventListener("click", (event) => {
-      if (event.isTrusted) grantExternalNavigation();
-      const target = event.target;
-      const anchor = target && target.closest ? target.closest("a[href]") : null;
-      if (!anchor || !isExternalUrl(anchor.href)) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      requestExternalNavigation(anchor.href);
-    }, { capture: true });
-    window.parent.postMessage({
-      type: "ting-plugin:document-ready",
-      bridge_token: bridgeToken,
-    }, "*", [channel.port2]);
-  })();`;
-  document.head.prepend(lifecycle);
+  const bootstrapData = document.createElement("meta");
+  bootstrapData.name = "ting-plugin-bootstrap";
+  bootstrapData.content = encodeURIComponent(
+    JSON.stringify({ bridgeToken: token, theme, assetUrl: href }),
+  );
+  const bootstrap = document.createElement("script");
+  bootstrap.src = bootstrapUrl;
+  document.head.prepend(bootstrap);
+  document.head.prepend(bootstrapData);
   document.head.prepend(base);
   document.head.prepend(csp);
   return `<!doctype html>\n${document.documentElement.outerHTML}`;
@@ -488,6 +366,13 @@ const PluginWebContainer = ({
     () => (src ? absoluteAssetUrl(src, activeUrl) : undefined),
     [activeUrl, src],
   );
+  const bootstrapUrl = useMemo(() => {
+    if (typeof window === "undefined") return undefined;
+    return new URL(
+      getRuntimeAssetUrl("/plugin-container-bootstrap.js"),
+      window.location.href,
+    ).toString();
+  }, []);
   const allowedHostMethods = useMemo(
     () =>
       new Set(
@@ -568,7 +453,7 @@ const PluginWebContainer = ({
       invalidateGeneration(generationRef.current);
       generationRef.current = undefined;
       setPendingExternalUrl(undefined);
-      if (!src || !srcBaseUrl) {
+      if (!src || !srcBaseUrl || !bootstrapUrl) {
         setPluginDocument(undefined);
         return;
       }
@@ -584,6 +469,7 @@ const PluginWebContainer = ({
               ? response.data
               : String(response.data ?? "");
           const token = createBridgeToken();
+          const assetUrl = finalResponseUrl(response.request) || srcBaseUrl;
           const generation: PluginDocumentGeneration = {
             token,
             loadCount: 0,
@@ -595,7 +481,8 @@ const PluginWebContainer = ({
           setPluginDocument({
             html: withPluginDocumentPolicy(
               html,
-              srcBaseUrl,
+              assetUrl,
+              bootstrapUrl,
               token,
               pluginThemeFromDocument(),
             ),
@@ -617,7 +504,7 @@ const PluginWebContainer = ({
       window.clearTimeout(timer);
       invalidateGeneration(generationRef.current);
     };
-  }, [bridgeGenerationKey, src, srcBaseUrl]);
+  }, [bootstrapUrl, bridgeGenerationKey, src, srcBaseUrl]);
 
   const handleBridgeMessage = async (
     generation: PluginDocumentGeneration,
