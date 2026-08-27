@@ -5,8 +5,8 @@ import { formatLocalizedDate } from "../../core/utils/locale";
 import { useApplicationTimeZone } from "../../core/utils/timeZone";
 import {
   CHANGELOG_URL,
+  getLocalizedTingReaderWebsiteUrl,
   PRIVACY_POLICY_URL,
-  TING_READER_WEBSITE_URL,
   UPDATE_GUIDE_URL,
   USER_AGREEMENT_URL,
 } from "../../core/constants/links";
@@ -37,8 +37,11 @@ const formatVersion = (version: string | undefined) => {
 };
 
 const AboutPage: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   useApplicationTimeZone();
+  const officialWebsiteUrl = getLocalizedTingReaderWebsiteUrl(
+    i18n.resolvedLanguage || i18n.language,
+  );
   const [backendVersion, setBackendVersion] = useState("");
   const [loadingVersion, setLoadingVersion] = useState(true);
   const [checkingBackendUpdate, setCheckingBackendUpdate] = useState(false);
@@ -193,8 +196,8 @@ const AboutPage: React.FC = () => {
             <LinkCard
               icon={<Globe2 size={24} />}
               label={t("mine.officialWebsite")}
-              value={TING_READER_WEBSITE_URL}
-              href={TING_READER_WEBSITE_URL}
+              value={officialWebsiteUrl}
+              href={officialWebsiteUrl}
               tone="bg-blue-50 dark:bg-blue-900/20 text-blue-600"
             />
             <LinkCard
