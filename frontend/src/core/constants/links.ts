@@ -1,4 +1,8 @@
 export const TING_READER_WEBSITE_URL = "https://www.tingreader.cn";
+export const getLocalizedTingReaderWebsiteUrl = (language?: string) =>
+  language?.toLowerCase().startsWith("en")
+    ? `${TING_READER_WEBSITE_URL}/en`
+    : TING_READER_WEBSITE_URL;
 export const USER_AGREEMENT_URL = `${TING_READER_WEBSITE_URL}/about/user-agreement`;
 export const PRIVACY_POLICY_URL = `${TING_READER_WEBSITE_URL}/about/privacy-policy`;
 export const CHANGELOG_URL = `${TING_READER_WEBSITE_URL}/about/changelog`;
