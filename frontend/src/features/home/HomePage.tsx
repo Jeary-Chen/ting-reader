@@ -30,7 +30,6 @@ import {
 } from 'lucide-react';
 import { formatLocalizedDate } from '../../core/utils/locale';
 import { getCurrentHour, useApplicationTimeZone } from '../../core/utils/timeZone';
-import { formatMinuteMetric } from '../../core/utils/duration';
 
 type HeroItem = {
   id: string;
@@ -227,7 +226,6 @@ const HomePage: React.FC = () => {
     const seconds = recentPlays.reduce((sum, progress) => sum + Math.max(0, progress.position || 0), 0);
     return Math.round(seconds / 60);
   }, [recentPlays]);
-  const listenMetric = formatMinuteMetric(listenMinutes);
 
   const getGreeting = () => {
     const hour = getCurrentHour(now);
@@ -405,7 +403,7 @@ const HomePage: React.FC = () => {
 
           {homeLayout.showStats && (
           <div className="grid grid-cols-2 gap-4">
-            <DataCard icon={<Headphones size={20} />} label={t('home.recentlyListened')} value={listenMetric.value} unit={t(`home.${listenMetric.unit}`)} tone="text-primary-600 bg-primary-50 dark:bg-primary-900/20" />
+            <DataCard icon={<Headphones size={20} />} label={t('home.recentlyListened')} value={listenMinutes > 0 ? `${listenMinutes}` : '0'} unit={t('home.minutes')} tone="text-primary-600 bg-primary-50 dark:bg-primary-900/20" />
             <DataCard icon={<Heart size={20} />} label={t('home.favoriteWorks')} value={favorites.length} unit={t('home.bookUnit')} tone="text-red-500 bg-red-50 dark:bg-red-900/20" />
             <DataCard icon={<ListMusic size={20} />} label={t('home.myPlaylists')} value={playlists.length} unit={t('home.itemUnit')} tone="text-amber-600 bg-amber-50 dark:bg-amber-900/20" />
             <DataCard icon={<History size={20} />} label={t('home.listeningHistory')} value={recentPlays.length} unit={t('home.recordUnit')} tone="text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20" />
@@ -529,21 +527,15 @@ const DataCard = ({
   unit?: string;
   tone: string;
 }) => (
-  <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-3 sm:p-4 shadow-sm min-w-0">
-    <div className="flex items-center gap-3 sm:gap-5 min-w-0">
-      <div className="shrink-0 max-w-[76px] sm:max-w-none">
-        <div className={`w-9 h-9 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center ${tone}`}>
-          {icon}
-        </div>
-        <p className="mt-2 text-[10px] sm:text-xs leading-tight text-slate-500 font-bold">
-          {label}
-        </p>
-      </div>
-      <p className="min-w-0 text-xl sm:text-3xl font-black text-slate-900 dark:text-white truncate">
-        {value}
-        {unit && <span className="text-[10px] sm:text-xs font-bold text-slate-400 ml-1">{unit}</span>}
-      </p>
+  <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-4 shadow-sm min-w-0">
+    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center mb-4 ${tone}`}>
+      {icon}
     </div>
+    <p className="text-xs text-slate-500 font-bold">{label}</p>
+    <p className="text-2xl font-black text-slate-900 dark:text-white truncate">
+      {value}
+      {unit && <span className="text-xs font-bold text-slate-400 ml-1">{unit}</span>}
+    </p>
   </div>
 );
 

@@ -145,9 +145,7 @@ const zhCN = {
     myContent: "我的内容",
     historyTitle: "我的历史",
     historyDescription:
-      "最近听过 {{books}} 本 / {{chapters}} 章，约 {{durationValue}} {{durationUnit}}",
-    minutesUnit: "分钟",
-    hoursUnit: "小时",
+      "最近听过 {{books}} 本 / {{chapters}} 章，约 {{minutes}} 分钟",
     historyEmptyDescription: "查看图文收听记录",
     favoritesTitle: "我的收藏",
     favoritesDescription: "收藏夹里有 {{count}} 部作品",
@@ -381,7 +379,6 @@ const zhCN = {
     managePlaylists: "管理书单",
     recentlyListened: "最近已听",
     minutes: "分钟",
-    hours: "小时",
     favoriteWorks: "收藏作品",
     bookUnit: "本",
     myPlaylists: "我的书单",

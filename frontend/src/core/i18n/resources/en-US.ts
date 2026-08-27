@@ -157,9 +157,7 @@ const enUS = {
     myContent: "My Content",
     historyTitle: "History",
     historyDescription:
-      "Recently listened to {{books}} books / {{chapters}} chapters, about {{durationValue}} {{durationUnit}}",
-    minutesUnit: "min",
-    hoursUnit: "hrs",
+      "Recently listened to {{books}} books / {{chapters}} chapters, about {{minutes}} min",
     historyEmptyDescription: "View listening history with covers",
     favoritesTitle: "Favorites",
     favoritesDescription: "{{count}} works in favorites",
@@ -403,7 +401,6 @@ const enUS = {
     managePlaylists: "Manage Playlists",
     recentlyListened: "Recently Listened",
     minutes: "min",
-    hours: "hrs",
     favoriteWorks: "Favorites",
     bookUnit: "books",
     myPlaylists: "Playlists",

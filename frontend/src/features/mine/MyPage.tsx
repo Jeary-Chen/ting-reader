@@ -5,7 +5,6 @@ import apiClient from "../../core/api/client";
 import type { Book, Playlist, Progress } from "../../core/types";
 import { useAuthStore } from "../../core/stores/authStore";
 import { usePlayerStore } from "../../core/stores/playerStore";
-import { formatMinuteMetric } from "../../core/utils/duration";
 import {
   ChevronRight,
   BarChart3,
@@ -75,7 +74,6 @@ const MyPage: React.FC = () => {
       0,
     ) / 60,
   );
-  const listenedMetric = formatMinuteMetric(listenedMinutes);
   const recentBookCount = new Set(
     recentPlays.map((progress) => progress.book_id).filter(Boolean),
   ).size;
@@ -232,8 +230,7 @@ const MyPage: React.FC = () => {
                   ? t("mine.historyDescription", {
                       books: recentBookCount,
                       chapters: recentPlays.length,
-                      durationValue: listenedMetric.value,
-                      durationUnit: t(`mine.${listenedMetric.unit}Unit`),
+                      minutes: listenedMinutes || 0,
                     })
                   : t("mine.historyEmptyDescription")
               }
