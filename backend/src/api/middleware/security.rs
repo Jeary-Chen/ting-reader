@@ -56,10 +56,10 @@ pub async fn security_headers_middleware(request: Request, next: Next) -> Respon
             .headers
             .insert("X-Frame-Options", HeaderValue::from_static("DENY"));
 
-        parts.headers.insert(
-            "Content-Security-Policy",
-            HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors 'none';"),
-        );
+        parts
+            .headers
+            .entry("Content-Security-Policy")
+            .or_insert(HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors 'none';"));
     }
 
     parts.headers.insert(
@@ -247,6 +247,32 @@ mod tests {
         assert!(csp_value.contains("script-src 'self'"));
         assert!(csp_value.contains("object-src 'none'"));
         assert!(csp_value.contains("frame-ancestors 'none'"));
+    }
+
+    #[tokio::test]
+    async fn test_page_preserves_handler_csp_nonce() {
+        let app = Router::new()
+            .route(
+                "/test",
+                get(|| async {
+                    Response::builder()
+                        .header(
+                            "Content-Security-Policy",
+                            "default-src 'self'; script-src 'self' 'nonce-test-nonce'",
+                        )
+                        .body(Body::empty())
+                        .unwrap()
+                }),
+            )
+            .layer(middleware::from_fn(security_headers_middleware));
+
+        let request = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(
+            response.headers().get("Content-Security-Policy").unwrap(),
+            "default-src 'self'; script-src 'self' 'nonce-test-nonce'"
+        );
     }
 
     #[tokio::test]

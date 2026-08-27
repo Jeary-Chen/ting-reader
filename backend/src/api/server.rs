@@ -20,13 +20,15 @@ use crate::db::repository::BookRepository;
 use axum::{
     body::{to_bytes, Body},
     extract::{ConnectInfo, Request, State},
-    http::{header, uri::PathAndQuery, StatusCode, Uri},
+    http::{header, uri::PathAndQuery, HeaderValue, StatusCode, Uri},
     middleware,
     middleware::Next,
     response::{IntoResponse, Json, Response},
     routing::{any, get},
     Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -792,13 +794,41 @@ async fn ensure_manifest_link(request: Request, next: Next) -> Response {
     let Ok(html) = String::from_utf8(bytes.to_vec()) else {
         return Response::from_parts(parts, Body::from(bytes));
     };
-    let rewritten = ensure_manifest_link_in_html(&html);
-    if rewritten == html {
-        return Response::from_parts(parts, Body::from(bytes));
-    }
+    let nonce = create_document_script_nonce();
+    let rewritten = inject_document_script_nonce(&ensure_manifest_link_in_html(&html), &nonce);
+    let csp = document_content_security_policy(&nonce);
+    parts.headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_str(&csp).expect("document CSP is valid"),
+    );
 
     parts.headers.remove(header::CONTENT_LENGTH);
     Response::from_parts(parts, Body::from(rewritten))
+}
+
+fn create_document_script_nonce() -> String {
+    let mut bytes = [0_u8; 24];
+    OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn document_content_security_policy(nonce: &str) -> String {
+    format!(
+        "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; media-src 'self'; object-src 'none'; frame-ancestors 'none';"
+    )
+}
+
+fn inject_document_script_nonce(html: &str, nonce: &str) -> String {
+    let meta = format!(r#"<meta name="ting-csp-nonce" content="{nonce}">"#);
+    if let Some(index) = html.find("</head>") {
+        let mut rewritten = String::with_capacity(html.len() + meta.len());
+        rewritten.push_str(&html[..index]);
+        rewritten.push_str(&meta);
+        rewritten.push_str(&html[index..]);
+        rewritten
+    } else {
+        format!("{meta}{html}")
+    }
 }
 
 fn ensure_manifest_link_in_html(html: &str) -> String {
@@ -1068,6 +1098,43 @@ mod tests {
             response.headers().get(header::LOCATION).unwrap(),
             "../../manifest.webmanifest"
         );
+    }
+
+    #[tokio::test]
+    async fn html_response_gets_a_matching_script_nonce() {
+        async fn page() -> Response {
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/html")
+                .body(Body::from("<html><head></head><body></body></html>"))
+                .unwrap()
+        }
+
+        let app = Router::new()
+            .route("/", get(page))
+            .layer(middleware::from_fn(ensure_manifest_link));
+        let response = app
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let csp = response
+            .headers()
+            .get(header::CONTENT_SECURITY_POLICY)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .and_then(|value| value.split('\'').next())
+            .unwrap()
+            .to_string();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+
+        assert_eq!(nonce.len(), 32);
+        assert!(body.contains(&format!(
+            r#"<meta name="ting-csp-nonce" content="{nonce}">"#
+        )));
     }
 
     #[tokio::test]
