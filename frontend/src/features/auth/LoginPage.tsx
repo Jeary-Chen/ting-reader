@@ -1,16 +1,63 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import apiClient from '../../core/api/client';
 import { useAuthStore } from '../../core/stores/authStore';
-import { USER_AGREEMENT_URL, PRIVACY_POLICY_URL } from '../../core/constants/links';
+import { useTheme, type Theme } from '../../core/hooks/useTheme';
+import { useAppLanguage } from '../../core/i18n/useAppLanguage';
+import type { SupportedLanguage } from '../../core/i18n/locales';
+import {
+  getLocalizedPrivacyPolicyUrl,
+  getLocalizedUserAgreementUrl,
+} from '../../core/constants/links';
 import { safeStorage } from '../../core/utils/storage';
 import { markSessionRestoreLogged } from '../../core/utils/sessionRestore';
 import { getRuntimeAssetUrl } from '../../core/utils/runtimeUrl';
-import { Lock, Server, User } from 'lucide-react';
+import {
+  Lock,
+  Monitor,
+  Moon,
+  Server,
+  Sun,
+  User,
+} from 'lucide-react';
+
+const LoginLanguageIcon: React.FC<{ reversed: boolean }> = ({ reversed }) => {
+  const translationTransform = reversed ? 'translate(10 10)' : undefined;
+  const letterTransform = reversed ? 'translate(-10 -10)' : 'translate(2 2)';
+
+  return (
+    <svg
+      aria-hidden="true"
+      width="19"
+      height="19"
+      viewBox="0 0 26 26"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.15"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <g transform={translationTransform}>
+        <path d="m5 8 6 6" />
+        <path d="m4 14 6-6 2-3" />
+        <path d="M2 5h12" />
+        <path d="M7 2h1" />
+      </g>
+      <g transform={letterTransform}>
+        <path d="m22 22-5-10-5 10" />
+        <path d="M14 18h6" />
+      </g>
+    </svg>
+  );
+};
 
 const LoginPage: React.FC = () => {
   const { t } = useTranslation();
+  const { language, setLanguage } = useAppLanguage();
+  const { theme, applyTheme } = useTheme();
+  const userAgreementUrl = getLocalizedUserAgreementUrl(language);
+  const privacyPolicyUrl = getLocalizedPrivacyPolicyUrl(language);
   const [serverAddress, setServerAddress] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -22,6 +69,10 @@ const LoginPage: React.FC = () => {
   const [rememberPassword, setRememberPassword] = useState(
     () => safeStorage.getItem('login_remember_password') !== 'false',
   );
+  const changedLoginPreferences = useRef<Partial<{
+    language: SupportedLanguage;
+    theme: Theme;
+  }>>({});
   // const [resolving, setResolving] = useState(false);
   
   const navigate = useNavigate();
@@ -30,6 +81,22 @@ const LoginPage: React.FC = () => {
   // Check if running in Electron
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isElectron = !!(window as any).electronAPI;
+
+  const toggleLanguage = () => {
+    const nextLanguage = language === 'en-US' ? 'zh-CN' : 'en-US';
+    changedLoginPreferences.current.language = nextLanguage;
+    void setLanguage(nextLanguage, false);
+  };
+
+  const toggleTheme = () => {
+    const nextTheme: Theme = theme === 'system'
+      ? 'light'
+      : theme === 'light'
+        ? 'dark'
+        : 'system';
+    changedLoginPreferences.current.theme = nextTheme;
+    applyTheme(nextTheme);
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -113,6 +180,16 @@ const LoginPage: React.FC = () => {
       }
       setAuth(user, token);
       markSessionRestoreLogged(token);
+
+      const settingsPatch = { ...changedLoginPreferences.current };
+      if (Object.keys(settingsPatch).length > 0) {
+        try {
+          await apiClient.post('/api/settings', settingsPatch);
+        } catch (syncError) {
+          console.error('Failed to sync login preferences', syncError);
+        }
+      }
+
       navigate('/');
     } catch (err: unknown) {
       console.error(t('auth.loginError'), err);
@@ -127,7 +204,35 @@ const LoginPage: React.FC = () => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-950 p-4">
       <div className="flex-1 flex items-center justify-center w-full">
-        <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl p-8 space-y-8 border border-slate-200 dark:border-slate-800">
+        <div className="relative w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-xl p-8 space-y-8 border border-slate-200 dark:border-slate-800">
+          <div className="absolute right-5 top-5 flex gap-1">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={toggleLanguage}
+              aria-label={t('settings.language')}
+              title={`${t('settings.language')}: ${language === 'en-US' ? t('settings.enUS') : t('settings.zhCN')}`}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary-400"
+            >
+              <LoginLanguageIcon reversed={language === 'en-US'} />
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={toggleTheme}
+              aria-label={t('settings.appearance')}
+              title={`${t('settings.appearance')}: ${t(`settings.${theme}`)}`}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-500/30 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary-400"
+            >
+              {theme === 'light' ? (
+                <Sun size={19} />
+              ) : theme === 'dark' ? (
+                <Moon size={19} />
+              ) : (
+                <Monitor size={19} />
+              )}
+            </button>
+          </div>
           <div className="text-center">
             <div className="inline-flex items-center justify-center w-20 h-20 mb-6">
             <img src={getRuntimeAssetUrl('/logo.png')} alt={t('common.logoAlt')} className="w-full h-full object-contain" />
@@ -204,7 +309,7 @@ const LoginPage: React.FC = () => {
                 <span>
                   {t('auth.acceptAgreement')}
                   <a
-                    href={USER_AGREEMENT_URL}
+                    href={userAgreementUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary-600 hover:text-primary-700 font-medium underline underline-offset-2 mx-1"
@@ -213,7 +318,7 @@ const LoginPage: React.FC = () => {
                   </a>
                   {t('auth.and')}
                   <a
-                    href={PRIVACY_POLICY_URL}
+                    href={privacyPolicyUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary-600 hover:text-primary-700 font-medium underline underline-offset-2 mx-1"

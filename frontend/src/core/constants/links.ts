@@ -1,9 +1,24 @@
 export const TING_READER_WEBSITE_URL = "https://www.tingreader.cn";
+
+const isEnglish = (language?: string) =>
+  language?.toLowerCase().startsWith("en") === true;
+
 export const getLocalizedTingReaderWebsiteUrl = (language?: string) =>
-  language?.toLowerCase().startsWith("en")
+  isEnglish(language)
     ? `${TING_READER_WEBSITE_URL}/en`
     : TING_READER_WEBSITE_URL;
-export const USER_AGREEMENT_URL = `${TING_READER_WEBSITE_URL}/about/user-agreement`;
-export const PRIVACY_POLICY_URL = `${TING_READER_WEBSITE_URL}/about/privacy-policy`;
-export const CHANGELOG_URL = `${TING_READER_WEBSITE_URL}/about/changelog`;
-export const UPDATE_GUIDE_URL = `${TING_READER_WEBSITE_URL}/guide/update`;
+
+const getLocalizedDocumentUrl = (path: string, language?: string) =>
+  `${TING_READER_WEBSITE_URL}${path}${isEnglish(language) ? "/en" : ""}`;
+
+export const getLocalizedUserAgreementUrl = (language?: string) =>
+  getLocalizedDocumentUrl("/about/user-agreement", language);
+
+export const getLocalizedPrivacyPolicyUrl = (language?: string) =>
+  getLocalizedDocumentUrl("/about/privacy-policy", language);
+
+export const getLocalizedChangelogUrl = (language?: string) =>
+  getLocalizedDocumentUrl("/about/changelog", language);
+
+export const getLocalizedUpdateGuideUrl = (language?: string) =>
+  getLocalizedDocumentUrl("/guide/update", language);

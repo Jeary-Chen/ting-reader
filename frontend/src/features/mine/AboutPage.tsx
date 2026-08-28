@@ -4,11 +4,11 @@ import apiClient from "../../core/api/client";
 import { formatLocalizedDate } from "../../core/utils/locale";
 import { useApplicationTimeZone } from "../../core/utils/timeZone";
 import {
-  CHANGELOG_URL,
+  getLocalizedChangelogUrl,
+  getLocalizedPrivacyPolicyUrl,
   getLocalizedTingReaderWebsiteUrl,
-  PRIVACY_POLICY_URL,
-  UPDATE_GUIDE_URL,
-  USER_AGREEMENT_URL,
+  getLocalizedUpdateGuideUrl,
+  getLocalizedUserAgreementUrl,
 } from "../../core/constants/links";
 import {
   CheckCircle2,
@@ -39,9 +39,12 @@ const formatVersion = (version: string | undefined) => {
 const AboutPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   useApplicationTimeZone();
-  const officialWebsiteUrl = getLocalizedTingReaderWebsiteUrl(
-    i18n.resolvedLanguage || i18n.language,
-  );
+  const language = i18n.resolvedLanguage || i18n.language;
+  const officialWebsiteUrl = getLocalizedTingReaderWebsiteUrl(language);
+  const userAgreementUrl = getLocalizedUserAgreementUrl(language);
+  const privacyPolicyUrl = getLocalizedPrivacyPolicyUrl(language);
+  const changelogUrl = getLocalizedChangelogUrl(language);
+  const updateGuideUrl = getLocalizedUpdateGuideUrl(language);
   const [backendVersion, setBackendVersion] = useState("");
   const [loadingVersion, setLoadingVersion] = useState(true);
   const [checkingBackendUpdate, setCheckingBackendUpdate] = useState(false);
@@ -167,7 +170,7 @@ const AboutPage: React.FC = () => {
                   )}
                   <div className="flex flex-wrap gap-2 mt-4">
                     <a
-                      href={UPDATE_GUIDE_URL}
+                      href={updateGuideUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 transition-colors"
@@ -204,21 +207,21 @@ const AboutPage: React.FC = () => {
               icon={<FileText size={24} />}
               label={t("mine.userAgreement")}
               value={t("mine.userAgreementDescription")}
-              href={USER_AGREEMENT_URL}
+              href={userAgreementUrl}
               tone="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600"
             />
             <LinkCard
               icon={<ShieldCheck size={24} />}
               label={t("mine.privacyPolicy")}
               value={t("mine.privacyPolicyDescription")}
-              href={PRIVACY_POLICY_URL}
+              href={privacyPolicyUrl}
               tone="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600"
             />
             <LinkCard
               icon={<History size={24} />}
               label={t("mine.changelog")}
               value={t("mine.changelogDescription")}
-              href={CHANGELOG_URL}
+              href={changelogUrl}
               tone="bg-orange-50 dark:bg-orange-900/20 text-orange-600"
             />
           </div>
