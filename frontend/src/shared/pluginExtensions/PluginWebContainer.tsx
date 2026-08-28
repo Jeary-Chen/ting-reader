@@ -295,7 +295,7 @@ const documentScriptNonce = () => {
     .querySelector<HTMLMetaElement>('meta[name="ting-csp-nonce"]')
     ?.content.trim();
   if (nonce && /^[A-Za-z0-9_-]{16,128}$/.test(nonce)) return nonce;
-  return import.meta.env.DEV ? createBridgeToken() : undefined;
+  return undefined;
 };
 
 const pluginAssetRoot = (href: string) => {
@@ -393,7 +393,6 @@ const withPluginDocumentPolicy = async (
   const root = pluginAssetRoot(href);
   const nonce = documentScriptNonce();
   if (!root) throw new Error("Plugin asset directory could not be resolved.");
-  if (!nonce) throw new Error("The application CSP nonce is unavailable.");
 
   let bundledBytes = textByteLength(html);
   if (bundledBytes > MAX_PLUGIN_DOCUMENT_BYTES) {
@@ -415,6 +414,83 @@ const withPluginDocumentPolicy = async (
       meta.remove();
     }
   });
+
+  if (!nonce) {
+    const bootstrapAssetUrl = new URL(bootstrapUrl);
+    const bootstrapOrigin = bootstrapAssetUrl.origin;
+    const scripts = Array.from(
+      document.querySelectorAll<HTMLScriptElement>("script[src]"),
+    );
+    for (const script of scripts) {
+      if (script.type.trim().toLowerCase() === "module") {
+        throw new Error("Plugin module scripts are not supported in the sandbox.");
+      }
+      const assetUrl = new URL(script.getAttribute("src") || "", href);
+      if (!isWithinPluginAssetRoot(assetUrl, root)) {
+        throw new Error("Plugin script is outside the allowed asset directory.");
+      }
+      script.src = assetUrl.href;
+      script.removeAttribute("nonce");
+      script.removeAttribute("crossorigin");
+      script.removeAttribute("integrity");
+    }
+
+    const inlineScripts = document.querySelectorAll("script:not([src])");
+    if (inlineScripts.length > 0) {
+      throw new Error(
+        "Inline plugin scripts require an application CSP nonce.",
+      );
+    }
+
+    const stylesheets = Array.from(
+      document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),
+    );
+    for (const stylesheet of stylesheets) {
+      const assetUrl = new URL(stylesheet.getAttribute("href") || "", href);
+      if (!isWithinPluginAssetRoot(assetUrl, root)) {
+        throw new Error("Plugin stylesheet is outside the allowed asset directory.");
+      }
+      stylesheet.href = assetUrl.href;
+      stylesheet.removeAttribute("crossorigin");
+      stylesheet.removeAttribute("integrity");
+    }
+
+    const scriptSources = Array.from(
+      new Set([origin, bootstrapOrigin]),
+    ).join(" ");
+    const policy = [
+      "default-src 'none'",
+      `script-src ${scriptSources}`,
+      `style-src 'unsafe-inline' ${origin}`,
+      `font-src data: ${origin}`,
+      `img-src data: blob: ${origin}`,
+      `media-src data: blob: ${origin}`,
+      "connect-src 'none'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "worker-src 'none'",
+      "form-action 'none'",
+      `base-uri ${origin}`,
+    ].join("; ");
+
+    const base = document.createElement("base");
+    base.href = new URL(".", href).toString();
+    const csp = document.createElement("meta");
+    csp.httpEquiv = "Content-Security-Policy";
+    csp.content = policy;
+    const bootstrapData = document.createElement("meta");
+    bootstrapData.name = "ting-plugin-bootstrap";
+    bootstrapData.content = encodeURIComponent(
+      JSON.stringify({ bridgeToken: token, theme, assetUrl: href }),
+    );
+    const bootstrap = document.createElement("script");
+    bootstrap.src = bootstrapAssetUrl.href;
+    document.head.prepend(bootstrap);
+    document.head.prepend(bootstrapData);
+    document.head.prepend(base);
+    document.head.prepend(csp);
+    return `<!doctype html>\n${document.documentElement.outerHTML}`;
+  }
 
   const stylesheets = Array.from(
     document.querySelectorAll<HTMLLinkElement>('link[rel~="stylesheet"][href]'),

@@ -193,6 +193,18 @@ impl PluginManager {
 
     /// Uninstall a plugin (Unload and delete files)
     pub async fn uninstall_plugin(&self, plugin_id: &PluginId) -> Result<()> {
+        self.uninstall_plugin_internal(plugin_id, true).await
+    }
+
+    async fn uninstall_plugin_for_upgrade(&self, plugin_id: &PluginId) -> Result<()> {
+        self.uninstall_plugin_internal(plugin_id, false).await
+    }
+
+    async fn uninstall_plugin_internal(
+        &self,
+        plugin_id: &PluginId,
+        delete_cache: bool,
+    ) -> Result<()> {
         info!("Uninstalling plugin: {}", plugin_id);
 
         let dependents = match self.find_plugin_dependents(plugin_id).await {
@@ -316,6 +328,17 @@ impl PluginManager {
         {
             let mut cache = self.metadata_cache.write().await;
             cache.remove(plugin_id);
+        }
+
+        if delete_cache {
+            if let Some(gateway) = self.host_gateway_handle().get() {
+                gateway.delete_plugin_cache(plugin_id).await?;
+            } else {
+                warn!(
+                    "Plugin cache gateway is unavailable while uninstalling {}",
+                    plugin_id
+                );
+            }
         }
 
         info!("Plugin uninstalled and files removed: {}", plugin_id);
@@ -475,6 +498,22 @@ impl PluginManager {
                             "Failed to unload old plugin version after upgrade"
                         );
                     }
+                    if let Some(gateway) = self.host_gateway_handle().get() {
+                        if let Err(e) = gateway.migrate_plugin_cache(id, &loaded_id).await {
+                            tracing::warn!(
+                                old_plugin_id = %id,
+                                new_plugin_id = %loaded_id,
+                                error = %e,
+                                message_key = "plugin.cache.migration_failed",
+                                message_params = %serde_json::json!({
+                                    "old_plugin_id": id,
+                                    "new_plugin_id": &loaded_id,
+                                    "error": e.to_string(),
+                                }),
+                                "Failed to migrate plugin cache during reload upgrade"
+                            );
+                        }
+                    }
                     tracing::info!(
                         old_id = %id,
                         new_id = %loaded_id,
@@ -530,10 +569,22 @@ impl PluginManager {
                 let is_same_plugin = entry.metadata.id == metadata.id;
 
                 if is_same_plugin && id != &target_plugin_id {
-                    to_remove.push(id.clone());
+                    to_remove.push((
+                        id.clone(),
+                        Version::parse(&entry.metadata.version).ok(),
+                    ));
                 }
             }
+            to_remove.sort_by(|left, right| {
+                right
+                    .1
+                    .cmp(&left.1)
+                    .then_with(|| left.0.cmp(&right.0))
+            });
             to_remove
+                .into_iter()
+                .map(|(id, _version)| id)
+                .collect::<Vec<_>>()
         };
 
         // Preserve old config before uninstalling so we can migrate it to the new version.
@@ -546,12 +597,13 @@ impl PluginManager {
             })
         };
 
-        for old_id in old_versions_to_remove {
+        let mut cache_ids_to_migrate = Vec::new();
+        for old_id in &old_versions_to_remove {
             info!(
                 "Found old version of plugin {}, removing: {}",
                 metadata.id, old_id
             );
-            if let Err(e) = self.uninstall_plugin(&old_id).await {
+            if let Err(e) = self.uninstall_plugin_for_upgrade(old_id).await {
                 tracing::warn!(
                     plugin_id = %old_id,
                     error = %e,
@@ -562,6 +614,8 @@ impl PluginManager {
                     }),
                     "Failed to uninstall old plugin version"
                 );
+            } else {
+                cache_ids_to_migrate.push(old_id.clone());
             }
         }
 
@@ -585,6 +639,40 @@ impl PluginManager {
         }
 
         let plugin_id = installer.install_plugin(package_path, |_| Ok(())).await?;
+
+        if let Some(gateway) = self.host_gateway_handle().get() {
+            if let Some((old_id, stale_cache_ids)) = cache_ids_to_migrate.split_first() {
+                if let Err(e) = gateway.migrate_plugin_cache(old_id, &plugin_id).await {
+                    tracing::warn!(
+                        old_plugin_id = %old_id,
+                        new_plugin_id = %plugin_id,
+                        error = %e,
+                        message_key = "plugin.cache.migration_failed",
+                        message_params = %serde_json::json!({
+                            "old_plugin_id": old_id,
+                            "new_plugin_id": &plugin_id,
+                            "error": e.to_string(),
+                        }),
+                        "Failed to migrate plugin cache during upgrade"
+                    );
+                }
+
+                for stale_id in stale_cache_ids {
+                    if let Err(e) = gateway.delete_plugin_cache(stale_id).await {
+                        tracing::warn!(
+                            plugin_id = %stale_id,
+                            error = %e,
+                            message_key = "plugin.cache.cleanup_failed",
+                            message_params = %serde_json::json!({
+                                "plugin_id": stale_id,
+                                "error": e.to_string(),
+                            }),
+                            "Failed to delete obsolete plugin cache after upgrade"
+                        );
+                    }
+                }
+            }
+        }
 
         // Migrate old config to new version: merge old values over new schema defaults.
         if let Some(ref old_config) = preserved_old_config {

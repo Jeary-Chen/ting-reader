@@ -13,7 +13,7 @@ use crate::api::models::{
 use crate::api::require_admin;
 use crate::auth::middleware::AuthUser;
 use crate::core::error::{Result, TingError};
-use crate::db::repository::Repository;
+use crate::db::repository::{progress::LISTENING_EVENTS_RETENTION_DAYS, Repository};
 use axum::{
     extract::{Path, Query, State},
     response::IntoResponse,
@@ -350,8 +350,12 @@ pub async fn get_admin_statistics(
 
             let (active_users, total_progress_records, total_listen_seconds): (i64, i64, f64) =
                 conn.query_row(
-                    "SELECT COUNT(DISTINCT user_id), COALESCE(SUM(progress_updates), 0), COALESCE(SUM(listen_seconds), 0.0) FROM listening_totals",
-                    [],
+                    "SELECT \
+                        (SELECT COUNT(DISTINCT user_id) FROM listening_events \
+                         WHERE activity_date >= DATE('now', ?1)), \
+                        (SELECT COUNT(*) FROM progress WHERE chapter_id IS NOT NULL), \
+                        COALESCE((SELECT SUM(listen_seconds) FROM listening_totals), 0.0)",
+                    [format!("-{} days", LISTENING_EVENTS_RETENTION_DAYS)],
                     |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                 )
                 .map_err(TingError::DatabaseError)?;
@@ -391,14 +395,12 @@ pub async fn get_admin_statistics(
                 .prepare(
                     "SELECT \
                         u.id, u.username, u.role, \
-                        COUNT(DISTINCT e.book_id) AS listened_books, \
-                        COALESCE(SUM(e.progress_updates), 0) AS progress_records, \
-                        COALESCE(SUM(e.listen_seconds), 0.0) AS listen_seconds, \
-                        MAX(e.last_active_at) AS last_active_at \
+                        COALESCE((SELECT COUNT(DISTINCT e.book_id) FROM listening_totals e WHERE e.user_id = u.id), 0) AS listened_books, \
+                        COALESCE((SELECT COUNT(*) FROM progress p WHERE p.user_id = u.id AND p.chapter_id IS NOT NULL), 0) AS progress_records, \
+                        COALESCE((SELECT SUM(e.listen_seconds) FROM listening_totals e WHERE e.user_id = u.id), 0.0) AS listen_seconds, \
+                        (SELECT MAX(e.last_active_at) FROM listening_totals e WHERE e.user_id = u.id) AS last_active_at \
                      FROM users u \
-                     LEFT JOIN listening_totals e ON e.user_id = u.id \
-                     GROUP BY u.id, u.username, u.role \
-                     ORDER BY MAX(e.last_active_at) IS NULL, MAX(e.last_active_at) DESC, listen_seconds DESC",
+                     ORDER BY last_active_at IS NULL, last_active_at DESC, listen_seconds DESC",
                 )
                 .map_err(TingError::DatabaseError)?;
             let user_activity = user_stmt
@@ -452,19 +454,20 @@ pub async fn get_admin_statistics(
                 .prepare(
                     "SELECT \
                         b.id, b.title, b.author, b.library_id, l.name, \
-                        COUNT(DISTINCT e.user_id) AS listeners, \
-                        COALESCE(SUM(e.progress_updates), 0) AS progress_updates, \
-                        COALESCE(SUM(e.listen_seconds), 0.0) AS listen_seconds \
-                     FROM listening_totals e \
-                     JOIN books b ON b.id = e.book_id \
+                        COALESCE((SELECT COUNT(DISTINCT d.user_id) FROM listening_events d \
+                                  WHERE d.book_id = b.id AND d.activity_date >= DATE('now', ?1)), 0) AS listeners, \
+                        COALESCE((SELECT SUM(d.progress_updates) FROM listening_events d \
+                                  WHERE d.book_id = b.id AND d.activity_date >= DATE('now', ?1)), 0) AS progress_updates, \
+                        COALESCE((SELECT SUM(e.listen_seconds) FROM listening_totals e WHERE e.book_id = b.id), 0.0) AS listen_seconds \
+                     FROM books b \
                      LEFT JOIN libraries l ON l.id = b.library_id \
-                     GROUP BY b.id, b.title, b.author, b.library_id, l.name \
                      ORDER BY listeners DESC, listen_seconds DESC \
                      LIMIT 8",
                 )
                 .map_err(TingError::DatabaseError)?;
+            let retention_modifier = format!("-{} days", LISTENING_EVENTS_RETENTION_DAYS);
             let top_books = top_books_stmt
-                .query_map([], |row| {
+                .query_map([retention_modifier], |row| {
                     Ok(BookActivityStatistics {
                         id: row.get(0)?,
                         title: row.get(1)?,

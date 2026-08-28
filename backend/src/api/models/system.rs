@@ -34,6 +34,7 @@ pub struct AdminStatisticsOverview {
     pub total_users: i64,
     pub admin_users: i64,
     pub active_users: i64,
+    /// Number of current chapter progress rows, not heartbeat syncs.
     pub total_progress_records: i64,
     pub total_listen_seconds: f64,
 }
@@ -55,6 +56,7 @@ pub struct UserActivityStatistics {
     pub username: String,
     pub role: String,
     pub listened_books: i64,
+    /// Number of current chapter progress rows for this user.
     pub progress_records: i64,
     pub listen_seconds: f64,
     pub last_active_at: Option<String>,
@@ -64,6 +66,7 @@ pub struct UserActivityStatistics {
 pub struct RecentActivityPoint {
     pub date: String,
     pub active_users: i64,
+    /// Number of progress updates aggregated for this day.
     pub progress_updates: i64,
     pub listen_seconds: f64,
 }
@@ -76,6 +79,7 @@ pub struct BookActivityStatistics {
     pub library_id: String,
     pub library_name: Option<String>,
     pub listeners: i64,
+    /// Progress updates in the retained 90-day activity window.
     pub progress_updates: i64,
     pub listen_seconds: f64,
 }

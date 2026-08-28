@@ -3,6 +3,11 @@ use crate::db::{manager::DatabaseManager, models::Progress};
 use rusqlite::{params_from_iter, OptionalExtension, ToSql};
 use std::sync::Arc;
 
+/// Number of days retained in the daily listening activity table.
+pub const LISTENING_EVENTS_RETENTION_DAYS: i64 = 90;
+/// Hidden playback progress is kept for this long before it is reclaimed.
+pub const HIDDEN_PROGRESS_RETENTION_DAYS: i64 = 180;
+
 /// Repository for Progress entities
 pub struct ProgressRepository {
     db: Arc<DatabaseManager>,
@@ -299,6 +304,36 @@ impl ProgressRepository {
             .await
     }
 
+    /// Remove daily listening activity and long-hidden progress outside their
+    /// retention windows.
+    ///
+    /// The database trigger keeps this table tidy during normal writes, while
+    /// this explicit maintenance path also handles idle installations.
+    pub async fn cleanup_expired_records(&self) -> Result<usize> {
+        let event_cutoff_modifier = format!("-{} days", LISTENING_EVENTS_RETENTION_DAYS);
+        let hidden_progress_cutoff_modifier =
+            format!("-{} days", HIDDEN_PROGRESS_RETENTION_DAYS);
+        self.db
+            .transaction(move |tx| {
+                let removed_events = tx
+                    .execute(
+                        "DELETE FROM listening_events WHERE activity_date < DATE('now', ?1)",
+                        [&event_cutoff_modifier],
+                    )
+                    .map_err(TingError::DatabaseError)?;
+                let removed_progress = tx
+                    .execute(
+                        "DELETE FROM progress \
+                         WHERE history_hidden_at IS NOT NULL \
+                           AND julianday(history_hidden_at) < julianday('now', ?1)",
+                        [&hidden_progress_cutoff_modifier],
+                    )
+                    .map_err(TingError::DatabaseError)?;
+                Ok(removed_events + removed_progress)
+            })
+            .await
+    }
+
     /// Upsert progress (insert or update)
     pub async fn upsert(&self, progress: &Progress) -> Result<()> {
         let progress = progress.clone();
@@ -369,16 +404,18 @@ impl ProgressRepository {
             )
             .map_err(TingError::DatabaseError)?;
 
+            // Keep the all-time aggregate focused on durable listening seconds.
+            // `progress_updates` is legacy data; rolling update counts come from
+            // the retained daily table instead of growing this row on every tick.
             conn.execute(
                 "INSERT INTO listening_totals (\
                     aggregate_key, user_id, book_id, chapter_id, listen_seconds, progress_updates, \
                     first_active_at, last_active_at\
                  ) VALUES (\
-                    ? || CHAR(31) || ? || CHAR(31) || COALESCE(?, ''), ?, ?, ?, ?, 1, \
+                    ? || CHAR(31) || ? || CHAR(31) || COALESCE(?, ''), ?, ?, ?, ?, 0, \
                     STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now'), STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'now')\
                  ) ON CONFLICT(aggregate_key) DO UPDATE SET \
                     listen_seconds = listening_totals.listen_seconds + excluded.listen_seconds, \
-                    progress_updates = listening_totals.progress_updates + 1, \
                     last_active_at = excluded.last_active_at",
                 rusqlite::params![
                     &progress.user_id,
@@ -527,7 +564,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(total_rows, 1);
-        assert_eq!(total_updates, 2);
+        assert_eq!(total_updates, 0);
         assert_eq!(total_seconds, 12.0);
     }
 
@@ -575,6 +612,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(total_rows, 1);
-        assert_eq!(total_updates, 2);
+        assert_eq!(total_updates, 0);
+    }
+
+    #[tokio::test]
+    async fn cleans_up_expired_daily_events() {
+        let (db, repository) = create_repository().await;
+
+        repository.upsert(&progress("event-1", 10.0)).await.unwrap();
+        db.execute(|conn| {
+            conn.execute(
+                "UPDATE listening_events SET \
+                    activity_date = DATE('now', '-91 days'), \
+                    created_at = DATETIME('now', '-91 days'), \
+                    last_active_at = DATETIME('now', '-91 days')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let removed = repository.cleanup_expired_records().await.unwrap();
+        assert_eq!(removed, 1);
+
+        let count: i64 = db
+            .execute(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM listening_events", [], |row| {
+                    row.get(0)
+                })
+                .map_err(TingError::DatabaseError)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn cleans_up_long_hidden_progress() {
+        let (db, repository) = create_repository().await;
+
+        repository.upsert(&progress("event-1", 10.0)).await.unwrap();
+        db.execute(|conn| {
+            conn.execute(
+                "UPDATE progress SET history_hidden_at = DATETIME('now', '-181 days')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        let removed = repository.cleanup_expired_records().await.unwrap();
+        assert_eq!(removed, 1);
+
+        let count: i64 = db
+            .execute(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM progress", [], |row| row.get(0))
+                    .map_err(TingError::DatabaseError)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

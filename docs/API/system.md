@@ -122,8 +122,9 @@
 
 说明：
 
-- 统计使用 `listening_events`，用户清空最近收听不会影响后台历史统计。
-- `recent_activity` 默认返回最近 14 天有记录的活动点。
+- 统计使用 `listening_events`，用户清空最近收听不会影响后台历史统计；每日活动默认保留 90 天。
+- `overview.total_progress_records` 和 `user_activity.progress_records` 表示当前 `progress` 表中的实际进度行数，不是心跳同步次数。
+- `recent_activity` 默认返回最近 14 天有记录的活动点；热门作品的 `progress_updates` 使用最近 90 天的每日聚合数据。
 - `top_books` 当前最多返回 8 条热门作品。
 
 ## 系统指标

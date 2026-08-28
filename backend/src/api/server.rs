@@ -103,6 +103,34 @@ impl ApiServer {
         let user_repo = Arc::new(crate::db::repository::UserRepository::new(db.clone()));
         let progress_repo = Arc::new(crate::db::repository::ProgressRepository::new(db.clone()));
         let favorite_repo = Arc::new(crate::db::repository::FavoriteRepository::new(db.clone()));
+
+        // Keep rolling activity and long-hidden progress bounded even when playback is idle.
+        let progress_cleanup_repo = progress_repo.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(24 * 60 * 60));
+            loop {
+                interval.tick().await;
+                match progress_cleanup_repo.cleanup_expired_records().await {
+                    Ok(removed) if removed > 0 => {
+                        tracing::info!(
+                            removed,
+                            message_key = "progress.activity_cleanup.completed",
+                            "Expired playback records removed"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            message_key = "progress.activity_cleanup.failed",
+                            message_params = %serde_json::json!({ "error": error.to_string() }),
+                            "Expired playback record cleanup failed"
+                        );
+                    }
+                }
+            }
+        });
+
         let settings_repo = Arc::new(crate::db::repository::UserSettingsRepository::new(
             db.clone(),
         ));

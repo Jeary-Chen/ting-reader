@@ -154,6 +154,20 @@ impl PluginHostGateway {
         }
     }
 
+    pub(crate) async fn delete_plugin_cache(&self, plugin_id: &str) -> Result<bool> {
+        self.plugin_cache.delete_plugin(plugin_id).await
+    }
+
+    pub(crate) async fn migrate_plugin_cache(
+        &self,
+        old_plugin_id: &str,
+        new_plugin_id: &str,
+    ) -> Result<bool> {
+        self.plugin_cache
+            .migrate_plugin(old_plugin_id, new_plugin_id)
+            .await
+    }
+
     pub async fn invoke_plugin(
         &self,
         plugin_id: &str,

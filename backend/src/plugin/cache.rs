@@ -108,12 +108,50 @@ impl PluginCache {
         Ok(self.cache_path(plugin_id, key)?.exists())
     }
 
+    pub async fn delete_plugin(&self, plugin_id: &str) -> Result<bool> {
+        let path = self.plugin_cache_dir(plugin_id);
+        if !path.exists() {
+            return Ok(false);
+        }
+
+        tokio::fs::remove_dir_all(path)
+            .await
+            .map_err(TingError::IoError)?;
+        Ok(true)
+    }
+
+    pub async fn migrate_plugin(&self, old_plugin_id: &str, new_plugin_id: &str) -> Result<bool> {
+        if old_plugin_id == new_plugin_id {
+            return Ok(false);
+        }
+
+        let old_path = self.plugin_cache_dir(old_plugin_id);
+        if !old_path.exists() {
+            return Ok(false);
+        }
+
+        let new_path = self.plugin_cache_dir(new_plugin_id);
+        if new_path.exists() {
+            tokio::fs::remove_dir_all(&new_path)
+                .await
+                .map_err(TingError::IoError)?;
+        }
+
+        tokio::fs::rename(old_path, new_path)
+            .await
+            .map_err(TingError::IoError)?;
+        Ok(true)
+    }
+
     fn cache_path(&self, plugin_id: &str, key: &str) -> Result<PathBuf> {
         validate_plugin_cache_key(key)?;
         Ok(self
-            .root_dir
-            .join(hash_segment(plugin_id))
+            .plugin_cache_dir(plugin_id)
             .join(format!("{}.json", hash_segment(key))))
+    }
+
+    fn plugin_cache_dir(&self, plugin_id: &str) -> PathBuf {
+        self.root_dir.join(hash_segment(plugin_id))
     }
 }
 
@@ -187,5 +225,46 @@ mod tests {
         assert!(validate_plugin_cache_key("reader:last-open").is_ok());
         assert!(validate_plugin_cache_key("bad\nkey").is_err());
         assert!(validate_plugin_cache_key("").is_err());
+    }
+
+    #[tokio::test]
+    async fn plugin_cache_can_be_migrated_and_deleted_as_a_namespace() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache = PluginCache::new(temp_dir.path().to_path_buf()).unwrap();
+
+        cache
+            .set(
+                "plugin-a@1.0.0",
+                "conversation-index",
+                serde_json::json!({"items": ["conversation-1"]}),
+            )
+            .await
+            .unwrap();
+
+        assert!(cache
+            .migrate_plugin("plugin-a@1.0.0", "plugin-a@1.1.0")
+            .await
+            .unwrap());
+        assert!(cache
+            .get("plugin-a@1.0.0", "conversation-index")
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            cache
+                .get("plugin-a@1.1.0", "conversation-index")
+                .await
+                .unwrap()
+                .unwrap()
+                .value,
+            serde_json::json!({"items": ["conversation-1"]})
+        );
+
+        assert!(cache.delete_plugin("plugin-a@1.1.0").await.unwrap());
+        assert!(cache
+            .get("plugin-a@1.1.0", "conversation-index")
+            .await
+            .unwrap()
+            .is_none());
     }
 }
