@@ -426,7 +426,7 @@ pub async fn get_admin_statistics(
                         SELECT \
                             activity_date, \
                             COUNT(DISTINCT user_id) AS active_users, \
-                            COALESCE(SUM(progress_updates), 0) AS progress_updates, \
+                            COUNT(*) AS progress_updates, \
                             COALESCE(SUM(listen_seconds), 0.0) AS listen_seconds \
                         FROM listening_events \
                         WHERE activity_date IS NOT NULL \
@@ -456,7 +456,7 @@ pub async fn get_admin_statistics(
                         b.id, b.title, b.author, b.library_id, l.name, \
                         COALESCE((SELECT COUNT(DISTINCT d.user_id) FROM listening_events d \
                                   WHERE d.book_id = b.id AND d.activity_date >= DATE('now', ?1)), 0) AS listeners, \
-                        COALESCE((SELECT SUM(d.progress_updates) FROM listening_events d \
+                        COALESCE((SELECT COUNT(*) FROM listening_events d \
                                   WHERE d.book_id = b.id AND d.activity_date >= DATE('now', ?1)), 0) AS progress_updates, \
                         COALESCE((SELECT SUM(e.listen_seconds) FROM listening_totals e WHERE e.book_id = b.id), 0.0) AS listen_seconds \
                      FROM books b \

@@ -500,6 +500,20 @@ CREATE INDEX IF NOT EXISTS idx_books_library_title
     ON books(library_id, title);
 "#;
 
+/// Twenty-eighth schema migration (version 28)
+const MIGRATION_V28: &str = r#"
+-- Progress heartbeats are represented by one daily activity bucket. Historical
+-- heartbeat counters are normalized so dashboard values cannot grow every two
+-- seconds while playback is active.
+UPDATE listening_events
+SET progress_updates = 1
+WHERE progress_updates <> 1;
+
+UPDATE listening_totals
+SET progress_updates = 0
+WHERE progress_updates <> 0;
+"#;
+
 /// Seventeenth schema migration (version 17)
 const MIGRATION_V17: &str = r#"
 -- Admin-configured webhook notification listeners.
@@ -768,6 +782,11 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         apply_migration(conn, 27, MIGRATION_V27)?;
     }
 
+    if current_version < 28 {
+        info!("Applying migration v28: Normalize listening activity counters");
+        apply_migration(conn, 28, MIGRATION_V28)?;
+    }
+
     info!("Database migrations completed successfully");
     Ok(())
 }
@@ -987,6 +1006,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(index_exists, 1);
+    }
+
+    #[test]
+    fn migration_v28_normalizes_heartbeat_counters() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATION_TABLE).unwrap();
+        conn.execute_batch(
+            r#"
+CREATE TABLE listening_events (progress_updates INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE listening_totals (progress_updates INTEGER NOT NULL DEFAULT 0);
+INSERT INTO listening_events (progress_updates) VALUES (110000), (7), (1);
+INSERT INTO listening_totals (progress_updates) VALUES (110000), (0);
+"#,
+        )
+        .unwrap();
+
+        apply_migration(&mut conn, 28, MIGRATION_V28).unwrap();
+
+        let event_updates: i64 = conn
+            .query_row(
+                "SELECT SUM(progress_updates) FROM listening_events",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let total_updates: i64 = conn
+            .query_row(
+                "SELECT SUM(progress_updates) FROM listening_totals",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(event_updates, 3);
+        assert_eq!(total_updates, 0);
     }
 
     #[test]

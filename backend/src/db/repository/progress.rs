@@ -311,8 +311,7 @@ impl ProgressRepository {
     /// this explicit maintenance path also handles idle installations.
     pub async fn cleanup_expired_records(&self) -> Result<usize> {
         let event_cutoff_modifier = format!("-{} days", LISTENING_EVENTS_RETENTION_DAYS);
-        let hidden_progress_cutoff_modifier =
-            format!("-{} days", HIDDEN_PROGRESS_RETENTION_DAYS);
+        let hidden_progress_cutoff_modifier = format!("-{} days", HIDDEN_PROGRESS_RETENTION_DAYS);
         self.db
             .transaction(move |tx| {
                 let removed_events = tx
@@ -387,7 +386,6 @@ impl ProgressRepository {
                     position = excluded.position, \
                     duration = excluded.duration, \
                     listen_seconds = listening_events.listen_seconds + excluded.listen_seconds, \
-                    progress_updates = listening_events.progress_updates + 1, \
                     last_active_at = excluded.last_active_at",
                 rusqlite::params![
                     &progress.id,
@@ -530,7 +528,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn aggregates_progress_updates_into_one_daily_event() {
+    async fn repeated_heartbeats_keep_one_daily_activity_record() {
         let (db, repository) = create_repository().await;
 
         repository.upsert(&progress("event-1", 10.0)).await.unwrap();
@@ -549,7 +547,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(count, 1);
-        assert_eq!(updates, 2);
+        assert_eq!(updates, 1);
         assert_eq!(listen_seconds, 12.0);
 
         let (total_rows, total_updates, total_seconds): (i64, i64, f64) = db

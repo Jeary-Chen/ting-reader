@@ -66,7 +66,7 @@ pub struct UserActivityStatistics {
 pub struct RecentActivityPoint {
     pub date: String,
     pub active_users: i64,
-    /// Number of progress updates aggregated for this day.
+    /// Number of distinct user/book/chapter daily activity records for this day.
     pub progress_updates: i64,
     pub listen_seconds: f64,
 }
@@ -79,7 +79,7 @@ pub struct BookActivityStatistics {
     pub library_id: String,
     pub library_name: Option<String>,
     pub listeners: i64,
-    /// Progress updates in the retained 90-day activity window.
+    /// Daily user/book/chapter activity records in the retained 90-day window.
     pub progress_updates: i64,
     pub listen_seconds: f64,
 }
