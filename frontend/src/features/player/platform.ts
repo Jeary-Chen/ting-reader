@@ -10,3 +10,27 @@ export const isAppleMobileBrowser = (): boolean => {
 
 export const isStrmPath = (path?: string): boolean =>
   path?.toLowerCase().split('?')[0].endsWith('.strm') ?? false;
+
+const mineSectionPathPrefixes = [
+  '/mine',
+  '/history',
+  '/favorites',
+  '/personalization',
+  '/cache',
+  '/notifications',
+  '/statistics',
+  '/about',
+];
+
+const alwaysHiddenMiniPlayerPathPrefixes = [
+  '/admin',
+  '/settings',
+  '/plugin-pages',
+];
+
+export const isMineSectionPath = (pathname: string): boolean =>
+  mineSectionPathPrefixes.some((path) => pathname.startsWith(path));
+
+export const isMiniPlayerHiddenPath = (pathname: string): boolean =>
+  isMineSectionPath(pathname) ||
+  alwaysHiddenMiniPlayerPathPrefixes.some((path) => pathname.startsWith(path));

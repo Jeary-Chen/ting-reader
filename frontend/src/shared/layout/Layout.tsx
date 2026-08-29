@@ -33,6 +33,7 @@ import { useClientExtensions } from '../../core/hooks/useClientExtensions';
 import { useUiPreferencesStore } from '../../core/stores/uiPreferencesStore';
 
 import Player from '../../features/player/Player';
+import { isMineSectionPath } from '../../features/player/platform';
 import PluginExtensionHost from '../pluginExtensions/PluginExtensionHost';
 import PluginExtensionIcon from '../pluginExtensions/PluginExtensionIcon';
 
@@ -52,6 +53,7 @@ const Layout: React.FC = () => {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const isMineSection = isMineSectionPath(location.pathname);
   
   // Use selectors to prevent unnecessary re-renders when currentTime updates
   const user = useAuthStore(state => state.user);
@@ -361,7 +363,12 @@ const Layout: React.FC = () => {
         <main 
           id="main-content" 
           className="flex-1 overflow-y-auto relative flex flex-col min-h-0 scroll-smooth transition-colors duration-1000"
-          style={{ backgroundColor: 'var(--page-background, transparent)' }}
+          style={{
+            backgroundColor: 'var(--page-background, transparent)',
+            ...(isMineSection
+              ? { '--safe-bottom-with-player': 'var(--safe-bottom-base)' }
+              : {}),
+          } as React.CSSProperties}
         >
           <Outlet />
         </main>

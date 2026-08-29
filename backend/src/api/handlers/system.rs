@@ -461,8 +461,12 @@ pub async fn get_admin_statistics(
                         COALESCE((SELECT SUM(e.listen_seconds) FROM listening_totals e WHERE e.book_id = b.id), 0.0) AS listen_seconds \
                      FROM books b \
                      LEFT JOIN libraries l ON l.id = b.library_id \
+                     WHERE EXISTS ( \
+                        SELECT 1 FROM listening_totals listened \
+                        WHERE listened.book_id = b.id AND listened.listen_seconds > 0 \
+                     ) \
                      ORDER BY listeners DESC, listen_seconds DESC \
-                     LIMIT 8",
+                     LIMIT 12",
                 )
                 .map_err(TingError::DatabaseError)?;
             let retention_modifier = format!("-{} days", LISTENING_EVENTS_RETENTION_DAYS);

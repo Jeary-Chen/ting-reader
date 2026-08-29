@@ -169,23 +169,21 @@ const AdminStatisticsPage: React.FC = () => {
         </Panel>
       </section>
 
-      <section className="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.12fr)_minmax(420px,0.88fr)] gap-5">
-        <Panel title={t('adminStats.libraryData')} icon={<Library size={19} />}>
-          {report.library_breakdown.length > 0 ? (
-            <LibraryCards items={report.library_breakdown} />
-          ) : (
-            <EmptyState icon={<Library size={30} />} text={t('adminStats.noLibraryData')} />
-          )}
-        </Panel>
+      <Panel title={t('adminStats.userUsage')} icon={<Activity size={19} />}>
+        {report.user_activity.length > 0 ? (
+          <UserTable items={report.user_activity} maxListen={maxUserListen} />
+        ) : (
+          <EmptyState icon={<Users size={30} />} text={t('adminStats.noUserActivity')} />
+        )}
+      </Panel>
 
-        <Panel title={t('adminStats.userUsage')} icon={<Activity size={19} />}>
-          {report.user_activity.length > 0 ? (
-            <UserTable items={report.user_activity} maxListen={maxUserListen} />
-          ) : (
-            <EmptyState icon={<Users size={30} />} text={t('adminStats.noUserActivity')} />
-          )}
-        </Panel>
-      </section>
+      <Panel title={t('adminStats.libraryData')} icon={<Library size={19} />}>
+        {report.library_breakdown.length > 0 ? (
+          <LibraryCards items={report.library_breakdown} />
+        ) : (
+          <EmptyState icon={<Library size={30} />} text={t('adminStats.noLibraryData')} />
+        )}
+      </Panel>
 
       <Panel title={t('adminStats.topBooks')} icon={<BookOpen size={19} />}>
         {report.top_books.length > 0 ? (
@@ -379,7 +377,7 @@ const LibraryCards = ({ items }: { items: LibraryStatistics[] }) => {
   const { t } = useTranslation();
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 min-[805px]:grid-cols-2 min-[1160px]:grid-cols-3 gap-3">
       {items.map(item => (
       <article
         key={item.id}
@@ -447,7 +445,7 @@ const TopBookLeaderboard = ({ items, maxHeat }: { items: BookActivityStatistics[
   const { t } = useTranslation();
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+    <div className="grid grid-cols-1 min-[805px]:grid-cols-2 min-[1160px]:grid-cols-3 gap-3">
       {items.map((item, index) => {
       const heat = getBookHeatScore(item);
       const accent = getRankAccent(index);

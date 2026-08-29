@@ -10,7 +10,11 @@ import { sortChaptersForPlayback } from "../../core/utils/chapter";
 import { setAlpha, toSolidColor, isTooLight } from "../../core/utils/color";
 import { useBookshelfCoverShape } from "../../core/hooks/useBookshelfCoverShape";
 import ProgressBar from "./ProgressBar";
-import { isAppleMobileBrowser, isStrmPath } from "./platform";
+import {
+  isAppleMobileBrowser,
+  isMiniPlayerHiddenPath,
+  isStrmPath,
+} from "./platform";
 import { getRuntimeBaseUrl, getRuntimePathname, getRuntimeUrl } from "../../core/utils/runtimeUrl";
 import PlayerSettingsModal from "./PlayerSettingsModal";
 import ChapterListDrawer from "./ChapterListDrawer";
@@ -808,10 +812,7 @@ const Player: React.FC = () => {
     [t],
   );
 
-  const hiddenPaths = ["/admin", "/settings", "/cache", "/plugin-pages"];
-  const isHiddenPage = hiddenPaths.some((path) =>
-    location.pathname.startsWith(path),
-  );
+  const isHiddenPage = isMiniPlayerHiddenPath(location.pathname);
   const isWidgetMode = getRuntimePathname().startsWith("/widget");
 
   // Auto collapse player when navigating to hidden pages
