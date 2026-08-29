@@ -258,14 +258,14 @@ const HomePage: React.FC = () => {
             <p className="text-sm md:text-base text-slate-500 dark:text-slate-400 mt-2">{t('home.subtitle')}</p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className="hidden md:flex h-12 items-center gap-2 text-sm text-slate-500 bg-white dark:bg-slate-900 px-4 py-2.5 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
-              <Calendar size={16} />
-              <span>{formatLocalizedDate(now, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex h-12 items-center gap-2 rounded-xl border border-slate-100 bg-white px-4 py-2.5 text-sm text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <Calendar size={16} className="shrink-0" />
+              <span className="whitespace-nowrap">{formatLocalizedDate(now, { weekday: 'long', month: 'long', day: 'numeric' })}</span>
             </div>
             <Link
               to="/search"
-              className="inline-flex h-12 items-center gap-2 px-4 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-sm font-bold shadow-lg shadow-slate-900/10 dark:shadow-white/5 hover:opacity-90 transition-opacity"
+              className="inline-flex h-12 shrink-0 items-center gap-2 px-4 py-2.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-xl text-sm font-bold shadow-lg shadow-slate-900/10 dark:shadow-white/5 hover:opacity-90 transition-opacity"
             >
               <Search size={18} />
               {t('home.searchContent')}
