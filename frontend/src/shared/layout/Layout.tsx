@@ -366,7 +366,10 @@ const Layout: React.FC = () => {
           style={{
             backgroundColor: 'var(--page-background, transparent)',
             ...(isMiniPlayerHidden
-              ? { '--safe-bottom-with-player': 'var(--safe-bottom-base)' }
+              ? {
+                  '--safe-bottom-with-player': '0px',
+                  '--safe-bottom-base': '0px',
+                }
               : {}),
           } as React.CSSProperties}
         >

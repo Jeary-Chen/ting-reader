@@ -80,7 +80,7 @@ const enUS = {
       "The interface language syncs to your account and is also saved locally.",
     timeZone: "Application time zone",
     timeZoneDescription:
-      "Administrators control time display across the app; the server and database remain in UTC.",
+      "Set the time display for the app. The server remains in UTC.",
     zhCN: "简体中文",
     enUS: "English",
     light: "Light",
