@@ -662,7 +662,7 @@ const zhCN = {
     listenedBooks: "{{count}} 本",
     recordsValue: "{{count}} 条",
     listeners: "听众",
-    records: "近90天活跃记录",
+    records: "活跃记录",
     listening: "收听",
     heat: "综合热度",
     unknownWork: "未知作品",
