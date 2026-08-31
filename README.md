@@ -6,6 +6,8 @@ Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱�
 >
 > **📱 客户端：[https://github.com/dqsq2e2/ting-reader-flutter](https://github.com/dqsq2e2/ting-reader-flutter)**
 >
+> **🛠️ LuCI 插件：[https://github.com/dqsq2e2/luci-app-tingreader](https://github.com/dqsq2e2/luci-app-tingreader)**
+>
 > 访问官网查看最新文档、下载客户端及在线演示。
 
 ![License](https://img.shields.io/github/license/dqsq2e2/ting-reader?cache=none)
@@ -13,6 +15,7 @@ Ting Reader 是一个轻量级的自托管有声书平台，专为有声书爱�
 ![GitHub Release](https://img.shields.io/github/v/release/dqsq2e2/ting-reader)
 [![Official Website](https://img.shields.io/badge/Official-Website-blue?logo=internetexplorer)](https://www.tingreader.cn)
 [![Client](https://img.shields.io/badge/Client-Repository-181717?logo=github&logoColor=white)](https://github.com/dqsq2e2/ting-reader-flutter)
+[![LuCI Plugin](https://img.shields.io/badge/LuCI%20Plugin-Repository-181717?logo=github&logoColor=white)](https://github.com/dqsq2e2/luci-app-tingreader)
 
 <p align="center">
   <img src="image/poster.png" alt="Ting Reader 项目海报">
