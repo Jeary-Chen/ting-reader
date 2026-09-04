@@ -8,6 +8,36 @@ import {
 } from '../utils/sessionRestore';
 import { getRuntimeBaseUrl } from '../utils/runtimeUrl';
 
+const isStoredUser = (value: unknown): value is User => {
+  if (!value || typeof value !== 'object') return false;
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.username === 'string' &&
+    (candidate.role === 'admin' || candidate.role === 'user')
+  );
+};
+
+const readStoredUser = (): User | null => {
+  const rawUser = safeStorage.getItem('user');
+  if (!rawUser || rawUser === 'null') return null;
+
+  try {
+    const parsedUser: unknown = JSON.parse(rawUser);
+    if (parsedUser === null) return null;
+    if (isStoredUser(parsedUser)) return parsedUser;
+  } catch {
+    // A previous failed login/session restore could have persisted the
+    // string "undefined". Treat the cache as stale instead of preventing the
+    // entire React application from mounting.
+  }
+
+  // Remove malformed or incompatible cached data so the next reload is clean.
+  safeStorage.removeItem('user');
+  return null;
+};
+
 const storedToken = safeStorage.getItem('auth_token');
 if (storedToken) {
   persistAuthCookie(storedToken);
@@ -28,25 +58,48 @@ interface AuthState {
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: JSON.parse(safeStorage.getItem('user') || 'null'),
+  user: readStoredUser(),
   token: storedToken,
   serverUrl: safeStorage.getItem('server_url') || getRuntimeBaseUrl(),
   activeUrl: safeStorage.getItem('active_url') || safeStorage.getItem('server_url') || getRuntimeBaseUrl(),
   isAuthenticated: !!storedToken,
   setAuth: (user, token) => {
-    safeStorage.setItem('auth_token', token);
-    safeStorage.setItem('user', JSON.stringify(user));
-    persistAuthCookie(token);
-    set({ user, token, isAuthenticated: true });
+    const validUser = isStoredUser(user) ? user : null;
+    const validToken = typeof token === 'string' && token.length > 0 ? token : null;
+
+    if (validToken) {
+      safeStorage.setItem('auth_token', validToken);
+      persistAuthCookie(validToken);
+    } else {
+      safeStorage.removeItem('auth_token');
+    }
+
+    if (validUser) {
+      safeStorage.setItem('user', JSON.stringify(validUser));
+    } else {
+      safeStorage.removeItem('user');
+    }
+
+    set({ user: validUser, token: validToken, isAuthenticated: !!validToken });
   },
   setUser: (user) => {
-    safeStorage.setItem('user', JSON.stringify(user));
-    set({ user });
+    const validUser = isStoredUser(user) ? user : null;
+    if (validUser) {
+      safeStorage.setItem('user', JSON.stringify(validUser));
+    } else {
+      safeStorage.removeItem('user');
+    }
+    set({ user: validUser });
   },
   setToken: (token) => {
-    safeStorage.setItem('auth_token', token);
-    persistAuthCookie(token);
-    set({ token, isAuthenticated: true });
+    const validToken = typeof token === 'string' && token.length > 0 ? token : null;
+    if (validToken) {
+      safeStorage.setItem('auth_token', validToken);
+      persistAuthCookie(validToken);
+    } else {
+      safeStorage.removeItem('auth_token');
+    }
+    set({ token: validToken, isAuthenticated: !!validToken });
   },
   setServerUrl: (url) => {
     safeStorage.setItem('server_url', url);
