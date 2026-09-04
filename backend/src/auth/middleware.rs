@@ -1,12 +1,81 @@
 //! Authentication middleware
 
-use crate::auth::jwt::validate_token;
+use crate::auth::jwt::{validate_token_with_secrets, Claims};
 use crate::core::error::{Result, TingError};
 use axum::{
     extract::{Request, State},
+    http::{header, HeaderMap},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+
+fn bearer_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn cookie_token_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                if name == "ting_reader_token" || name == "auth_token" {
+                    Some(value.trim().to_string())
+                } else {
+                    None
+                }
+            })
+        })
+        .filter(|token| !token.is_empty())
+}
+
+fn query_token(request: &Request) -> Option<String> {
+    request.uri().query().and_then(|query| {
+        url::form_urlencoded::parse(query.as_bytes())
+            .find(|(key, _)| key == "token")
+            .map(|(_, value)| value.trim().to_string())
+            .filter(|token| !token.is_empty())
+    })
+}
+
+fn token_candidates(request: &Request) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    for token in [
+        bearer_token_from_headers(request.headers()),
+        query_token(request),
+        cookie_token_from_headers(request.headers()),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !candidates.contains(&token) {
+            candidates.push(token);
+        }
+    }
+
+    candidates
+}
+
+fn validate_token_candidates(candidates: &[String], secrets: &[String]) -> Result<Claims> {
+    let mut last_error = None;
+
+    for token in candidates {
+        match validate_token_with_secrets(token, secrets) {
+            Ok(claims) => return Ok(claims),
+            Err(error) => last_error = Some(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| TingError::AuthenticationError("缺少认证令牌".to_string())))
+}
 
 /// Extension to store authenticated user info in request
 #[derive(Clone, Debug)]
@@ -23,49 +92,15 @@ pub async fn authenticate(
     mut request: Request,
     next: Next,
 ) -> Response {
-    use axum::http::header;
-
-    // 1. Try to get token from Authorization header
-    let token_from_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer ").map(|t| t.to_string()));
-
-    // 2. If header is missing, try to get token from query parameter "token"
-    let token = token_from_header.or_else(|| {
-        request.uri().query().and_then(|q| {
-            url::form_urlencoded::parse(q.as_bytes())
-                .find(|(k, _)| k == "token")
-                .map(|(_, v)| v.to_string())
-        })
-    });
-
-    // 3. If no token found, return error
-    let token = match token {
-        Some(t) => t,
-        None => {
-            // Check if it's a public endpoint (optional, but good practice)
-            // For now, return 401
-            let error = TingError::AuthenticationError("缺少认证令牌".to_string());
-            return error.into_response();
-        }
-    };
-
-    // Validate token
-    let claims = if let Some(key_manager) = &state.jwt_key_manager {
-        // 使用密钥管理器（新方式）- 支持多密钥验证
-        let validation_secrets = key_manager.get_validation_secrets().await;
-        match crate::auth::jwt::validate_token_with_secrets(&token, &validation_secrets) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        }
+    let candidates = token_candidates(&request);
+    let validation_secrets = if let Some(key_manager) = &state.jwt_key_manager {
+        key_manager.get_validation_secrets().await
     } else {
-        // 向后兼容：使用配置文件中的密钥
-        match validate_token(&token, &state.jwt_secret) {
-            Ok(c) => c,
-            Err(e) => return e.into_response(),
-        }
+        vec![state.jwt_secret.as_ref().clone()]
+    };
+    let claims = match validate_token_candidates(&candidates, &validation_secrets) {
+        Ok(claims) => claims,
+        Err(error) => return error.into_response(),
     };
 
     // Fetch user from database
@@ -120,5 +155,41 @@ where
             .get::<AuthUser>()
             .cloned()
             .ok_or_else(|| TingError::AuthenticationError("用户未认证".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::jwt::generate_token;
+    use axum::body::Body;
+
+    #[test]
+    fn collects_bearer_query_and_cookie_tokens() {
+        let request = Request::builder()
+            .uri("/api/settings?token=query-token")
+            .header(header::AUTHORIZATION, "Bearer header-token")
+            .header(
+                header::COOKIE,
+                "ost=fnos-session; ting_reader_token=cookie-token",
+            )
+            .body(Body::empty())
+            .unwrap();
+
+        assert_eq!(
+            token_candidates(&request),
+            vec!["header-token", "query-token", "cookie-token"]
+        );
+    }
+
+    #[test]
+    fn accepts_valid_cookie_after_invalid_authorization_candidate() {
+        let secret = "test-secret".to_string();
+        let valid_token = generate_token("user-id", &secret).unwrap();
+        let candidates = vec!["fnos-gateway-token".to_string(), valid_token];
+
+        let claims = validate_token_candidates(&candidates, &[secret]).unwrap();
+
+        assert_eq!(claims.user_id, "user-id");
     }
 }

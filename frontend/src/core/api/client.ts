@@ -3,7 +3,6 @@ import { useAuthStore } from '../stores/authStore';
 import i18n from '../i18n';
 import { safeStorage } from '../utils/storage';
 import { getGatewayBasePath, getRuntimeBaseUrl } from '../utils/runtimeUrl';
-import { normalizeKnownCollectionResponse } from './collectionResponse';
 
 // Initial base URL
 const API_BASE_URL = getRuntimeBaseUrl(
@@ -80,8 +79,13 @@ apiClient.interceptors.request.use((config) => {
     config.baseURL = getRuntimeBaseUrl(activeUrl);
   }
 
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  // fnOS reserves Authorization for unified-gateway authentication. Sending
+  // Ting Reader's JWT there makes nginx reject the request before it reaches
+  // the application. Gateway requests use the same-origin token cookie.
+  if (token && !getGatewayBasePath()) {
+    config.headers.set('Authorization', `Bearer ${token}`);
+  } else {
+    config.headers.delete('Authorization');
   }
   config.headers['Accept-Language'] = i18n.resolvedLanguage || i18n.language || 'zh-CN';
 
@@ -97,13 +101,6 @@ apiClient.interceptors.response.use(
     // Check if we were redirected and update activeUrl if needed
     if (response.request && response.request.responseURL) {
       // ... (existing logic if needed)
-    }
-
-    if (response.config.method?.toLowerCase() === 'get') {
-      response.data = normalizeKnownCollectionResponse(
-        response.config.url,
-        response.data,
-      );
     }
 
     return response;
