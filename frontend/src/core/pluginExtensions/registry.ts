@@ -10,6 +10,24 @@ import type {
 
 const defaultSlots: ClientExtensionSlot[] = ["global.panel"];
 
+const isJsonRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const isCapabilityRegistration = (
+  value: unknown,
+): value is CapabilityRegistrationLike => {
+  if (!isJsonRecord(value)) return false;
+  if (typeof value.plugin_id !== "string" || typeof value.plugin_name !== "string") {
+    return false;
+  }
+  const capability = value.capability;
+  return (
+    isJsonRecord(capability) &&
+    typeof capability.id === "string" &&
+    typeof capability.kind === "string"
+  );
+};
+
 const isClientExtensionSlot = (value: unknown): value is ClientExtensionSlot =>
   typeof value === "string" &&
   [
@@ -125,6 +143,7 @@ export const buildClientExtensionRegistry = (
   locale?: string,
 ): ClientExtensionRegistrySnapshot => {
   const extensions = registrations
+    .filter(isCapabilityRegistration)
     .filter(
       (registration) =>
         registration.capability.kind === "ui_extension" ||
